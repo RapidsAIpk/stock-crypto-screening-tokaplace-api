@@ -1,0 +1,238 @@
+{
+  "combined_cases": [
+    {
+      "actual": {
+        "actual_included": null,
+        "case_ids": [
+          "rsi_overbought",
+          "aroon_bullish",
+          "macd_positive",
+          "price_above_ema"
+        ],
+        "combination_path": "not_evaluated",
+        "operator": "all",
+        "status": "insufficient_data"
+      },
+      "case_id": "all_four",
+      "expected": {
+        "case_ids": [
+          "rsi_overbought",
+          "aroon_bullish",
+          "macd_positive",
+          "price_above_ema"
+        ],
+        "expected_included": false,
+        "operator": "all",
+        "status": "evaluated"
+      },
+      "operator": "all",
+      "status": "insufficient_data"
+    },
+    {
+      "actual": {
+        "actual_included": null,
+        "case_ids": [
+          "rsi_overbought",
+          "aroon_bullish",
+          "macd_positive",
+          "price_above_ema"
+        ],
+        "combination_path": "not_evaluated",
+        "operator": "any",
+        "status": "insufficient_data"
+      },
+      "case_id": "any_four",
+      "expected": {
+        "case_ids": [
+          "rsi_overbought",
+          "aroon_bullish",
+          "macd_positive",
+          "price_above_ema"
+        ],
+        "expected_included": false,
+        "operator": "any",
+        "status": "evaluated"
+      },
+      "operator": "any",
+      "status": "insufficient_data"
+    }
+  ],
+  "earliest_mismatch_stage": "candle_alignment",
+  "indicator_comparison_verdict": "inconclusive_input_mismatch",
+  "run_id": "f7606ae1e251e357891a",
+  "single_indicator_cases": [
+    {
+      "actual": {
+        "actual_pass": false,
+        "config": {
+          "confirmation": false,
+          "length": 14,
+          "location": "overbought",
+          "window": 1
+        },
+        "confirmation_pass": null,
+        "evaluated_indexes": [
+          29
+        ],
+        "indicator": "rsi",
+        "screener_included": false,
+        "signal_timestamp": "2026-06-30",
+        "status": "evaluated",
+        "sticker": null,
+        "values": {
+          "rsi": 28.550428608126182
+        }
+      },
+      "case_id": "rsi_overbought",
+      "expected": {
+        "config": {
+          "confirmation": false,
+          "length": 14,
+          "location": "overbought",
+          "window": 1
+        },
+        "confirmation_pass": null,
+        "confirmation_timestamp": null,
+        "expected_pass": false,
+        "indicator": "rsi",
+        "signal_timestamp": "2026-06-30",
+        "status": "evaluated",
+        "values": {
+          "rsi": 29.99009
+        }
+      },
+      "indicator": "rsi",
+      "status": "pass"
+    },
+    {
+      "actual": {
+        "actual_pass": false,
+        "config": {
+          "confirmation": false,
+          "length": 14,
+          "level": "above_50",
+          "window": 1
+        },
+        "confirmation_pass": null,
+        "evaluated_indexes": [
+          29
+        ],
+        "indicator": "aroon",
+        "screener_included": false,
+        "signal_timestamp": "2026-06-30",
+        "status": "evaluated",
+        "sticker": null,
+        "values": {
+          "aroon_oscillator": -64.28571428571429
+        }
+      },
+      "case_id": "aroon_bullish",
+      "expected": {
+        "config": {
+          "confirmation": false,
+          "length": 14,
+          "level": "above_50",
+          "window": 1
+        },
+        "confirmation_pass": null,
+        "confirmation_timestamp": null,
+        "expected_pass": false,
+        "indicator": "aroon",
+        "signal_timestamp": "2026-06-30",
+        "status": "evaluated",
+        "values": {
+          "aroon_down": 64.28571,
+          "aroon_oscillator": -64.28571,
+          "aroon_up": 0.0
+        }
+      },
+      "indicator": "aroon",
+      "status": "pass"
+    },
+    {
+      "actual": {
+        "actual_pass": null,
+        "available_candles": 30,
+        "config": {
+          "fast": 12,
+          "rule": "above_zero",
+          "signal": 9,
+          "slow": 26
+        },
+        "evaluated_indexes": [],
+        "indicator": "macd",
+        "required_candles": 37,
+        "screener_included": null,
+        "signal_timestamp": null,
+        "status": "insufficient_data",
+        "values": {}
+      },
+      "case_id": "macd_positive",
+      "expected": {
+        "config": {
+          "fast": 12,
+          "rule": "above_zero",
+          "signal": 9,
+          "slow": 26
+        },
+        "confirmation_pass": null,
+        "confirmation_timestamp": null,
+        "expected_pass": false,
+        "indicator": "macd",
+        "signal_timestamp": "2026-06-30",
+        "status": "evaluated",
+        "values": {
+          "histogram": -47.7382,
+          "macd": -2367.31773,
+          "previous_macd": -2306.37863,
+          "previous_signal": -2307.64498,
+          "signal": -2319.57953
+        }
+      },
+      "indicator": "macd",
+      "status": "insufficient_data"
+    },
+    {
+      "actual": {
+        "actual_pass": false,
+        "config": {
+          "length": 9,
+          "rule": "above"
+        },
+        "confirmation_pass": null,
+        "evaluated_indexes": [
+          29
+        ],
+        "indicator": "ema",
+        "screener_included": false,
+        "signal_timestamp": "2026-06-30",
+        "status": "evaluated",
+        "sticker": null,
+        "values": {
+          "ema": 60467.433066292426,
+          "price": 58523.93
+        }
+      },
+      "case_id": "price_above_ema",
+      "expected": {
+        "config": {
+          "length": 9,
+          "rule": "above"
+        },
+        "confirmation_pass": null,
+        "confirmation_timestamp": null,
+        "expected_pass": false,
+        "indicator": "ema",
+        "signal_timestamp": "2026-06-30",
+        "status": "evaluated",
+        "values": {
+          "ema": 60488.38343,
+          "price": 58558.85938
+        }
+      },
+      "indicator": "ema",
+      "status": "pass"
+    }
+  ],
+  "verdict": "inconclusive_input_mismatch"
+}

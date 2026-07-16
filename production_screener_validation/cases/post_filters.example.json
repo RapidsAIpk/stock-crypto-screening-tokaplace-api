@@ -1,0 +1,21 @@
+{
+  "suite_id": "post_filters",
+  "cases": [
+    {
+      "id": "ema_channel_respect",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+      "single_timeframe": "1day",
+      "indicators": [{"name": "ema", "timeframe": "single", "config": {"length": 20, "rule": "above", "tolerance_pct": 0}}],
+      "channel_respect": {"channel_type": "lrc", "line": "middle", "min_respect": 1, "max_respect": 20, "tolerance_pct": 0.2, "cluster_gap": 3, "touch_type": "both"}
+    },
+    {
+      "id": "ema_lrc_regression_confluence",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+      "single_timeframe": "1day",
+      "indicators": [{"name": "ema", "timeframe": "single", "config": {"length": 20, "rule": "above", "tolerance_pct": 0}}],
+      "confluence": {"type": "any", "lookback_candles": 4, "tolerance_pct": 0.2, "liquidity_sweep": false, "sources": [{"id": "lrc", "channel_type": "lrc", "selection": "middle", "length": 100, "upper_dev": 2, "lower_dev": 2}, {"id": "regression", "channel_type": "regression", "selection": "middle", "length": 100, "width_coeff": 1, "window_type": "continuous", "interval_step": 1}]}
+    }
+  ]
+}

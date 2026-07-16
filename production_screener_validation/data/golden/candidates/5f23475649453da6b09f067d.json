@@ -1,0 +1,172 @@
+{
+  "candidate_id": "5f23475649453da6b09f067d",
+  "case_checksum": "d25ded85a26ff14bf6f9374a3c1a9a823fd1386ddecab570be774812253bec83",
+  "case_id": "aroon",
+  "fixture_hash": "9a9d16ae5e051cecff47d4f875632cbbccaef0f431ac7eedd3e4a5373a7265cb",
+  "fixture_id": "stocks_daily_2026_06_30_v1",
+  "generated_at": "2026-07-14T14:39:43.221324+00:00",
+  "reference": {
+    "case_checksum": "d25ded85a26ff14bf6f9374a3c1a9a823fd1386ddecab570be774812253bec83",
+    "case_id": "aroon",
+    "excluded_symbols": [
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "TSLA"
+    ],
+    "expected_symbols": [
+      "AMD"
+    ],
+    "fixture_hash": "9a9d16ae5e051cecff47d4f875632cbbccaef0f431ac7eedd3e4a5373a7265cb",
+    "fixture_id": "stocks_daily_2026_06_30_v1",
+    "insufficient_data_symbols": [],
+    "reference_engine": "TA-Lib plus independent validation oracles",
+    "scope": "single",
+    "status": "evaluated",
+    "symbol_evidence": {
+      "AAPL": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": false,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "compliant",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "Apple Inc.",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "aroon",
+            "passed": false,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "aroon_down": 78.57142857142857,
+              "aroon_oscillator": -21.428571428571423,
+              "aroon_up": 57.142857142857146
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "AAPL"
+      },
+      "AMD": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": true,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "compliant",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "Advanced Micro Devices, Inc.",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "aroon",
+            "passed": true,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "aroon_down": 0.0,
+              "aroon_oscillator": 100.0,
+              "aroon_up": 100.0
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "AMD"
+      },
+      "MSFT": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": false,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "compliant",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "Microsoft Corporation",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "aroon",
+            "passed": false,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "aroon_down": 78.57142857142857,
+              "aroon_oscillator": -78.57142857142857,
+              "aroon_up": 0.0
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "MSFT"
+      },
+      "NVDA": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": false,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "compliant",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "NVIDIA Corporation",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "aroon",
+            "passed": false,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "aroon_down": 92.85714285714286,
+              "aroon_oscillator": -35.714285714285715,
+              "aroon_up": 57.142857142857146
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "NVDA"
+      },
+      "TSLA": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": false,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "questionable",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "Tesla, Inc.",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "aroon",
+            "passed": false,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "aroon_down": 85.71428571428572,
+              "aroon_oscillator": 14.285714285714278,
+              "aroon_up": 100.0
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "TSLA"
+      }
+    },
+    "talib_version": "0.6.8",
+    "timeframe": "1day"
+  },
+  "schema_version": 1
+}

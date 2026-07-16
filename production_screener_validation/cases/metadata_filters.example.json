@@ -1,0 +1,17 @@
+{
+  "suite_id": "metadata_and_volume",
+  "cases": [
+    {
+      "id": "volume_float_price",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+      "single_timeframe": "1day",
+      "price_range": {"min_price": 5, "max_price": 1000},
+      "indicators": [
+        {"name": "relative_volume", "timeframe": "single", "config": {"length": 20, "min_ratio": 1.5, "tolerance_pct": 0}},
+        {"name": "float", "timeframe": "single", "config": {"min_value": 1000000, "max_value": 10000000000, "tolerance_pct": 0}},
+        {"name": "volatility", "timeframe": "single", "config": {"length": 20, "min_pct": 0.5, "max_pct": 10, "tolerance_pct": 0}}
+      ]
+    }
+  ]
+}

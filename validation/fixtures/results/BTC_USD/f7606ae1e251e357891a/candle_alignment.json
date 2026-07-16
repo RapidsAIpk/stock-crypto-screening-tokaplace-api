@@ -1,0 +1,948 @@
+{
+  "absolute_tolerance": 0.0,
+  "comparison_end": "2026-06-30",
+  "comparison_start": "2026-06-01",
+  "relative_tolerance": 0.0,
+  "rows": [
+    {
+      "date": "2026-06-01",
+      "fields": {
+        "close": {
+          "absolute_difference": 5.3534400000062305,
+          "massive": 71314.42,
+          "matches": false,
+          "twelve": 71319.77344
+        },
+        "high": {
+          "absolute_difference": 160.42969000000448,
+          "massive": 74130.0,
+          "matches": false,
+          "twelve": 73969.57031
+        },
+        "low": {
+          "absolute_difference": 44.507809999995516,
+          "massive": 70555.0,
+          "matches": false,
+          "twelve": 70599.50781
+        },
+        "open": {
+          "absolute_difference": 149.78905999999552,
+          "massive": 73730.0,
+          "matches": false,
+          "twelve": 73580.21094
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-02",
+      "fields": {
+        "close": {
+          "absolute_difference": 45.30624999999418,
+          "massive": 66658.35,
+          "matches": false,
+          "twelve": 66703.65625
+        },
+        "high": {
+          "absolute_difference": 71.04687999999442,
+          "massive": 71406.0,
+          "matches": false,
+          "twelve": 71334.95312
+        },
+        "low": {
+          "absolute_difference": 27.255620000010822,
+          "massive": 66100.01,
+          "matches": false,
+          "twelve": 66127.26562
+        },
+        "open": {
+          "absolute_difference": 6.601250000006985,
+          "massive": 71314.43,
+          "matches": false,
+          "twelve": 71321.03125
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-03",
+      "fields": {
+        "close": {
+          "absolute_difference": 21.432810000005702,
+          "massive": 64035.8,
+          "matches": false,
+          "twelve": 64014.36719
+        },
+        "high": {
+          "absolute_difference": 56.070309999995516,
+          "massive": 67459.0,
+          "matches": false,
+          "twelve": 67402.92969
+        },
+        "low": {
+          "absolute_difference": 24.66577999999572,
+          "massive": 63985.01,
+          "matches": false,
+          "twelve": 64009.67578
+        },
+        "open": {
+          "absolute_difference": 24.30781250000291,
+          "massive": 66669.7,
+          "matches": false,
+          "twelve": 66694.0078125
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-04",
+      "fields": {
+        "close": {
+          "absolute_difference": 4.445779999994556,
+          "massive": 63806.02,
+          "matches": false,
+          "twelve": 63801.57422
+        },
+        "high": {
+          "absolute_difference": 30.55468999999721,
+          "massive": 64695.0,
+          "matches": false,
+          "twelve": 64664.44531
+        },
+        "low": {
+          "absolute_difference": 79.84999999999854,
+          "massive": 61255.9,
+          "matches": false,
+          "twelve": 61335.75
+        },
+        "open": {
+          "absolute_difference": 19.919687999994494,
+          "massive": 64039.99,
+          "matches": false,
+          "twelve": 64020.070312
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-05",
+      "fields": {
+        "close": {
+          "absolute_difference": 109.33202999999776,
+          "massive": 61032.0,
+          "matches": false,
+          "twelve": 60922.66797
+        },
+        "high": {
+          "absolute_difference": 48.48438000000169,
+          "massive": 63950.0,
+          "matches": false,
+          "twelve": 63901.51562
+        },
+        "low": {
+          "absolute_difference": 38.3179700000037,
+          "massive": 59070.6,
+          "matches": false,
+          "twelve": 59108.91797
+        },
+        "open": {
+          "absolute_difference": 1.671410000002652,
+          "massive": 63806.02,
+          "matches": false,
+          "twelve": 63807.69141
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-06",
+      "fields": {
+        "close": {
+          "absolute_difference": 16.93405999999959,
+          "massive": 60850.48,
+          "matches": false,
+          "twelve": 60867.41406
+        },
+        "high": {
+          "absolute_difference": 118.29688000000169,
+          "massive": 61610.0,
+          "matches": false,
+          "twelve": 61491.70312
+        },
+        "low": {
+          "absolute_difference": 48.17500000000291,
+          "massive": 59448.45,
+          "matches": false,
+          "twelve": 59496.625
+        },
+        "open": {
+          "absolute_difference": 113.82344000000012,
+          "massive": 61038.3,
+          "matches": false,
+          "twelve": 60924.47656
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-07",
+      "fields": {
+        "close": {
+          "absolute_difference": 63.210470000005444,
+          "massive": 63302.73,
+          "matches": false,
+          "twelve": 63239.51953
+        },
+        "high": {
+          "absolute_difference": 484.9570309999981,
+          "massive": 64613.0,
+          "matches": false,
+          "twelve": 64128.042969
+        },
+        "low": {
+          "absolute_difference": 17.66640599999664,
+          "massive": 60706.4,
+          "matches": false,
+          "twelve": 60724.066406
+        },
+        "open": {
+          "absolute_difference": 16.46140999999625,
+          "massive": 60850.48,
+          "matches": false,
+          "twelve": 60866.94141
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-08",
+      "fields": {
+        "close": {
+          "absolute_difference": 27.609839999997348,
+          "massive": 63062.98,
+          "matches": false,
+          "twelve": 63090.58984
+        },
+        "high": {
+          "absolute_difference": 108.23438000000169,
+          "massive": 64294.0,
+          "matches": false,
+          "twelve": 64185.76562
+        },
+        "low": {
+          "absolute_difference": 19.23797000000195,
+          "massive": 62365.43,
+          "matches": false,
+          "twelve": 62384.66797
+        },
+        "open": {
+          "absolute_difference": 57.944062000002305,
+          "massive": 63302.03,
+          "matches": false,
+          "twelve": 63244.085938
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-09",
+      "fields": {
+        "close": {
+          "absolute_difference": 42.01875000000291,
+          "massive": 61685.8,
+          "matches": false,
+          "twelve": 61643.78125
+        },
+        "high": {
+          "absolute_difference": 96.9101559999981,
+          "massive": 63583.0,
+          "matches": false,
+          "twelve": 63486.089844
+        },
+        "low": {
+          "absolute_difference": 43.1875,
+          "massive": 60713.5,
+          "matches": false,
+          "twelve": 60756.6875
+        },
+        "open": {
+          "absolute_difference": 29.920619999997143,
+          "massive": 63062.97,
+          "matches": false,
+          "twelve": 63092.89062
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-10",
+      "fields": {
+        "close": {
+          "absolute_difference": 0.17093999999633525,
+          "massive": 61449.46,
+          "matches": false,
+          "twelve": 61449.28906
+        },
+        "high": {
+          "absolute_difference": 90.72265999999945,
+          "massive": 62879.0,
+          "matches": false,
+          "twelve": 62788.27734
+        },
+        "low": {
+          "absolute_difference": 79.10343799999828,
+          "massive": 60708.92,
+          "matches": false,
+          "twelve": 60788.023438
+        },
+        "open": {
+          "absolute_difference": 42.602969999999914,
+          "massive": 61685.81,
+          "matches": false,
+          "twelve": 61643.20703
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-11",
+      "fields": {
+        "close": {
+          "absolute_difference": 2.3653120000017225,
+          "massive": 63563.42,
+          "matches": false,
+          "twelve": 63561.054688
+        },
+        "high": {
+          "absolute_difference": 112.05077999999776,
+          "massive": 63964.0,
+          "matches": false,
+          "twelve": 63851.94922
+        },
+        "low": {
+          "absolute_difference": 1.5012500000011642,
+          "massive": 61449.47,
+          "matches": false,
+          "twelve": 61447.96875
+        },
+        "open": {
+          "absolute_difference": 0.5910900000017136,
+          "massive": 61449.47,
+          "matches": false,
+          "twelve": 61448.87891
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-12",
+      "fields": {
+        "close": {
+          "absolute_difference": 4.769220000001951,
+          "massive": 63538.43,
+          "matches": false,
+          "twelve": 63543.19922
+        },
+        "high": {
+          "absolute_difference": 67.984375,
+          "massive": 64402.0,
+          "matches": false,
+          "twelve": 64334.015625
+        },
+        "low": {
+          "absolute_difference": 38.98297000000457,
+          "massive": 62739.81,
+          "matches": false,
+          "twelve": 62778.79297
+        },
+        "open": {
+          "absolute_difference": 6.258589999997639,
+          "massive": 63553.7,
+          "matches": false,
+          "twelve": 63547.44141
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-13",
+      "fields": {
+        "close": {
+          "absolute_difference": 60.32422000000224,
+          "massive": 64361.0,
+          "matches": false,
+          "twelve": 64421.32422
+        },
+        "high": {
+          "absolute_difference": 49.12109000000055,
+          "massive": 64750.0,
+          "matches": false,
+          "twelve": 64700.87891
+        },
+        "low": {
+          "absolute_difference": 33.32031000000279,
+          "massive": 63398.0,
+          "matches": false,
+          "twelve": 63431.32031
+        },
+        "open": {
+          "absolute_difference": 3.075619999995979,
+          "massive": 63538.44,
+          "matches": false,
+          "twelve": 63541.51562
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-14",
+      "fields": {
+        "close": {
+          "absolute_difference": 55.398440000004484,
+          "massive": 65655.0,
+          "matches": false,
+          "twelve": 65710.39844
+        },
+        "high": {
+          "absolute_difference": 14.378750000003492,
+          "massive": 65764.16,
+          "matches": false,
+          "twelve": 65749.78125
+        },
+        "low": {
+          "absolute_difference": 46.02343799999653,
+          "massive": 63588.0,
+          "matches": false,
+          "twelve": 63634.023438
+        },
+        "open": {
+          "absolute_difference": 4.567970000003697,
+          "massive": 64415.6,
+          "matches": false,
+          "twelve": 64420.16797
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-15",
+      "fields": {
+        "close": {
+          "absolute_difference": 12.69999999999709,
+          "massive": 66276.8,
+          "matches": false,
+          "twelve": 66289.5
+        },
+        "high": {
+          "absolute_difference": 15.867190000004484,
+          "massive": 67264.0,
+          "matches": false,
+          "twelve": 67248.13281
+        },
+        "low": {
+          "absolute_difference": 43.83593999999721,
+          "massive": 65272.0,
+          "matches": false,
+          "twelve": 65315.83594
+        },
+        "open": {
+          "absolute_difference": 6.879379999998491,
+          "massive": 65704.23,
+          "matches": false,
+          "twelve": 65711.10938
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-16",
+      "fields": {
+        "close": {
+          "absolute_difference": 15.999379999993835,
+          "massive": 65616.64,
+          "matches": false,
+          "twelve": 65600.64062
+        },
+        "high": {
+          "absolute_difference": 46.39062000000558,
+          "massive": 66975.0,
+          "matches": false,
+          "twelve": 66928.60938
+        },
+        "low": {
+          "absolute_difference": 25.27031200000056,
+          "massive": 65289.8,
+          "matches": false,
+          "twelve": 65315.070312
+        },
+        "open": {
+          "absolute_difference": 12.670940000010887,
+          "massive": 66276.79,
+          "matches": false,
+          "twelve": 66289.46094
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-17",
+      "fields": {
+        "close": {
+          "absolute_difference": 27.59468999999808,
+          "massive": 64446.04,
+          "matches": false,
+          "twelve": 64418.44531
+        },
+        "high": {
+          "absolute_difference": 29.38499999999476,
+          "massive": 66384.01,
+          "matches": false,
+          "twelve": 66354.625
+        },
+        "low": {
+          "absolute_difference": 82.92968999999721,
+          "massive": 63788.0,
+          "matches": false,
+          "twelve": 63870.92969
+        },
+        "open": {
+          "absolute_difference": 16.210309999994934,
+          "massive": 65616.64,
+          "matches": false,
+          "twelve": 65600.42969
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-18",
+      "fields": {
+        "close": {
+          "absolute_difference": 17.462659999997413,
+          "massive": 62879.01,
+          "matches": false,
+          "twelve": 62896.47266
+        },
+        "high": {
+          "absolute_difference": 15.588120000000345,
+          "massive": 64752.51,
+          "matches": false,
+          "twelve": 64736.92188
+        },
+        "low": {
+          "absolute_difference": 41.38452999999572,
+          "massive": 62159.76,
+          "matches": false,
+          "twelve": 62201.14453
+        },
+        "open": {
+          "absolute_difference": 26.405470000005153,
+          "massive": 64446.05,
+          "matches": false,
+          "twelve": 64419.64453
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-19",
+      "fields": {
+        "close": {
+          "absolute_difference": 65.63594000000012,
+          "massive": 63475.2,
+          "matches": false,
+          "twelve": 63540.83594
+        },
+        "high": {
+          "absolute_difference": 58.77734000000055,
+          "massive": 63627.0,
+          "matches": false,
+          "twelve": 63568.22266
+        },
+        "low": {
+          "absolute_difference": 39.48202999999921,
+          "massive": 62236.1,
+          "matches": false,
+          "twelve": 62275.58203
+        },
+        "open": {
+          "absolute_difference": 11.815620000001218,
+          "massive": 62885.7,
+          "matches": false,
+          "twelve": 62897.51562
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-20",
+      "fields": {
+        "close": {
+          "absolute_difference": 16.685779999999795,
+          "massive": 64222.99,
+          "matches": false,
+          "twelve": 64239.67578
+        },
+        "high": {
+          "absolute_difference": 53.86327999999776,
+          "massive": 64361.0,
+          "matches": false,
+          "twelve": 64307.13672
+        },
+        "low": {
+          "absolute_difference": 18.28016000000207,
+          "massive": 63131.38,
+          "matches": false,
+          "twelve": 63149.66016
+        },
+        "open": {
+          "absolute_difference": 60.7285899999988,
+          "massive": 63475.08,
+          "matches": false,
+          "twelve": 63535.80859
+        }
+      },
+      "segment": "training",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-21",
+      "fields": {
+        "close": {
+          "absolute_difference": 1.909060000005411,
+          "massive": 63235.63,
+          "matches": false,
+          "twelve": 63237.53906
+        },
+        "high": {
+          "absolute_difference": 72.42188000000169,
+          "massive": 64579.0,
+          "matches": false,
+          "twelve": 64506.57812
+        },
+        "low": {
+          "absolute_difference": 49.80999999999767,
+          "massive": 63171.19,
+          "matches": false,
+          "twelve": 63221.0
+        },
+        "open": {
+          "absolute_difference": 19.324220000002242,
+          "massive": 64223.0,
+          "matches": false,
+          "twelve": 64242.32422
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-22",
+      "fields": {
+        "close": {
+          "absolute_difference": 1.49547000000166,
+          "massive": 63950.61,
+          "matches": false,
+          "twelve": 63952.10547
+        },
+        "high": {
+          "absolute_difference": 64.0,
+          "massive": 65608.0,
+          "matches": false,
+          "twelve": 65544.0
+        },
+        "low": {
+          "absolute_difference": 0.46875,
+          "massive": 63234.0,
+          "matches": false,
+          "twelve": 63233.53125
+        },
+        "open": {
+          "absolute_difference": 5.159060000005411,
+          "massive": 63235.63,
+          "matches": false,
+          "twelve": 63240.78906
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-23",
+      "fields": {
+        "close": {
+          "absolute_difference": 23.159530999997514,
+          "massive": 62644.86,
+          "matches": false,
+          "twelve": 62668.019531
+        },
+        "high": {
+          "absolute_difference": 65.4375,
+          "massive": 64262.0,
+          "matches": false,
+          "twelve": 64196.5625
+        },
+        "low": {
+          "absolute_difference": 184.20702999999776,
+          "massive": 61709.0,
+          "matches": false,
+          "twelve": 61893.20703
+        },
+        "open": {
+          "absolute_difference": 2.18297000000166,
+          "massive": 63950.61,
+          "matches": false,
+          "twelve": 63952.79297
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-24",
+      "fields": {
+        "close": {
+          "absolute_difference": 12.002810000005411,
+          "massive": 60983.13,
+          "matches": false,
+          "twelve": 60995.13281
+        },
+        "high": {
+          "absolute_difference": 131.2421899999972,
+          "massive": 63229.0,
+          "matches": false,
+          "twelve": 63097.75781
+        },
+        "low": {
+          "absolute_difference": 28.855470000002242,
+          "massive": 59001.0,
+          "matches": false,
+          "twelve": 59029.85547
+        },
+        "open": {
+          "absolute_difference": 18.171249999999418,
+          "massive": 62644.86,
+          "matches": false,
+          "twelve": 62663.03125
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-25",
+      "fields": {
+        "close": {
+          "absolute_difference": 14.575779999999213,
+          "massive": 59707.1,
+          "matches": false,
+          "twelve": 59721.67578
+        },
+        "high": {
+          "absolute_difference": 124.09375,
+          "massive": 61993.0,
+          "matches": false,
+          "twelve": 61868.90625
+        },
+        "low": {
+          "absolute_difference": 75.92188000000169,
+          "massive": 58000.0,
+          "matches": false,
+          "twelve": 58075.92188
+        },
+        "open": {
+          "absolute_difference": 8.93031200000405,
+          "massive": 60983.14,
+          "matches": false,
+          "twelve": 60992.070312
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-26",
+      "fields": {
+        "close": {
+          "absolute_difference": 13.899689999998373,
+          "massive": 60002.53,
+          "matches": false,
+          "twelve": 60016.42969
+        },
+        "high": {
+          "absolute_difference": 128.8125,
+          "massive": 60776.0,
+          "matches": false,
+          "twelve": 60647.1875
+        },
+        "low": {
+          "absolute_difference": 25.764999999999418,
+          "massive": 58243.36,
+          "matches": false,
+          "twelve": 58269.125
+        },
+        "open": {
+          "absolute_difference": 8.394687999993039,
+          "massive": 59703.66,
+          "matches": false,
+          "twelve": 59712.054688
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-27",
+      "fields": {
+        "close": {
+          "absolute_difference": 5.257656000001589,
+          "massive": 59934.84,
+          "matches": false,
+          "twelve": 59940.097656
+        },
+        "high": {
+          "absolute_difference": 94.953125,
+          "massive": 60930.0,
+          "matches": false,
+          "twelve": 60835.046875
+        },
+        "low": {
+          "absolute_difference": 31.521090000002005,
+          "massive": 59763.1,
+          "matches": false,
+          "twelve": 59794.62109
+        },
+        "open": {
+          "absolute_difference": 3.212500000001455,
+          "massive": 60013.1,
+          "matches": false,
+          "twelve": 60016.3125
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-28",
+      "fields": {
+        "close": {
+          "absolute_difference": 58.32983999999851,
+          "massive": 59474.01,
+          "matches": false,
+          "twelve": 59532.33984
+        },
+        "high": {
+          "absolute_difference": 116.29297000000224,
+          "massive": 60549.0,
+          "matches": false,
+          "twelve": 60432.70703
+        },
+        "low": {
+          "absolute_difference": 69.52281000000221,
+          "massive": 58810.11,
+          "matches": false,
+          "twelve": 58879.63281
+        },
+        "open": {
+          "absolute_difference": 1.1484399999972084,
+          "massive": 59941.5,
+          "matches": false,
+          "twelve": 59940.35156
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-29",
+      "fields": {
+        "close": {
+          "absolute_difference": 24.35109000000375,
+          "massive": 60162.73,
+          "matches": false,
+          "twelve": 60138.37891
+        },
+        "high": {
+          "absolute_difference": 100.66015999999945,
+          "massive": 60783.0,
+          "matches": false,
+          "twelve": 60682.33984
+        },
+        "low": {
+          "absolute_difference": 56.1875,
+          "massive": 58800.0,
+          "matches": false,
+          "twelve": 58856.1875
+        },
+        "open": {
+          "absolute_difference": 48.79906000000483,
+          "massive": 59473.99,
+          "matches": false,
+          "twelve": 59522.78906
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    },
+    {
+      "date": "2026-06-30",
+      "fields": {
+        "close": {
+          "absolute_difference": 34.9293800000014,
+          "massive": 58523.93,
+          "matches": false,
+          "twelve": 58558.85938
+        },
+        "high": {
+          "absolute_difference": 103.78125,
+          "massive": 60277.0,
+          "matches": false,
+          "twelve": 60173.21875
+        },
+        "low": {
+          "absolute_difference": 55.67188000000169,
+          "massive": 58056.0,
+          "matches": false,
+          "twelve": 58111.67188
+        },
+        "open": {
+          "absolute_difference": 26.276880000004894,
+          "massive": 60162.73,
+          "matches": false,
+          "twelve": 60136.45312
+        }
+      },
+      "segment": "validation",
+      "status": "value_mismatch"
+    }
+  ],
+  "run_id": "f7606ae1e251e357891a",
+  "status": "inconclusive_input_mismatch",
+  "summary": {
+    "massive_rows": 30,
+    "mismatch_rows": 30,
+    "twelve_rows": 30,
+    "validation_overlap_rows": 10
+  },
+  "validation_end": "2026-06-30",
+  "validation_start": "2026-06-21"
+}

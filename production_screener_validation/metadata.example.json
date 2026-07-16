@@ -1,0 +1,42 @@
+{
+  "AAPL": {
+    "asset_type": "stocks",
+    "compliance_status": "compliant",
+    "exchange": "NASDAQ",
+    "float_shares": null,
+    "name": "Apple Inc.",
+    "shares_outstanding": null
+  },
+  "AMD": {
+    "asset_type": "stocks",
+    "compliance_status": "compliant",
+    "exchange": "NASDAQ",
+    "float_shares": null,
+    "name": "Advanced Micro Devices, Inc.",
+    "shares_outstanding": null
+  },
+  "MSFT": {
+    "asset_type": "stocks",
+    "compliance_status": "compliant",
+    "exchange": "NASDAQ",
+    "float_shares": null,
+    "name": "Microsoft Corporation",
+    "shares_outstanding": null
+  },
+  "NVDA": {
+    "asset_type": "stocks",
+    "compliance_status": "compliant",
+    "exchange": "NASDAQ",
+    "float_shares": null,
+    "name": "NVIDIA Corporation",
+    "shares_outstanding": null
+  },
+  "TSLA": {
+    "asset_type": "stocks",
+    "compliance_status": "questionable",
+    "exchange": "NASDAQ",
+    "float_shares": null,
+    "name": "Tesla, Inc.",
+    "shares_outstanding": null
+  }
+}

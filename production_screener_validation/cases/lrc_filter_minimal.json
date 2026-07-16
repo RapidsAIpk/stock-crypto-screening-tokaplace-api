@@ -1,0 +1,734 @@
+{
+  "suite_id": "lrc_filter_minimal",
+  "cases": [
+    {
+      "id": "lrc_upper_touched",
+      "description": "LRC core: upper touched",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "upper"
+            ],
+            "action": "touched",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_upper_closedabove",
+      "description": "LRC core: upper closed_above",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "upper"
+            ],
+            "action": "closed_above",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_upper_closedbelow",
+      "description": "LRC core: upper closed_below",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "upper"
+            ],
+            "action": "closed_below",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_middle_touched",
+      "description": "LRC core: middle touched",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "middle"
+            ],
+            "action": "touched",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_middle_closedabove",
+      "description": "LRC core: middle closed_above",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "middle"
+            ],
+            "action": "closed_above",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_middle_closedbelow",
+      "description": "LRC core: middle closed_below",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "middle"
+            ],
+            "action": "closed_below",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_lower_touched",
+      "description": "LRC core: lower touched",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "lower"
+            ],
+            "action": "touched",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_lower_closedabove",
+      "description": "LRC core: lower closed_above",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "lower"
+            ],
+            "action": "closed_above",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_lower_closedbelow",
+      "description": "LRC core: lower closed_below",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "lower"
+            ],
+            "action": "closed_below",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_ofat_window_3",
+      "description": "LRC OFAT from middle/touched: window 3",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "middle"
+            ],
+            "action": "touched",
+            "window": 3,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_ofat_tolerance_5",
+      "description": "LRC OFAT from middle/touched: tolerance 5",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "middle"
+            ],
+            "action": "touched",
+            "window": 1,
+            "tolerance_pct": 5,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_ofat_length_100",
+      "description": "LRC OFAT from middle/touched: length 100",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "middle"
+            ],
+            "action": "touched",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_ofat_touch_wick",
+      "description": "LRC OFAT from middle/touched: touch wick",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "middle"
+            ],
+            "action": "touched",
+            "window": 1,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false,
+            "touch_type": "wick"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lrc_upper_touch_20260601",
+      "description": "LRC walk-forward: upper touched on Jun 1",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "upper"
+            ],
+            "action": "touched",
+            "window": 2,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-01"
+    },
+    {
+      "id": "lrc_lower_touch_20260601",
+      "description": "LRC walk-forward: lower touched on Jun 1",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "lower"
+            ],
+            "action": "touched",
+            "window": 2,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-01"
+    },
+    {
+      "id": "lrc_upper_touch_20260602",
+      "description": "LRC walk-forward: upper touched on Jun 2",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "upper"
+            ],
+            "action": "touched",
+            "window": 2,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-02"
+    },
+    {
+      "id": "lrc_lower_touch_20260602",
+      "description": "LRC walk-forward: lower touched on Jun 2",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "lower"
+            ],
+            "action": "touched",
+            "window": 2,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-02"
+    },
+    {
+      "id": "lrc_upper_touch_20260630",
+      "description": "LRC walk-forward: upper touched on Jun 30",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "upper"
+            ],
+            "action": "touched",
+            "window": 2,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-30"
+    },
+    {
+      "id": "lrc_lower_touch_20260630",
+      "description": "LRC walk-forward: lower touched on Jun 30",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "lrc",
+          "timeframe": "single",
+          "config": {
+            "length": 100,
+            "upper_dev": 2.0,
+            "lower_dev": 2.0,
+            "lines": [
+              "lower"
+            ],
+            "action": "touched",
+            "window": 2,
+            "tolerance_pct": 0,
+            "r_mode": "ignore",
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-30"
+    }
+  ]
+}

@@ -1,0 +1,679 @@
+{
+  "suite_id": "linreg_candles_filter_minimal",
+  "cases": [
+    {
+      "id": "linreg_above_any",
+      "description": "LinReg core: above, close=any",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_above_bullish",
+      "description": "LinReg core: above, close=bullish",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false,
+            "close_location": "bullish"
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_above_bearish",
+      "description": "LinReg core: above, close=bearish",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false,
+            "close_location": "bearish"
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_below_any",
+      "description": "LinReg core: below, close=any",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "below",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_below_bullish",
+      "description": "LinReg core: below, close=bullish",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "below",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false,
+            "close_location": "bullish"
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_below_bearish",
+      "description": "LinReg core: below, close=bearish",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "below",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false,
+            "close_location": "bearish"
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_touch_any",
+      "description": "LinReg core: touch, close=any",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "on",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_touch_bullish",
+      "description": "LinReg core: touch, close=bullish",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "on",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false,
+            "close_location": "bullish"
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_touch_bearish",
+      "description": "LinReg core: touch, close=bearish",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "on",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false,
+            "close_location": "bearish"
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_ofat_lr_len_11",
+      "description": "LinReg OFAT from above: lr len 11",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_ofat_smooth_11",
+      "description": "LinReg OFAT from above: smooth 11",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false,
+            "sma_signal": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_ofat_ema_signal",
+      "description": "LinReg OFAT from above: ema signal",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false,
+            "sma_signal": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_ofat_window_3",
+      "description": "LinReg OFAT from above: window 3",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 3,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_ofat_tolerance_5",
+      "description": "LinReg OFAT from above: tolerance 5",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 1,
+            "tolerance_pct": 5,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "linreg_above_20260601",
+      "description": "LinReg walk-forward: above on Jun 1",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 2,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-01"
+    },
+    {
+      "id": "linreg_below_20260601",
+      "description": "LinReg walk-forward: below on Jun 1",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "below",
+            "window": 2,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-01"
+    },
+    {
+      "id": "linreg_above_20260602",
+      "description": "LinReg walk-forward: above on Jun 2",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 2,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-02"
+    },
+    {
+      "id": "linreg_below_20260602",
+      "description": "LinReg walk-forward: below on Jun 2",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "below",
+            "window": 2,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-02"
+    },
+    {
+      "id": "linreg_above_20260630",
+      "description": "LinReg walk-forward: above on Jun 30",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "above",
+            "window": 2,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-30"
+    },
+    {
+      "id": "linreg_below_20260630",
+      "description": "LinReg walk-forward: below on Jun 30",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "linreg_candles",
+          "timeframe": "single",
+          "config": {
+            "lr_length": 11,
+            "signal_smoothing": 11,
+            "price_position": "below",
+            "window": 2,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-30"
+    }
+  ]
+}

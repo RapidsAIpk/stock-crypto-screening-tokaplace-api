@@ -1,0 +1,161 @@
+{
+  "candidate_id": "4d8912990f26f263abc3e306",
+  "case_checksum": "0d07a08150d1102fadc31c8d67b48b6ec688189ab51e64f8ffcc87fedc60f95e",
+  "case_id": "rsi",
+  "fixture_hash": "9a9d16ae5e051cecff47d4f875632cbbccaef0f431ac7eedd3e4a5373a7265cb",
+  "fixture_id": "stocks_daily_2026_06_30_v1",
+  "generated_at": "2026-07-14T14:39:43.152553+00:00",
+  "reference": {
+    "case_checksum": "0d07a08150d1102fadc31c8d67b48b6ec688189ab51e64f8ffcc87fedc60f95e",
+    "case_id": "rsi",
+    "excluded_symbols": [
+      "AAPL",
+      "AMD",
+      "MSFT",
+      "NVDA",
+      "TSLA"
+    ],
+    "expected_symbols": [],
+    "fixture_hash": "9a9d16ae5e051cecff47d4f875632cbbccaef0f431ac7eedd3e4a5373a7265cb",
+    "fixture_id": "stocks_daily_2026_06_30_v1",
+    "insufficient_data_symbols": [],
+    "reference_engine": "TA-Lib plus independent validation oracles",
+    "scope": "single",
+    "status": "evaluated",
+    "symbol_evidence": {
+      "AAPL": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": false,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "compliant",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "Apple Inc.",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "rsi",
+            "passed": false,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "rsi": 46.91116212637808
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "AAPL"
+      },
+      "AMD": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": false,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "compliant",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "Advanced Micro Devices, Inc.",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "rsi",
+            "passed": false,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "rsi": 64.94245617261495
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "AMD"
+      },
+      "MSFT": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": false,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "compliant",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "Microsoft Corporation",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "rsi",
+            "passed": false,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "rsi": 41.308624354301585
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "MSFT"
+      },
+      "NVDA": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": false,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "compliant",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "NVIDIA Corporation",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "rsi",
+            "passed": false,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "rsi": 45.21381183673035
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "NVDA"
+      },
+      "TSLA": {
+        "earliest_stage": null,
+        "error": null,
+        "expected": false,
+        "metadata": {
+          "asset_type": "stocks",
+          "compliance_status": "questionable",
+          "exchange": "NASDAQ",
+          "float_shares": null,
+          "name": "Tesla, Inc.",
+          "shares_outstanding": null
+        },
+        "rules": [
+          {
+            "indicator": "rsi",
+            "passed": false,
+            "signal_index": 312,
+            "signal_timestamp": "2026-06-30T04:00:00+00:00",
+            "values": {
+              "rsi": 56.78151894870578
+            }
+          }
+        ],
+        "status": "evaluated",
+        "symbol": "TSLA"
+      }
+    },
+    "talib_version": "0.6.8",
+    "timeframe": "1day"
+  },
+  "schema_version": 1
+}

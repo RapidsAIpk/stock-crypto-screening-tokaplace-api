@@ -1,0 +1,637 @@
+{
+  "suite_id": "rsi_filter_minimal",
+  "cases": [
+    {
+      "id": "rsi_os_any_l14_w1_t0_c0",
+      "description": "RSI core: oversold, any",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "oversold",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_os_tup_l14_w1_t0_c0",
+      "description": "RSI core: oversold, tup",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "oversold",
+            "direction": "turning_up",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_os_tdn_l14_w1_t0_c0",
+      "description": "RSI core: oversold, tdn",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "oversold",
+            "direction": "turning_down",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_ne_any_l14_w1_t0_c0",
+      "description": "RSI core: neutral, any",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "neutral",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_ne_tup_l14_w1_t0_c0",
+      "description": "RSI core: neutral, tup",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "neutral",
+            "direction": "turning_up",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_ne_tdn_l14_w1_t0_c0",
+      "description": "RSI core: neutral, tdn",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "neutral",
+            "direction": "turning_down",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_ob_any_l14_w1_t0_c0",
+      "description": "RSI core: overbought, any",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_ob_tup_l14_w1_t0_c0",
+      "description": "RSI core: overbought, tup",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": "turning_up",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_ob_tdn_l14_w1_t0_c0",
+      "description": "RSI core: overbought, tdn",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": "turning_down",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_neutral_any_length_7",
+      "description": "RSI OFAT from neutral/any: length 7",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 7,
+            "location": "neutral",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_neutral_any_length_21",
+      "description": "RSI OFAT from neutral/any: length 21",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 21,
+            "location": "neutral",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_neutral_any_window_3",
+      "description": "RSI OFAT from neutral/any: window 3",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "neutral",
+            "direction": null,
+            "window": 3,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_neutral_any_tolerance_5",
+      "description": "RSI OFAT from neutral/any: tolerance 5",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "neutral",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 5,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_neutral_any_confirmation_on",
+      "description": "RSI OFAT from neutral/any: confirmation on",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "neutral",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_ob_any_l14_w1_t0_c0_20260602",
+      "description": "RSI walk-forward: overbought window=1 on Jun 2 peak",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-02"
+    },
+    {
+      "id": "rsi_ob_any_l14_w2_t0_c0_20260602",
+      "description": "RSI walk-forward: overbought window=2 on Jun 2 peak",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 2,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-02"
+    },
+    {
+      "id": "rsi_ob_any_l14_w3_t0_c0_20260602",
+      "description": "RSI walk-forward: overbought window=3 on Jun 2 peak",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 3,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-02"
+    },
+    {
+      "id": "rsi_ob_any_l14_w1_t0_c0_20260601",
+      "description": "RSI walk-forward: overbought tolerance boundary on Jun 1",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-01"
+    },
+    {
+      "id": "rsi_ob_any_l14_w1_t5_c0_20260601",
+      "description": "RSI walk-forward: overbought tolerance=5 on Jun 1",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 5,
+            "confirmation": false
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-01"
+    }
+  ]
+}

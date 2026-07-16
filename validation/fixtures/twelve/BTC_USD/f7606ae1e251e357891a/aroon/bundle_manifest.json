@@ -1,0 +1,17 @@
+{
+  "derived_files": {
+    "candles.csv": {
+      "sha256": "71ce9980f196fac23d8f4ca367cf0ef6670495371446ce1a58070054c0d626a0",
+      "source_sha256": "68cef04a31f6b530bca139cf4750c6e70f3a285d377893805a9b68b993d35ffe"
+    },
+    "reference.csv": {
+      "sha256": "d6375d446089250d1ee1858cc22d8e7dc8df5898110ccbc4fc2612c1dbfd1e46",
+      "source_sha256": "19152a3bd8fc0e70fdf33fc9925a661a9ba0c5ea05390c18b1a5f24678f2fba3"
+    }
+  },
+  "indicator": "aroon",
+  "raw_checksums": {
+    "candles.raw.json": "68cef04a31f6b530bca139cf4750c6e70f3a285d377893805a9b68b993d35ffe",
+    "indicator.raw.json": "19152a3bd8fc0e70fdf33fc9925a661a9ba0c5ea05390c18b1a5f24678f2fba3"
+  }
+}

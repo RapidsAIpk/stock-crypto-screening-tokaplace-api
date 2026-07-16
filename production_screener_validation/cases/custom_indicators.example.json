@@ -1,0 +1,40 @@
+{
+  "suite_id": "custom_indicators",
+  "cases": [
+    {
+      "id": "wavetrend_cross_up",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+      "single_timeframe": "1day",
+      "indicators": [{"name": "wavetrend", "timeframe": "single", "config": {"channel_length": 10, "average_length": 21, "signal_length": 4, "zone": "any", "direction": "crossed_up", "window": 5, "tolerance_pct": 0, "confirmation": false}}]
+    },
+    {
+      "id": "lrc_middle_touch",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+      "single_timeframe": "1day",
+      "indicators": [{"name": "lrc", "timeframe": "single", "config": {"length": 100, "upper_dev": 2, "lower_dev": 2, "lines": ["middle"], "action": "touched", "touch_type": "both", "window": 5, "tolerance_pct": 0.2, "r_mode": "ignore", "r_min": 0, "r_max": 1, "confirmation": false}}]
+    },
+    {
+      "id": "regression_upper_breach",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+      "single_timeframe": "1day",
+      "indicators": [{"name": "regression", "timeframe": "single", "config": {"length": 200, "width_coeff": 1, "window_type": "continuous", "interval_step": 1, "lines": ["upper"], "action": "breach", "breach_direction": "up", "touch_type": "wick", "window": 5, "tolerance_pct": 0.2, "confirmation": false}}]
+    },
+    {
+      "id": "trend_top_line",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+      "single_timeframe": "1day",
+      "indicators": [{"name": "trend", "timeframe": "single", "config": {"length": 20, "wait_for_break": true, "show_last_channel": true, "areas": [{"area": "top_line", "action": "closed_above", "window": 3, "tolerance_pct": 0.1, "confirmation": false}]}}]
+    },
+    {
+      "id": "linreg_above",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+      "single_timeframe": "1day",
+      "indicators": [{"name": "linreg_candles", "timeframe": "single", "config": {"lr_length": 11, "signal_smoothing": 7, "price_position": "above", "close_location": "bullish", "window": 3, "tolerance_pct": 0.1, "confirmation": false}}]
+    }
+  ]
+}

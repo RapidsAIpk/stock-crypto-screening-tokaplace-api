@@ -1,0 +1,680 @@
+{
+  "suite_id": "standard_indicators",
+  "cases": [
+    {
+      "id": "rsi",
+      "description": "RSI",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "aroon",
+      "description": "AROON",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "aroon",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "level": "above_50",
+            "direction": null,
+            "window": 1,
+            "extreme_level": 70,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "macd",
+      "description": "MACD",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "macd",
+          "timeframe": "single",
+          "config": {
+            "fast": 12,
+            "slow": 26,
+            "signal": 9,
+            "rule": "above_zero",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "ema",
+      "description": "EMA",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "ema",
+          "timeframe": "single",
+          "config": {
+            "length": 9,
+            "rule": "above",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_and_aroon",
+      "description": "RSI AND AROON",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "aroon",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "level": "above_50",
+            "direction": null,
+            "window": 1,
+            "extreme_level": 70,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_and_macd",
+      "description": "RSI AND MACD",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "macd",
+          "timeframe": "single",
+          "config": {
+            "fast": 12,
+            "slow": 26,
+            "signal": 9,
+            "rule": "above_zero",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_and_ema",
+      "description": "RSI AND EMA",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "ema",
+          "timeframe": "single",
+          "config": {
+            "length": 9,
+            "rule": "above",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "aroon_and_macd",
+      "description": "AROON AND MACD",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "aroon",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "level": "above_50",
+            "direction": null,
+            "window": 1,
+            "extreme_level": 70,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "macd",
+          "timeframe": "single",
+          "config": {
+            "fast": 12,
+            "slow": 26,
+            "signal": 9,
+            "rule": "above_zero",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "aroon_and_ema",
+      "description": "AROON AND EMA",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "aroon",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "level": "above_50",
+            "direction": null,
+            "window": 1,
+            "extreme_level": 70,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "ema",
+          "timeframe": "single",
+          "config": {
+            "length": 9,
+            "rule": "above",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "macd_and_ema",
+      "description": "MACD AND EMA",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "macd",
+          "timeframe": "single",
+          "config": {
+            "fast": 12,
+            "slow": 26,
+            "signal": 9,
+            "rule": "above_zero",
+            "tolerance_pct": 0
+          }
+        },
+        {
+          "name": "ema",
+          "timeframe": "single",
+          "config": {
+            "length": 9,
+            "rule": "above",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_and_aroon_and_macd",
+      "description": "RSI AND AROON AND MACD",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "aroon",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "level": "above_50",
+            "direction": null,
+            "window": 1,
+            "extreme_level": 70,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "macd",
+          "timeframe": "single",
+          "config": {
+            "fast": 12,
+            "slow": 26,
+            "signal": 9,
+            "rule": "above_zero",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_and_aroon_and_ema",
+      "description": "RSI AND AROON AND EMA",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "aroon",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "level": "above_50",
+            "direction": null,
+            "window": 1,
+            "extreme_level": 70,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "ema",
+          "timeframe": "single",
+          "config": {
+            "length": 9,
+            "rule": "above",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_and_macd_and_ema",
+      "description": "RSI AND MACD AND EMA",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "macd",
+          "timeframe": "single",
+          "config": {
+            "fast": 12,
+            "slow": 26,
+            "signal": 9,
+            "rule": "above_zero",
+            "tolerance_pct": 0
+          }
+        },
+        {
+          "name": "ema",
+          "timeframe": "single",
+          "config": {
+            "length": 9,
+            "rule": "above",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "aroon_and_macd_and_ema",
+      "description": "AROON AND MACD AND EMA",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "aroon",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "level": "above_50",
+            "direction": null,
+            "window": 1,
+            "extreme_level": 70,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "macd",
+          "timeframe": "single",
+          "config": {
+            "fast": 12,
+            "slow": 26,
+            "signal": 9,
+            "rule": "above_zero",
+            "tolerance_pct": 0
+          }
+        },
+        {
+          "name": "ema",
+          "timeframe": "single",
+          "config": {
+            "length": 9,
+            "rule": "above",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "rsi_and_aroon_and_macd_and_ema",
+      "description": "RSI AND AROON AND MACD AND EMA",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "AMD"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "rsi",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "location": "overbought",
+            "direction": null,
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "aroon",
+          "timeframe": "single",
+          "config": {
+            "length": 14,
+            "level": "above_50",
+            "direction": null,
+            "window": 1,
+            "extreme_level": 70,
+            "tolerance_pct": 0,
+            "confirmation": false
+          }
+        },
+        {
+          "name": "macd",
+          "timeframe": "single",
+          "config": {
+            "fast": 12,
+            "slow": 26,
+            "signal": 9,
+            "rule": "above_zero",
+            "tolerance_pct": 0
+          }
+        },
+        {
+          "name": "ema",
+          "timeframe": "single",
+          "config": {
+            "length": 9,
+            "rule": "above",
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    }
+  ]
+}

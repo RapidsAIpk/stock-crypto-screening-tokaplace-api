@@ -1,0 +1,254 @@
+{
+  "bundles": {
+    "aroon": {
+      "derived_files": {
+        "candles.csv": {
+          "sha256": "a6d6d9f66e5039f2a5b4a45ef7b947027add9375cc5baf9c3975a08ebf4f5953",
+          "source_sha256": "20a6295ac5dfc5bb582d31efd68aa89b69d2472f668d6eb3ec37b9478e96007d"
+        },
+        "reference.csv": {
+          "sha256": "2de1fb3a43221d8ec64dd9b334fa59cf946c2adf961e09cd61f378ff38b9c064",
+          "source_sha256": "30e1e5e61eaffcce2c14f7d203f5e6c101ffc642669f06980d3c649c8d986c1f"
+        }
+      },
+      "indicator": "aroon",
+      "raw_checksums": {
+        "candles.raw.json": "20a6295ac5dfc5bb582d31efd68aa89b69d2472f668d6eb3ec37b9478e96007d",
+        "indicator.raw.json": "30e1e5e61eaffcce2c14f7d203f5e6c101ffc642669f06980d3c649c8d986c1f"
+      }
+    },
+    "ema": {
+      "derived_files": {
+        "candles.csv": {
+          "sha256": "a6d6d9f66e5039f2a5b4a45ef7b947027add9375cc5baf9c3975a08ebf4f5953",
+          "source_sha256": "20a6295ac5dfc5bb582d31efd68aa89b69d2472f668d6eb3ec37b9478e96007d"
+        },
+        "reference.csv": {
+          "sha256": "284ffaa76610846b502722f0f87cb183d6950004a389a807d2d6567023008e4a",
+          "source_sha256": "c7c104515ce2e6fd74ed56281fa13bca6c9e48382802fe7f1fe066787e780310"
+        }
+      },
+      "indicator": "ema",
+      "raw_checksums": {
+        "candles.raw.json": "20a6295ac5dfc5bb582d31efd68aa89b69d2472f668d6eb3ec37b9478e96007d",
+        "indicator.raw.json": "c7c104515ce2e6fd74ed56281fa13bca6c9e48382802fe7f1fe066787e780310"
+      }
+    },
+    "macd": {
+      "derived_files": {
+        "candles.csv": {
+          "sha256": "a6d6d9f66e5039f2a5b4a45ef7b947027add9375cc5baf9c3975a08ebf4f5953",
+          "source_sha256": "20a6295ac5dfc5bb582d31efd68aa89b69d2472f668d6eb3ec37b9478e96007d"
+        },
+        "reference.csv": {
+          "sha256": "9c65c832782248dde1206316166092d645232687175756b6b77525173f55e308",
+          "source_sha256": "67da4f6efbff627b1f07ba2160040bbd7359c58162fcabfd7dbbbef1b0e437bc"
+        }
+      },
+      "indicator": "macd",
+      "raw_checksums": {
+        "candles.raw.json": "20a6295ac5dfc5bb582d31efd68aa89b69d2472f668d6eb3ec37b9478e96007d",
+        "indicator.raw.json": "67da4f6efbff627b1f07ba2160040bbd7359c58162fcabfd7dbbbef1b0e437bc"
+      }
+    },
+    "rsi": {
+      "derived_files": {
+        "candles.csv": {
+          "sha256": "a6d6d9f66e5039f2a5b4a45ef7b947027add9375cc5baf9c3975a08ebf4f5953",
+          "source_sha256": "20a6295ac5dfc5bb582d31efd68aa89b69d2472f668d6eb3ec37b9478e96007d"
+        },
+        "reference.csv": {
+          "sha256": "9b013f763705594a7bfe3c32fa7057d27ae50804b562ac32622d0e2428448f4b",
+          "source_sha256": "3c38cb4f73fd5b68e85a9a5737d637bc3bb299a3b6c6c7b1ee7f26f246e4470c"
+        }
+      },
+      "indicator": "rsi",
+      "raw_checksums": {
+        "candles.raw.json": "20a6295ac5dfc5bb582d31efd68aa89b69d2472f668d6eb3ec37b9478e96007d",
+        "indicator.raw.json": "3c38cb4f73fd5b68e85a9a5737d637bc3bb299a3b6c6c7b1ee7f26f246e4470c"
+      }
+    }
+  },
+  "code_revision": "unknown",
+  "created_at": "2026-07-14T14:46:17.256117+00:00",
+  "provider_metadata": {
+    "aroon": {
+      "currency_base": "Bitcoin",
+      "currency_quote": "US Dollar",
+      "exchange": "Binance",
+      "indicator": {
+        "name": "AROON - Aroon Indicator",
+        "time_period": 14
+      },
+      "interval": "30min",
+      "symbol": "BTC/USD",
+      "type": "Digital Currency"
+    },
+    "ema": {
+      "currency_base": "Bitcoin",
+      "currency_quote": "US Dollar",
+      "exchange": "Binance",
+      "indicator": {
+        "name": "EMA - Exponential Moving Average",
+        "series_type": "close",
+        "time_period": 9
+      },
+      "interval": "30min",
+      "symbol": "BTC/USD",
+      "type": "Digital Currency"
+    },
+    "macd": {
+      "currency_base": "Bitcoin",
+      "currency_quote": "US Dollar",
+      "exchange": "Binance",
+      "indicator": {
+        "fast_period": 12,
+        "name": "MACD - Moving Average Convergence Divergence",
+        "series_type": "close",
+        "signal_period": 9,
+        "slow_period": 26
+      },
+      "interval": "30min",
+      "symbol": "BTC/USD",
+      "type": "Digital Currency"
+    },
+    "rsi": {
+      "currency_base": "Bitcoin",
+      "currency_quote": "US Dollar",
+      "exchange": "Binance",
+      "indicator": {
+        "name": "RSI - Relative Strength Index",
+        "series_type": "close",
+        "time_period": 14
+      },
+      "interval": "30min",
+      "symbol": "BTC/USD",
+      "type": "Digital Currency"
+    },
+    "time_series": {
+      "currency_base": "Bitcoin",
+      "currency_quote": "US Dollar",
+      "exchange": "Binance",
+      "interval": "30min",
+      "symbol": "BTC/USD",
+      "type": "Digital Currency"
+    }
+  },
+  "provider_warnings": {},
+  "requests": {
+    "aroon": {
+      "endpoint": "aroon",
+      "fetched_at": "2026-07-14T14:46:15.589480+00:00",
+      "params": {
+        "adjust": "splits",
+        "end_date": "2026-06-30",
+        "interval": "30min",
+        "order": "ASC",
+        "outputsize": 5000,
+        "start_date": "2026-06-01",
+        "symbol": "BTC/USD",
+        "time_period": 14,
+        "timezone": "UTC"
+      }
+    },
+    "ema": {
+      "endpoint": "ema",
+      "fetched_at": "2026-07-14T14:46:17.201486+00:00",
+      "params": {
+        "adjust": "splits",
+        "end_date": "2026-06-30",
+        "interval": "30min",
+        "order": "ASC",
+        "outputsize": 5000,
+        "series_type": "close",
+        "start_date": "2026-06-01",
+        "symbol": "BTC/USD",
+        "time_period": 9,
+        "timezone": "UTC"
+      }
+    },
+    "macd": {
+      "endpoint": "macd",
+      "fetched_at": "2026-07-14T14:46:16.543655+00:00",
+      "params": {
+        "adjust": "splits",
+        "end_date": "2026-06-30",
+        "fast_period": 12,
+        "interval": "30min",
+        "order": "ASC",
+        "outputsize": 5000,
+        "series_type": "close",
+        "signal_period": 9,
+        "slow_period": 26,
+        "start_date": "2026-06-01",
+        "symbol": "BTC/USD",
+        "timezone": "UTC"
+      }
+    },
+    "rsi": {
+      "endpoint": "rsi",
+      "fetched_at": "2026-07-14T14:46:14.649882+00:00",
+      "params": {
+        "adjust": "splits",
+        "end_date": "2026-06-30",
+        "interval": "30min",
+        "order": "ASC",
+        "outputsize": 5000,
+        "series_type": "close",
+        "start_date": "2026-06-01",
+        "symbol": "BTC/USD",
+        "time_period": 14,
+        "timezone": "UTC"
+      }
+    },
+    "time_series": {
+      "endpoint": "time_series",
+      "fetched_at": "2026-07-14T14:46:12.641755+00:00",
+      "params": {
+        "adjust": "splits",
+        "end_date": "2026-06-30",
+        "interval": "30min",
+        "order": "ASC",
+        "outputsize": 5000,
+        "start_date": "2026-06-01",
+        "symbol": "BTC/USD",
+        "timezone": "UTC"
+      }
+    }
+  },
+  "run_id": "e6f97b63f144da9ca051",
+  "schema_version": 1,
+  "spec": {
+    "adjustment": "splits",
+    "closed_candles_only": true,
+    "comparison_end": "2026-06-30",
+    "comparison_start": "2026-06-01",
+    "data_split": {
+      "basis": "calendar_days",
+      "training_days": 20,
+      "training_end": "2026-06-20",
+      "training_start": "2026-06-01",
+      "validation_days": 10,
+      "validation_end": "2026-06-30",
+      "validation_start": "2026-06-21"
+    },
+    "indicators": {
+      "aroon_length": 14,
+      "ema_length": 9,
+      "macd_fast": 12,
+      "macd_signal": 9,
+      "macd_slow": 26,
+      "rsi_length": 14,
+      "series_type": "close"
+    },
+    "provider_symbols": {
+      "massive": "BTC/USD",
+      "twelve": "BTC/USD"
+    },
+    "schema_version": 1,
+    "symbol": "BTC/USD",
+    "timeframe": "30min",
+    "timezone": "UTC",
+    "tolerance": {}
+  }
+}

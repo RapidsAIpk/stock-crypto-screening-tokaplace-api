@@ -1,0 +1,14 @@
+{
+  "rsi": 0.01,
+  "rsi.relative": 0.0001,
+  "aroon": 0.01,
+  "aroon.relative": 0.0001,
+  "macd.macd": 0.0001,
+  "macd.macd.relative": 0.0001,
+  "macd.signal": 0.0001,
+  "macd.signal.relative": 0.0001,
+  "macd.hist": 0.0001,
+  "macd.hist.relative": 0.0001,
+  "ema": 0.0001,
+  "ema.relative": 0.0001
+}

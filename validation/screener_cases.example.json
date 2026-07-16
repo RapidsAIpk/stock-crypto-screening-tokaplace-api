@@ -1,0 +1,64 @@
+{
+  "cases": [
+    {
+      "id": "rsi_overbought",
+      "indicator": "rsi",
+      "config": {
+        "length": 14,
+        "location": "overbought",
+        "window": 1,
+        "confirmation": false
+      }
+    },
+    {
+      "id": "aroon_bullish",
+      "indicator": "aroon",
+      "config": {
+        "length": 14,
+        "level": "above_50",
+        "window": 1,
+        "confirmation": false
+      }
+    },
+    {
+      "id": "macd_positive",
+      "indicator": "macd",
+      "config": {
+        "fast": 12,
+        "slow": 26,
+        "signal": 9,
+        "rule": "above_zero"
+      }
+    },
+    {
+      "id": "price_above_ema",
+      "indicator": "ema",
+      "config": {
+        "length": 9,
+        "rule": "above"
+      }
+    }
+  ],
+  "combined": [
+    {
+      "id": "all_four",
+      "operator": "all",
+      "case_ids": [
+        "rsi_overbought",
+        "aroon_bullish",
+        "macd_positive",
+        "price_above_ema"
+      ]
+    },
+    {
+      "id": "any_four",
+      "operator": "any",
+      "case_ids": [
+        "rsi_overbought",
+        "aroon_bullish",
+        "macd_positive",
+        "price_above_ema"
+      ]
+    }
+  ]
+}

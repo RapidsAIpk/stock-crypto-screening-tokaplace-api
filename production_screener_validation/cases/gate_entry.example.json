@@ -1,0 +1,18 @@
+{
+  "suite_id": "gate_entry",
+  "cases": [
+    {
+      "id": "daily_rsi_gate_hourly_macd_entry",
+      "fixture_id": "stocks_multi_timeframe_v1",
+      "symbols": ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+      "timeframe_mode": "gate_entry",
+      "single_timeframe": null,
+      "gate_timeframe": "1day",
+      "entry_timeframe": "1h",
+      "indicators": [
+        {"name": "rsi", "timeframe": "primary", "config": {"length": 14, "location": "overbought", "direction": null, "window": 1, "tolerance_pct": 0, "confirmation": false}},
+        {"name": "macd", "timeframe": "secondary", "config": {"fast": 12, "slow": 26, "signal": 9, "rule": "bullish_cross", "tolerance_pct": 0}}
+      ]
+    }
+  ]
+}

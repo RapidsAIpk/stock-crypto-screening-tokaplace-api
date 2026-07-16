@@ -1,0 +1,64 @@
+{
+  "code_revision": "unknown",
+  "created_at": "2026-07-14T13:47:37.245033+00:00",
+  "derived_files": {
+    "candles.csv": {
+      "sha256": "425a7774e8c2d50f251ce6ec25f66384730150d01efe7a3cab7b75286c5e62e7",
+      "source_sha256": "b0b9a3252a20fd10d6ec5612d20ba8a182e75612085436218fc714f4a8d3883b"
+    }
+  },
+  "provider_metadata": {
+    "adjusted": true,
+    "count": 30,
+    "queryCount": 30,
+    "request_id": "13b3d27358aadf050a610ae3a3aa8cdc",
+    "resultsCount": 30,
+    "status": "OK",
+    "ticker": "X:BTCUSD"
+  },
+  "raw_checksum": "b0b9a3252a20fd10d6ec5612d20ba8a182e75612085436218fc714f4a8d3883b",
+  "request": {
+    "endpoint": "v2/aggs/ticker/X:BTCUSD/range/1/day/2026-06-01/2026-06-30",
+    "fetched_at": "2026-07-14T13:47:37.241021+00:00",
+    "params": {
+      "adjusted": true,
+      "limit": 50000,
+      "sort": "asc"
+    }
+  },
+  "run_id": "f7606ae1e251e357891a",
+  "schema_version": 1,
+  "spec": {
+    "adjustment": "splits",
+    "closed_candles_only": true,
+    "comparison_end": "2026-06-30",
+    "comparison_start": "2026-06-01",
+    "data_split": {
+      "basis": "calendar_days",
+      "training_days": 20,
+      "training_end": "2026-06-20",
+      "training_start": "2026-06-01",
+      "validation_days": 10,
+      "validation_end": "2026-06-30",
+      "validation_start": "2026-06-21"
+    },
+    "indicators": {
+      "aroon_length": 14,
+      "ema_length": 9,
+      "macd_fast": 12,
+      "macd_signal": 9,
+      "macd_slow": 26,
+      "rsi_length": 14,
+      "series_type": "close"
+    },
+    "provider_symbols": {
+      "massive": "BTC/USD",
+      "twelve": "BTC/USD"
+    },
+    "schema_version": 1,
+    "symbol": "BTC/USD",
+    "timeframe": "1day",
+    "timezone": "UTC",
+    "tolerance": {}
+  }
+}

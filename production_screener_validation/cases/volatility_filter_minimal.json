@@ -1,0 +1,296 @@
+{
+  "suite_id": "volatility_filter_minimal",
+  "cases": [
+    {
+      "id": "vol_range_avg",
+      "description": "Volatility core: mode=range_avg",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "volatility",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_pct": 0,
+            "max_pct": 100,
+            "tolerance_pct": 0,
+            "mode": "range_avg"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vol_daily",
+      "description": "Volatility core: mode=daily",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "volatility",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_pct": 0,
+            "max_pct": 100,
+            "tolerance_pct": 0,
+            "mode": "daily"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vol_ofat_length_20",
+      "description": "Volatility OFAT: length 20",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "volatility",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_pct": 0,
+            "max_pct": 100,
+            "tolerance_pct": 0,
+            "mode": "range_avg"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vol_ofat_min_0_max_50",
+      "description": "Volatility OFAT: min 0 max 50",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "volatility",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_pct": 0,
+            "max_pct": 50,
+            "tolerance_pct": 0,
+            "mode": "range_avg"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vol_ofat_min_2_max_100",
+      "description": "Volatility OFAT: min 2 max 100",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "volatility",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_pct": 2,
+            "max_pct": 100,
+            "tolerance_pct": 0,
+            "mode": "range_avg"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vol_ofat_returns_std",
+      "description": "Volatility OFAT: returns std",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "volatility",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_pct": 0,
+            "max_pct": 100,
+            "tolerance_pct": 0,
+            "mode": "returns_std"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vol_band_20260601",
+      "description": "Volatility walk-forward: range_avg band 1-80 on Jun 1",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "volatility",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_pct": 1,
+            "max_pct": 80,
+            "tolerance_pct": 0,
+            "mode": "range_avg"
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-01"
+    },
+    {
+      "id": "vol_band_20260602",
+      "description": "Volatility walk-forward: range_avg band 1-80 on Jun 2",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "volatility",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_pct": 1,
+            "max_pct": 80,
+            "tolerance_pct": 0,
+            "mode": "range_avg"
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-02"
+    },
+    {
+      "id": "vol_band_20260630",
+      "description": "Volatility walk-forward: range_avg band 1-80 on Jun 30",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "volatility",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_pct": 1,
+            "max_pct": 80,
+            "tolerance_pct": 0,
+            "mode": "range_avg"
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-30"
+    }
+  ]
+}

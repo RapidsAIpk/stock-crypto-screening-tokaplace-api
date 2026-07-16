@@ -1,0 +1,278 @@
+{
+  "suite_id": "relative_volume_filter_minimal",
+  "cases": [
+    {
+      "id": "relvol_min_10",
+      "description": "Relative volume: min_ratio=1.0",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "relative_volume",
+          "timeframe": "single",
+          "config": {
+            "length": 10,
+            "min_ratio": 1.0,
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "relvol_min_15",
+      "description": "Relative volume: min_ratio=1.5",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "relative_volume",
+          "timeframe": "single",
+          "config": {
+            "length": 10,
+            "min_ratio": 1.5,
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "relvol_min_20",
+      "description": "Relative volume: min_ratio=2.0",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "relative_volume",
+          "timeframe": "single",
+          "config": {
+            "length": 10,
+            "min_ratio": 2.0,
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "relvol_ofat_length_10",
+      "description": "Relative volume OFAT: length 10",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "relative_volume",
+          "timeframe": "single",
+          "config": {
+            "length": 10,
+            "min_ratio": 1.0,
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "relvol_ofat_length_20",
+      "description": "Relative volume OFAT: length 20",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "relative_volume",
+          "timeframe": "single",
+          "config": {
+            "length": 20,
+            "min_ratio": 1.0,
+            "tolerance_pct": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "relvol_ofat_tolerance_5",
+      "description": "Relative volume OFAT: tolerance 5",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "relative_volume",
+          "timeframe": "single",
+          "config": {
+            "length": 10,
+            "min_ratio": 1.0,
+            "tolerance_pct": 5
+          }
+        }
+      ]
+    },
+    {
+      "id": "relvol_spike_20260601",
+      "description": "Relative volume walk-forward: min_ratio=1.5 on Jun 1",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "relative_volume",
+          "timeframe": "single",
+          "config": {
+            "length": 10,
+            "min_ratio": 1.5,
+            "tolerance_pct": 0
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-01"
+    },
+    {
+      "id": "relvol_spike_20260602",
+      "description": "Relative volume walk-forward: min_ratio=1.5 on Jun 2",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "relative_volume",
+          "timeframe": "single",
+          "config": {
+            "length": 10,
+            "min_ratio": 1.5,
+            "tolerance_pct": 0
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-02"
+    },
+    {
+      "id": "relvol_spike_20260630",
+      "description": "Relative volume walk-forward: min_ratio=1.5 on Jun 30",
+      "fixture_id": "stocks_daily_2026_06_30_v1",
+      "symbols": [
+        "AAPL",
+        "AMD",
+        "MSFT",
+        "NVDA",
+        "TSLA"
+      ],
+      "required": true,
+      "asset_type": "stocks",
+      "timeframe_mode": "single",
+      "single_timeframe": "1day",
+      "stock_sources": [
+        "zoya"
+      ],
+      "indicators": [
+        {
+          "name": "relative_volume",
+          "timeframe": "single",
+          "config": {
+            "length": 10,
+            "min_ratio": 1.5,
+            "tolerance_pct": 0
+          }
+        }
+      ],
+      "evaluation_date": "2026-06-30"
+    }
+  ]
+}

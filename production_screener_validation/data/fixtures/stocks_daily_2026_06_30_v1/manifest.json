@@ -1,0 +1,27 @@
+{
+  "checksums": {
+    "candles/1day/AAPL.json": "28530fa168407537c676c2f9f4abe59eaaef716e429fdb033782b6a36c70cc50",
+    "candles/1day/AMD.json": "cff3a5195727c407608c97adfc977f1bdd55230af1259007b5f9728b66c14431",
+    "candles/1day/MSFT.json": "279d7245c33b134a5268ce85f9939c7b1b9934a6eba1dda6863990e07e28f64a",
+    "candles/1day/NVDA.json": "041e2db7f3763bf4bcf0d1b078e1495ef5acc42f20f606759be1a61d999ef301",
+    "candles/1day/TSLA.json": "513701a2335c16e958c2551c735ac4d14aa073592c0724e126b2f71fa968d930",
+    "metadata.json": "abcd6310e024f4512fd1f0c93584a95a832ea89ae080bad468005cb65744b812",
+    "provider_raw.audit.json": "0add8b92e1669e012643f51da0840b2c0f3f8536532f59100605c017e17ff3bc"
+  },
+  "created_at": "2026-07-14T14:39:06.456701+00:00",
+  "fixture_id": "stocks_daily_2026_06_30_v1",
+  "provider_requests": 5,
+  "schema_version": 1,
+  "semantic_hash": "9a9d16ae5e051cecff47d4f875632cbbccaef0f431ac7eedd3e4a5373a7265cb",
+  "source": "massive",
+  "symbols": [
+    "AAPL",
+    "AMD",
+    "MSFT",
+    "NVDA",
+    "TSLA"
+  ],
+  "timeframes": [
+    "1day"
+  ]
+}
