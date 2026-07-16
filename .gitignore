@@ -1,0 +1,30 @@
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+
+# Logs
+*.log
+logs/
+
+# Runtime data (regenerated at runtime, not source)
+*.db
+*.sqlite3
+data/*.bak
