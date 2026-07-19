@@ -1,4 +1,5 @@
 # core/config.py
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
@@ -89,7 +90,11 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
-    CORS_ALLOW_ORIGINS: List[str] = Field(default_factory=list)
+    # Plain str, not List[str]: pydantic-settings attempts a json.loads() on any
+    # List-typed field's raw env value before validators run, which crashes on a
+    # plain comma-separated origin list (not valid JSON). Parsing happens instead
+    # in the cors_allow_origins property below.
+    CORS_ALLOW_ORIGINS: str = ""
     CORS_ALLOW_CREDENTIALS: bool = False
 
     MARKET_DATA_WORKER_ENABLED: bool = True
@@ -123,19 +128,6 @@ class Settings(BaseSettings):
     MARKET_DATA_API_BASE_URL: str = "https://api.massive.com"
     BINANCE_PROVIDER_DOCS_URL: str = "https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints"
     BINANCE_API_BASE_URL: str = "https://api.binance.com"
-
-    @field_validator("CORS_ALLOW_ORIGINS", mode="before")
-    @classmethod
-    def parse_cors_allow_origins(cls, value):
-        if value is None or value == "":
-            return []
-
-        if isinstance(value, str):
-            if value.strip().startswith("["):
-                return value
-            return [item.strip() for item in value.split(",") if item.strip()]
-
-        return value
 
     @field_validator("DEBUG", mode="before")
     @classmethod
@@ -207,7 +199,16 @@ class Settings(BaseSettings):
 
     @property
     def cors_allow_origins(self) -> List[str]:
-        origins = [origin.strip() for origin in self.CORS_ALLOW_ORIGINS if origin.strip()]
+        raw = (self.CORS_ALLOW_ORIGINS or "").strip()
+
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                origins = [str(item).strip() for item in parsed if str(item).strip()]
+            except (ValueError, TypeError):
+                origins = []
+        else:
+            origins = [item.strip() for item in raw.split(",") if item.strip()]
 
         if self.APP_ENV.lower() == "production":
             return origins
