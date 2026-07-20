@@ -157,8 +157,7 @@ def check_close_location(candle, line, rule, tolerance_pct=0, linreg_context=Non
         return candle["close"] <= (line + configured_tolerance)
 
     if rule == "close_on":
-        tolerance = max(abs(line) * 0.001, configured_tolerance)
-        return abs(candle["close"] - line) <= tolerance
+        return abs(candle["close"] - line) <= configured_tolerance
 
     return False
 
@@ -169,10 +168,20 @@ def build_linreg_candle_sticker(candles, lr_result, config):
     candle_idx = match["candle_idx"]
     candle = candles[candle_idx] if candles and candle_idx < len(candles) else {}
     line_value = float(lr_line[candle_idx]) if len(lr_line) else 0.0
-    candle_close = float(candles[candle_idx]["close"]) if candles and candle_idx < len(candles) else 0.0
     pos = config.get("price_position")
     close = config.get("close_location")
     linreg_context = _linreg_context(lr_result, candle_idx)
+
+    if close in {"close_above", "close_below", "close_on"}:
+        bclose = linreg_context.get("bclose")
+        if bclose is not None:
+            candle_close = float(bclose)
+        elif isinstance(lr_result, dict) and "bclose" in lr_result:
+            candle_close = float(lr_result["bclose"][candle_idx])
+        else:
+            candle_close = float(candles[candle_idx]["close"]) if candles and candle_idx < len(candles) else 0.0
+    else:
+        candle_close = float(candles[candle_idx]["close"]) if candles and candle_idx < len(candles) else 0.0
 
     return build_indicator_sticker(
         "LinReg Candles",
