@@ -122,7 +122,9 @@ def check_price_position(candle, line, rule, tolerance_pct=0):
         return candle["high"] <= (line + tolerance)
 
     if rule == "on":
-        return candle["low"] <= (line + tolerance) and candle["high"] >= (line - tolerance)
+        body_low = min(candle["open"], candle["close"])
+        body_high = max(candle["open"], candle["close"])
+        return body_low <= (line + tolerance) and body_high >= (line - tolerance)
 
     if rule == "piercing_from_below":
         return candle["open"] <= (line + tolerance) and candle["close"] >= (line - tolerance)
