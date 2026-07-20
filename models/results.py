@@ -17,6 +17,13 @@ class ResultsBaseModel(BaseModel):
         return self.json(*args, **kwargs)
 
 
+class MarketDataFreshness(ResultsBaseModel):
+    is_stale: bool = False
+    stale_age_seconds: int = 0
+    stale_reason: Optional[str] = None
+    data_source: str = "live_provider"
+
+
 class ScreeningResult(ResultsBaseModel):
 
     symbol: str
@@ -50,6 +57,11 @@ class ScreeningResult(ResultsBaseModel):
         default_factory=list
     )
     matched_indicators: Optional[List[str]] = None
+
+    # Optional, backward-compatible market-data freshness metadata. Clients
+    # that ignore this field are unaffected; see MarketDataFreshness for the
+    # is_stale/stale_age_seconds/stale_reason/data_source contract.
+    market_data_freshness: Optional[MarketDataFreshness] = None
 
 
 class ScreeningResponse(ResultsBaseModel):
@@ -103,6 +115,13 @@ class MarketDataDetail(ResultsBaseModel):
     float_shares: Optional[float] = None
     last_candle: Optional[Dict[str, Any]] = None
     recent_candles: List[Dict[str, Any]] = Field(default_factory=list)
+
+    # Freshness metadata (see MarketDataFreshness). Optional fields with safe
+    # defaults so existing clients that ignore them are unaffected.
+    is_stale: bool = False
+    stale_age_seconds: int = 0
+    stale_reason: Optional[str] = None
+    data_source: str = "live_provider"
 
 
 class ScreeningResultDetail(ScreeningResult):

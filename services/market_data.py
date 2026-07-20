@@ -57,6 +57,17 @@ POLYGON_FULL_MARKET_SNAPSHOT_STOCK_MIN_SYMBOLS = 1000
 POLYGON_FULL_MARKET_SNAPSHOT_CRYPTO_MIN_SYMBOLS = 400
 POLYGON_LOOKBACK_BUFFER_RATIO = 0.2
 POLYGON_LOOKBACK_BUFFER_MIN_BARS = 8
+# Regular-session stocks trade roughly 6.5 hours out of each 24-hour day and
+# not at all on weekends/holidays, so a calendar-time window sized only for
+# candle *count* (as if the market traded around the clock) can under-cover
+# real trading-hour availability - e.g. a window that lands on a weekend can
+# come back with far fewer candles than requested. Intraday stock lookback
+# windows get an extra calendar-time multiplier plus a flat floor so a
+# request for N candles can still find N candles when the window starts
+# near a weekend or market holiday. Crypto trades 24/7 and does not need
+# this expansion.
+POLYGON_STOCK_INTRADAY_CALENDAR_BUFFER_RATIO = 4.0
+POLYGON_STOCK_INTRADAY_CALENDAR_BUFFER_MIN_SECONDS = 4 * ONE_DAY_SECONDS
 POLYGON_FUNDAMENTALS_TTL_SECONDS = 6 * 60 * 60
 POLYGON_GROUPED_DAILY_MIN_SYMBOLS = 100
 POLYGON_GROUPED_DAILY_CRYPTO_MIN_SYMBOLS = 25
@@ -681,11 +692,57 @@ def _payload_with_recent_candles(payload, candles_limit):
 
 
 # =========================================================
+# MARKET-DATA FRESHNESS METADATA
+#
+# These tags are attached only to the in-memory payload handed back to API
+# callers - they are never written into the SQLite cache (store_snapshots
+# always receives the untagged payload), so the cache schema/contents are
+# unaffected.
+# =========================================================
+
+MARKET_DATA_SOURCE_LIVE = "live_provider"
+MARKET_DATA_SOURCE_FRESH_CACHE = "fresh_cache"
+MARKET_DATA_SOURCE_STALE_CACHE = "stale_cache"
+STALE_REASON_PROVIDER_REFRESH_FAILED = "provider_refresh_failed"
+
+
+def _with_freshness_metadata(payload, *, is_stale, market_data_source, stale_age_seconds=0, stale_reason=None):
+    tagged = dict(payload)
+    tagged["is_stale"] = bool(is_stale)
+    tagged["stale_age_seconds"] = max(0, int(stale_age_seconds or 0))
+    tagged["stale_reason"] = stale_reason
+    tagged["market_data_source"] = market_data_source
+    return tagged
+
+
+def _cache_age_seconds(updated_at, now):
+    if updated_at is None:
+        return None
+    return max(0, int(now) - int(updated_at))
+
+
+# =========================================================
 # MASSIVE FETCH (FORMERLY POLYGON)
 # =========================================================
 
 def _polygon_api_key():
     return str(settings.market_data_api_key or "").strip()
+
+
+_SECRET_QUERY_PARAM_PATTERN = re.compile(
+    r"(apiKey|api_key|apikey|token|X-MBX-APIKEY)=[^&\s'\"]+",
+    re.IGNORECASE,
+)
+
+
+def _redact_secrets(value):
+    """Strips API-key-like query parameter values out of a string before it
+    is written to logs or stored as an error message (e.g. httpx exceptions
+    stringify to include the full request URL, query string included).
+    """
+    if value is None:
+        return value
+    return _SECRET_QUERY_PARAM_PATTERN.sub(r"\1=[REDACTED]", str(value))
 
 
 def _polygon_buffer_bars(candles_limit):
@@ -696,25 +753,51 @@ def _polygon_buffer_bars(candles_limit):
     )
 
 
-def _polygon_base_aggregate_seconds(timespan):
+def _polygon_base_aggregate_seconds(timeframe):
+    # Per Massive/Polygon's Custom Bars documentation, the "limit" query
+    # parameter does not count final aggregated candles - it caps the number
+    # of underlying 1-MINUTE base aggregates scanned to build the response
+    # (see _polygon_minute_base_aggregates_per_bar / _polygon_required_
+    # base_aggregates below). This value is the duration of ONE of those base
+    # aggregates in seconds, so that `base_seconds * base_limit` in
+    # _request_polygon_aggregate_page yields the real trading-time span
+    # covered by `base_limit` base aggregates - the correct input to the
+    # calendar-buffer expansion applied there for stock intraday requests.
+    _, timespan = map_timeframe_for_polygon(timeframe)
     if timespan in {"minute", "hour"}:
         return 60
     return ONE_DAY_SECONDS
 
 
-def _polygon_required_base_aggregates(timeframe, result_bars):
+def _polygon_minute_base_aggregates_per_bar(timeframe):
+    """How many 1-minute base aggregates Massive/Polygon must scan to build
+    ONE final candle at this timeframe's native (multiplier + unit)
+    granularity - e.g. a native "4h" bar (multiplier=4, unit=hour) is built
+    from 4 * 60 = 240 one-minute base aggregates.
+    """
     multiplier, timespan = map_timeframe_for_polygon(timeframe)
-    target_bars = max(1, int(result_bars))
-    bar_seconds = max(60, timeframe_seconds(timeframe))
-    base_seconds = _polygon_base_aggregate_seconds(timespan)
-    base_count = int(math.ceil((bar_seconds * target_bars) / float(base_seconds)))
+    multiplier = max(1, int(multiplier))
 
     if timespan == "minute":
-        base_count = max(base_count, target_bars * max(1, multiplier))
-    elif timespan == "hour":
-        base_count = max(base_count, target_bars * max(1, multiplier) * 60)
+        return multiplier
+    if timespan == "hour":
+        return multiplier * 60
+    if timespan == "day":
+        return multiplier * 24 * 60
+    if timespan == "week":
+        return multiplier * 7 * 24 * 60
+    if timespan == "month":
+        return multiplier * 31 * 24 * 60
+    return multiplier
 
-    return max(1, base_count)
+
+def _polygon_required_base_aggregates(timeframe, result_bars):
+    # The Polygon/Massive "limit" query parameter is a count of 1-minute base
+    # aggregates, not final candles - so requesting N final bars requires
+    # N * (base aggregates per bar) as the limit, e.g. 20 native "1h" bars
+    # need at least 20 * 60 = 1200 (plus the caller's own history buffer).
+    target_bars = max(1, int(result_bars))
+    return max(1, target_bars * _polygon_minute_base_aggregates_per_bar(timeframe))
 
 
 def _extract_polygon_results(payload):
@@ -782,7 +865,7 @@ async def _polygon_get_json(path, params=None):
                 path,
                 attempt,
                 DOWNLOAD_RETRIES,
-                exc,
+                _redact_secrets(exc),
             )
             await close_polygon_client()
             if attempt == DOWNLOAD_RETRIES:
@@ -801,7 +884,7 @@ async def _polygon_get_json(path, params=None):
 async def _request_polygon_aggregate_page(symbol, timeframe, to_timestamp_ms, target_bars):
     multiplier, timespan = map_timeframe_for_polygon(timeframe)
     provider_symbol = quote(map_symbol_for_polygon(symbol), safe=":")
-    base_seconds = _polygon_base_aggregate_seconds(timespan)
+    base_seconds = _polygon_base_aggregate_seconds(timeframe)
     base_limit = min(
         POLYGON_MAX_BASE_AGGREGATES,
         max(
@@ -813,6 +896,13 @@ async def _request_polygon_aggregate_page(symbol, timeframe, to_timestamp_ms, ta
         ),
     )
     window_seconds = max(base_seconds * base_limit, timeframe_seconds(timeframe))
+
+    if timespan in {"minute", "hour"} and not is_crypto_symbol(symbol):
+        window_seconds = max(
+            int(math.ceil(window_seconds * POLYGON_STOCK_INTRADAY_CALENDAR_BUFFER_RATIO)),
+            window_seconds + POLYGON_STOCK_INTRADAY_CALENDAR_BUFFER_MIN_SECONDS,
+        )
+
     from_timestamp_ms = max(0, int(to_timestamp_ms - (window_seconds * 1000)))
 
     payload = await _polygon_get_json(
@@ -921,6 +1011,17 @@ async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
             if not candles:
                 return None
 
+            if len(candles) < normalized_limit:
+                logger.info(
+                    "%s returned fewer candles than requested symbol=%s timeframe=%s "
+                    "requested=%s returned=%s",
+                    MARKET_DATA_PROVIDER,
+                    symbol,
+                    timeframe,
+                    normalized_limit,
+                    len(candles),
+                )
+
             integration_runtime.record_call(MARKET_DATA_PROVIDER)
             elapsed = time.perf_counter() - started
             integration_runtime.record_response_time(MARKET_DATA_PROVIDER, elapsed * 1000)
@@ -942,6 +1043,7 @@ async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
         except Exception as exc:
             response = getattr(exc, "response", None)
             status_code = getattr(response, "status_code", None)
+            safe_exc = _redact_secrets(exc)
             logger.warning(
                 "%s candle request failed for %s timeframe=%s attempt=%s/%s status=%s candles_limit=%s: %s",
                 MARKET_DATA_PROVIDER,
@@ -951,13 +1053,13 @@ async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
                 DOWNLOAD_RETRIES,
                 status_code,
                 normalized_limit,
-                exc,
+                safe_exc,
             )
 
             if attempt == DOWNLOAD_RETRIES:
                 integration_runtime.record_error(
                     MARKET_DATA_PROVIDER,
-                    f"{symbol} {timeframe}: status={status_code} {exc}",
+                    f"{symbol} {timeframe}: status={status_code} {safe_exc}",
                 )
                 return None
 
@@ -1092,7 +1194,7 @@ async def _get_binance_pairs_index(force_refresh=False):
             _binance_exchange_info_cache["pairs_by_base"] = pairs_by_base
             return pairs_by_base
         except Exception as exc:
-            logger.warning("Failed to load Binance exchangeInfo: %s", exc)
+            logger.warning("Failed to load Binance exchangeInfo: %s", _redact_secrets(exc))
             return cached_pairs
 
 
@@ -1165,7 +1267,7 @@ async def request_binance_quotes(symbols, timeframe):
             weight=BINANCE_QUOTES_REQUEST_WEIGHT,
         )
     except Exception as exc:
-        logger.warning("binance quote request failed symbols=%s: %s", len(crypto_symbols), exc)
+        logger.warning("binance quote request failed symbols=%s: %s", len(crypto_symbols), _redact_secrets(exc))
         return []
 
     if not isinstance(payload, list):
@@ -1272,6 +1374,7 @@ async def request_binance_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
         except Exception as exc:
             response = getattr(exc, "response", None)
             status_code = getattr(response, "status_code", None)
+            safe_exc = _redact_secrets(exc)
             if status_code == 400:
                 await _invalidate_binance_pairs_cache()
             logger.warning(
@@ -1283,13 +1386,13 @@ async def request_binance_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
                 DOWNLOAD_RETRIES,
                 status_code,
                 normalized_limit,
-                exc,
+                safe_exc,
             )
 
             if attempt == DOWNLOAD_RETRIES:
                 integration_runtime.record_error(
                     BINANCE_PROVIDER,
-                    f"{symbol} {timeframe}: status={status_code} {exc}",
+                    f"{symbol} {timeframe}: status={status_code} {safe_exc}",
                 )
                 return None
 
@@ -1299,7 +1402,7 @@ async def request_binance_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
 
             integration_runtime.record_error(
                 BINANCE_PROVIDER,
-                f"{symbol} {timeframe}: status={status_code} {exc}",
+                f"{symbol} {timeframe}: status={status_code} {safe_exc}",
             )
             return None
 
@@ -2018,7 +2121,12 @@ async def attach_polygon_fundamentals(items):
             try:
                 details_by_symbol[symbol] = await _request_polygon_fundamentals(symbol)
             except Exception as exc:
-                logger.warning("%s fundamentals request failed for %s: %s", MARKET_DATA_PROVIDER, symbol, exc)
+                logger.warning(
+                    "%s fundamentals request failed for %s: %s",
+                    MARKET_DATA_PROVIDER,
+                    symbol,
+                    _redact_secrets(exc),
+                )
 
     await asyncio.gather(*(_load(symbol) for symbol in unique_symbols))
 
@@ -2463,6 +2571,7 @@ async def fetch_live_data(
 
     fresh_results = {}
     stale_results = {}
+    stale_updated_at = {}
     missing_symbols = []
 
     for symbol in symbols:
@@ -2478,6 +2587,7 @@ async def fetch_live_data(
         if not is_payload_for_symbol_provider(cached_payload, symbol):
             next_refresh_map[symbol] = now
             stale_results[symbol] = cached_payload
+            stale_updated_at[symbol] = cached.get("updated_at")
             missing_symbols.append(symbol)
             continue
 
@@ -2485,16 +2595,23 @@ async def fetch_live_data(
         if len(cached_candles) < normalized_limit:
             next_refresh_map[symbol] = now
             stale_results[symbol] = cached_payload
+            stale_updated_at[symbol] = cached.get("updated_at")
             missing_symbols.append(symbol)
             continue
 
         if not is_refresh_due(cached_payload, timeframe, now):
             next_refresh_map[symbol] = next_refresh_at_for_timeframe(timeframe, now)
-            fresh_results[symbol] = _payload_with_recent_candles(cached_payload, normalized_limit)
+            fresh_results[symbol] = _with_freshness_metadata(
+                _payload_with_recent_candles(cached_payload, normalized_limit),
+                is_stale=False,
+                market_data_source=MARKET_DATA_SOURCE_FRESH_CACHE,
+                stale_age_seconds=_cache_age_seconds(cached.get("updated_at"), now) or 0,
+            )
             continue
 
         next_refresh_map[symbol] = now
         stale_results[symbol] = cached_payload
+        stale_updated_at[symbol] = cached.get("updated_at")
         missing_symbols.append(symbol)
 
     await asyncio.to_thread(
@@ -2512,7 +2629,12 @@ async def fetch_live_data(
         if fetched:
             await asyncio.to_thread(store.store_snapshots, fetched, timeframe)
             fresh_results.update({
-                item["symbol"]: item
+                item["symbol"]: _with_freshness_metadata(
+                    item,
+                    is_stale=False,
+                    market_data_source=MARKET_DATA_SOURCE_LIVE,
+                    stale_age_seconds=0,
+                )
                 for item in fetched
             })
 
@@ -2523,16 +2645,49 @@ async def fetch_live_data(
 
         if unresolved_symbols:
             backoff_until = now + max(FAILED_REFRESH_BACKOFF_SECONDS, timeframe_seconds(timeframe) // 4)
+            allow_stale = bool(settings.ALLOW_STALE_MARKET_DATA)
+            max_stale_age = max(0, int(settings.MAX_STALE_MARKET_DATA_AGE_SECONDS or 0))
             stale_with_backoff = []
             unresolved_backoff_map = {}
 
             for symbol in unresolved_symbols:
                 stale_payload = stale_results.get(symbol)
+                cache_age = _cache_age_seconds(stale_updated_at.get(symbol), now)
+                provider = (
+                    payload_candle_provider(stale_payload)
+                    or expected_candle_provider_for_symbol(symbol)
+                )
+
                 if not stale_payload:
-                    unresolved_backoff_map[symbol] = backoff_until
-                    continue
-                if not is_payload_for_symbol_provider(stale_payload, symbol):
+                    rejection_reason = "no_cached_payload"
+                elif not is_payload_for_symbol_provider(stale_payload, symbol):
                     # When provider changed, avoid serving stale snapshots from another provider.
+                    rejection_reason = "cached_payload_provider_mismatch"
+                elif not allow_stale:
+                    rejection_reason = "stale_fallback_disabled"
+                elif cache_age is not None and cache_age > max_stale_age:
+                    rejection_reason = "stale_payload_exceeds_max_age"
+                else:
+                    rejection_reason = None
+
+                stale_returned = rejection_reason is None
+
+                logger.warning(
+                    "market_data_refresh_failed symbol=%s timeframe=%s provider=%s "
+                    "cache_age_seconds=%s max_stale_age_seconds=%s allow_stale=%s "
+                    "stale_returned=%s next_retry_at=%s failure_reason=%s",
+                    symbol,
+                    timeframe,
+                    provider,
+                    cache_age,
+                    max_stale_age,
+                    allow_stale,
+                    stale_returned,
+                    backoff_until,
+                    rejection_reason or STALE_REASON_PROVIDER_REFRESH_FAILED,
+                )
+
+                if not stale_returned:
                     unresolved_backoff_map[symbol] = backoff_until
                     continue
 
@@ -2540,7 +2695,13 @@ async def fetch_live_data(
                 refreshed_payload = dict(refreshed_payload)
                 refreshed_payload["next_refresh_at"] = backoff_until
                 stale_with_backoff.append(refreshed_payload)
-                fresh_results[symbol] = refreshed_payload
+                fresh_results[symbol] = _with_freshness_metadata(
+                    refreshed_payload,
+                    is_stale=True,
+                    market_data_source=MARKET_DATA_SOURCE_STALE_CACHE,
+                    stale_age_seconds=cache_age or 0,
+                    stale_reason=STALE_REASON_PROVIDER_REFRESH_FAILED,
+                )
 
             if stale_with_backoff:
                 logger.warning(
