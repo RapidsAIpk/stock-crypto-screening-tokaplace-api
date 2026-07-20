@@ -1523,6 +1523,36 @@ class IndicatorMathTests(unittest.TestCase):
             linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_line, config)
         )
 
+    def test_linreg_candle_uses_virtual_candle_instead_of_raw(self):
+        candles = [
+            {"open": 100.0, "high": 105.0, "low": 99.0, "close": 102.0},
+        ]
+        lr_result = {
+            "signal": [100.0],
+            "bopen": [92.0],
+            "bhigh": [95.0],
+            "blow": [90.0],
+            "bclose": [93.0],
+        }
+        config = {
+            "window": 1,
+            "price_position": "above",
+            "confirmation": False,
+        }
+        self.assertFalse(
+            linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config)
+        )
+
+        config_below = {
+            "window": 1,
+            "price_position": "below",
+            "confirmation": False,
+        }
+        self.assertTrue(
+            linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config_below)
+        )
+
+
     def test_regression_selected_lines_all_must_match(self):
         candles = [
             {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0},

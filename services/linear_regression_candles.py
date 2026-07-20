@@ -87,13 +87,21 @@ def evaluate_linreg_candle_rules(candles, lr_result, config):
         if not np.isfinite(line):
             continue
 
-        candle = candles[candle_idx]
+        if isinstance(lr_result, dict) and "bopen" in lr_result:
+            virtual_candle = {
+                "open": float(lr_result["bopen"][candle_idx]),
+                "high": float(lr_result["bhigh"][candle_idx]),
+                "low": float(lr_result["blow"][candle_idx]),
+                "close": float(lr_result["bclose"][candle_idx]),
+            }
+        else:
+            virtual_candle = candles[candle_idx]
         linreg_context = _linreg_context(lr_result, candle_idx)
 
-        if not check_price_position(candle, line, position_rule, tolerance_pct):
+        if not check_price_position(virtual_candle, line, position_rule, tolerance_pct):
             continue
 
-        if close_rule and not check_close_location(candle, line, close_rule, tolerance_pct, linreg_context):
+        if close_rule and not check_close_location(virtual_candle, line, close_rule, tolerance_pct, linreg_context):
             continue
 
         if config.get("confirmation") and not confirm_if_needed(candles, candle_idx, config):
@@ -188,13 +196,21 @@ def _latest_matching_linreg_index(candles, lr_result, config):
         if not np.isfinite(line):
             continue
 
-        candle = candles[candle_idx]
+        if isinstance(lr_result, dict) and "bopen" in lr_result:
+            virtual_candle = {
+                "open": float(lr_result["bopen"][candle_idx]),
+                "high": float(lr_result["bhigh"][candle_idx]),
+                "low": float(lr_result["blow"][candle_idx]),
+                "close": float(lr_result["bclose"][candle_idx]),
+            }
+        else:
+            virtual_candle = candles[candle_idx]
         linreg_context = _linreg_context(lr_result, candle_idx)
 
-        if not check_price_position(candle, line, config.get("price_position"), tolerance_pct):
+        if not check_price_position(virtual_candle, line, config.get("price_position"), tolerance_pct):
             continue
         close_rule = config.get("close_location")
-        if close_rule and not check_close_location(candle, line, close_rule, tolerance_pct, linreg_context):
+        if close_rule and not check_close_location(virtual_candle, line, close_rule, tolerance_pct, linreg_context):
             continue
 
         latest_match = {"candle_idx": candle_idx, "lr_idx": candle_idx}
