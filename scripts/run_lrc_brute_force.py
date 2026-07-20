@@ -69,8 +69,8 @@ async def main():
     md_output.append("\nThis document lists the first stock that PASSES for each combination among validation symbols using live market data. Open these on TradingView to verify the results side-by-side.\n")
     
     md_output.append("## 1. Summary Matrix")
-    md_output.append("| Combo ID | Price Position | Close Location | Tol % | Win | First Passing Stock | Details |")
-    md_output.append("|---|---|---|---|---|---|---|")
+    md_output.append("| Verify | Combo ID | Price Position | Close Location | Tol % | Win | First Passing Stock | Details |")
+    md_output.append("|:---:|---|---|---|---|---|---|---|")
 
     detailed_sections = []
 
@@ -95,7 +95,7 @@ async def main():
                 break
         
         if first_pass_symbol is None:
-            md_output.append(f"| **{combo_id}** | {pos_rule} | {close_rule or 'any'} | {tol}% | {win} | *None* | No stocks matched |")
+            md_output.append(f"| - [ ] | **{combo_id}** | {pos_rule} | {close_rule or 'any'} | {tol}% | {win} | *None* | No stocks matched |")
             continue
 
         candles = universe[first_pass_symbol]
@@ -120,7 +120,7 @@ async def main():
         sig_val = lr_res["signal"][last_idx]
         
         detail_msg = f"LRC Low:{virtual_c['low']:.2f} vs Sig:{sig_val:.2f}"
-        md_output.append(f"| **{combo_id}** | {pos_rule} | {close_rule or 'any'} | {tol}% | {win} | **{first_pass_symbol}** | {detail_msg} |")
+        md_output.append(f"| - [ ] | **{combo_id}** | {pos_rule} | {close_rule or 'any'} | {tol}% | {win} | **{first_pass_symbol}** | {detail_msg} |")
         
         # Build a detailed section for manual verification
         sec = []
