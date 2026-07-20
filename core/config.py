@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     GATE_SESSION_TTL_SECONDS: int = 15 * 60
     SCREENING_MAX_SYMBOLS: int = 0
 
+    # Stale-cache fallback for worker-managed timeframes (1h/4h/1day). Disabled
+    # by default so a failed provider refresh never silently serves old
+    # candles as if they were current market data.
+    ALLOW_STALE_MARKET_DATA: bool = False
+    MAX_STALE_MARKET_DATA_AGE_SECONDS: int = 300
+
     MASSIVE_API_KEY: Optional[str] = None
     POLYGON_API_KEY: Optional[str] = None
     ADMIN_API_TOKEN: Optional[str] = None
@@ -187,6 +193,7 @@ class Settings(BaseSettings):
         "MASSIVE_CRYPTO_REQUESTS_PER_MINUTE",
         "MANUAL_SYMBOLS_MAX",
         "SCREENING_MAX_SYMBOLS",
+        "MAX_STALE_MARKET_DATA_AGE_SECONDS",
         mode="before",
     )
     @classmethod

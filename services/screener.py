@@ -1057,6 +1057,7 @@ async def get_asset_detail(symbol, asset_type, timeframe, request, scan_stage="s
             "float_shares": asset.get("float_shares"),
             "last_candle": candles[-1] if candles else None,
             "recent_candles": candles[-DETAIL_RECENT_CANDLES:],
+            **_market_data_freshness(asset),
         },
         "channels": asset.get("channels") or {},
         "confluence_channels": asset.get("confluence_channels") or {},
@@ -1283,6 +1284,21 @@ def attach_asset_metadata(data, assets):
 # RESPONSE
 # ---------------------------------------------------------
 
+def _market_data_freshness(asset):
+    """Builds the market-data freshness block from the tags market_data.py
+    attaches to a fetch_live_data payload (is_stale/stale_age_seconds/
+    stale_reason/market_data_source). Falls back to "live_provider"/not-stale
+    defaults for payloads that were never tagged (e.g. the intraday direct
+    fetch path), rather than fabricating a stale claim.
+    """
+    return {
+        "is_stale": bool(asset.get("is_stale", False)),
+        "stale_age_seconds": max(0, int(asset.get("stale_age_seconds") or 0)),
+        "stale_reason": asset.get("stale_reason"),
+        "data_source": asset.get("market_data_source") or "live_provider",
+    }
+
+
 def build_response(filtered, timeframe, scan_stage, gate_session_id=None):
 
     return {
@@ -1313,6 +1329,7 @@ def build_response(filtered, timeframe, scan_stage, gate_session_id=None):
                 ),
                 "stickers": a.get("stickers", []),
                 "matched_indicators": a.get("matched_indicators"),
+                "market_data_freshness": _market_data_freshness(a),
             }
             for a in filtered
         ],
