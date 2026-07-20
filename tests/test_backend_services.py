@@ -1523,6 +1523,69 @@ class IndicatorMathTests(unittest.TestCase):
             linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_line, config)
         )
 
+    def test_linreg_candle_uses_virtual_candle_instead_of_raw(self):
+        candles = [
+            {"open": 100.0, "high": 105.0, "low": 99.0, "close": 102.0},
+        ]
+        lr_result = {
+            "signal": [100.0],
+            "bopen": [92.0],
+            "bhigh": [95.0],
+            "blow": [90.0],
+            "bclose": [93.0],
+        }
+        config = {
+            "window": 1,
+            "price_position": "above",
+            "confirmation": False,
+        }
+        self.assertFalse(
+            linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config)
+        )
+
+        config_below = {
+            "window": 1,
+            "price_position": "below",
+            "confirmation": False,
+        }
+        self.assertTrue(
+            linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config_below)
+        )
+
+    def test_linreg_candle_on_requires_body_overlap_not_wick_only(self):
+        candles = [{"open": 0.9550, "high": 0.9999, "low": 0.9420, "close": 0.9420}]
+        lr_result = {
+            "signal": [0.9697],
+            "bopen": [0.9687],
+            "bhigh": [0.9707],
+            "blow": [0.9517],
+            "bclose": [0.9378],
+        }
+        config = {
+            "window": 1,
+            "price_position": "on",
+            "confirmation": False,
+        }
+        self.assertFalse(
+            linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config)
+        )
+
+        lr_result_body_on = {
+            "signal": [100.0],
+            "bopen": [99.0],
+            "bhigh": [102.0],
+            "blow": [97.0],
+            "bclose": [101.0],
+        }
+        self.assertTrue(
+            linear_regression_candles.evaluate_linreg_candle_rules(
+                [{"open": 99.0, "high": 102.0, "low": 97.0, "close": 101.0}],
+                lr_result_body_on,
+                config,
+            )
+        )
+
+
     def test_regression_selected_lines_all_must_match(self):
         candles = [
             {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0},
