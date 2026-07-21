@@ -1899,6 +1899,57 @@ class IndicatorMathTests(unittest.TestCase):
 
         self.assertIsNone(channel)
 
+    def test_compute_trend_channel_does_not_use_regression_fallback_without_pivots(self):
+        # Monotonic rise produces no pivot highs/lows at length=8. The old
+        # regression fallback invented a channel here and caused false positives.
+        candles = [
+            {
+                "open": float(index),
+                "high": float(index) + 1.0,
+                "low": float(index) - 0.5,
+                "close": float(index) + 0.5,
+                "volume": 100.0,
+            }
+            for index in range(80)
+        ]
+
+        channel = trend_channels.compute_trend_channel(candles, length=8)
+
+        self.assertIsNone(channel)
+
+    def test_handle_trend_rejects_when_no_pivot_channel_exists(self):
+        candles = [
+            {
+                "open": float(index),
+                "high": float(index) + 1.0,
+                "low": float(index) - 0.5,
+                "close": float(index) + 0.5,
+                "volume": 100.0,
+            }
+            for index in range(80)
+        ]
+        asset = {"symbol": "TEST", "channels": {}}
+        config = {
+            "length": 8,
+            "wait_for_break": True,
+            "show_last_channel": True,
+            "areas": [
+                {
+                    "area": "top_line",
+                    "action": "touched",
+                    "touch_type": "wick",
+                    "window": 1,
+                    "confirmation": False,
+                }
+            ],
+        }
+
+        passed, result = indicators.handle_trend(asset, candles, config)
+
+        self.assertFalse(passed)
+        self.assertIsNone(result)
+        self.assertNotIn("trend", asset.get("channels", {}))
+
     def test_build_linreg_candle_sticker_uses_actual_matched_candle_bias(self):
         candles = [
             {"open": 105.0, "high": 106.0, "low": 101.0, "close": 102.0},

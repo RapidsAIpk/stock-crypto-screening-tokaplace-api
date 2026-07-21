@@ -37,8 +37,7 @@ def _slope_non_negative(delta_y: float, delta_x: float) -> bool:
 
 def required_trend_channel_history(length=8):
     normalized_length = max(2, int(length or 8))
-    # Pivot/liquidity channels need more runway than the regression fallback
-    # so the screener can confirm enough swings before evaluating the latest bar.
+    # Pivot channels need enough runway to confirm swings before evaluating the latest bar.
     return min(500, max(normalized_length * 9, normalized_length * 2 + 5, MIN_TREND_HISTORY))
 
 
@@ -56,11 +55,8 @@ def compute_trend_channel(candles, length=8, wait_for_break=True, show_last_chan
     if pivot_channel is not None:
         return pivot_channel
 
-    high_pivots = sum(1 for pivot in confirmed_pivots if pivot["type"] == "high")
-    low_pivots = sum(1 for pivot in confirmed_pivots if pivot["type"] == "low")
-    if high_pivots < 2 or low_pivots < 2:
-        return _compute_regression_fallback_channel(candles, normalized_length)
-
+    # ChartPrime Pine never synthesizes a fallback channel. When pivot logic
+    # cannot form or retain a channel, there is simply no active channel.
     return None
 
 
@@ -434,52 +430,6 @@ def _wilder_atr(candles, period=10):
         atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
 
     return atr
-
-
-def _compute_regression_fallback_channel(candles, length):
-    if len(candles) < length:
-        return None
-
-    highs = np.array([c["high"] for c in candles[-length:]], dtype=float)
-    lows = np.array([c["low"] for c in candles[-length:]], dtype=float)
-
-    x = np.arange(length)
-
-    try:
-        top_slope, top_intercept = np.polyfit(x, highs, 1)
-        bottom_slope, bottom_intercept = np.polyfit(x, lows, 1)
-    except Exception:
-        return None
-
-    mid_slope = (top_slope + bottom_slope) / 2.0
-    mid_intercept = (top_intercept + bottom_intercept) / 2.0
-    mid = mid_intercept + mid_slope * x
-
-    top_dev = max(float(np.max(highs - mid)), 1e-9)
-    bottom_dev = max(float(np.max(mid - lows)), 1e-9)
-    top = mid + top_dev
-    bottom = mid - bottom_dev
-
-    width = np.maximum(top - bottom, 1e-9)
-    zone_buffer = np.maximum(width * 0.2, np.mean(width) * 0.05)
-
-    return {
-        "middle": mid,
-        "top": top,
-        "bottom": bottom,
-        "top_zone_upper": top + zone_buffer,
-        "top_zone_lower": top,
-        "bottom_zone_upper": bottom,
-        "bottom_zone_lower": bottom - zone_buffer,
-        "length": length,
-        "model": "regression_fallback",
-        "direction": "unknown",
-        "start_index": len(candles) - length,
-        "broken": False,
-        "break_index": None,
-        "break_direction": None,
-        "liquidity_break": False,
-    }
 
 
 # =========================================================
