@@ -84,7 +84,6 @@ POLYGON_GROUPED_DAILY_MAX_TRADING_DAYS = (
     )
 )
 POLYGON_GROUPED_HISTORY_MAX_SOURCE_DAYS = 800
-POLYGON_GROUPED_DAILY_DATE_CONCURRENCY = 8
 POLYGON_GROUPED_DAILY_SPARSE_SCAN_THRESHOLD = 1000
 POLYGON_GROUPED_DAILY_BULK_ONLY_THRESHOLD = 2000
 POLYGON_GROUPED_DAILY_CRYPTO_BULK_ONLY_THRESHOLD = 200
@@ -1771,8 +1770,7 @@ def _grouped_daily_date_concurrency(is_crypto=False):
     if is_crypto:
         if settings.MASSIVE_CRYPTO_END_OF_DAY_ONLY:
             return 1
-    configured = max(1, int(settings.market_data_fetch_concurrency or 1))
-    return max(1, min(POLYGON_GROUPED_DAILY_DATE_CONCURRENCY, configured))
+    return max(1, int(settings.market_data_fetch_concurrency or 1))
 
 
 async def _request_polygon_grouped_daily(date_value):

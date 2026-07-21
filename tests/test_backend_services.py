@@ -1089,6 +1089,33 @@ class IndicatorMathTests(unittest.TestCase):
         )
         self.assertEqual(screener.required_candles_for_indicators([indicator_with_large_lookback]), 313)
 
+    def test_required_candles_for_adx_min_history_is_user_adjustable(self):
+        # 200 is a hard floor, by explicit decision - not user-lowerable, since anything
+        # below it reproduces the already-fixed accuracy bug (ADX off by ~6 points on 22
+        # candles). A lower min_history must be clamped back up to 200, not honored.
+        lowered = SimpleNamespace(
+            name="adx",
+            config={"length": 11, "conditions": [], "min_history": 50},
+        )
+        self.assertEqual(screener.required_candles_for_indicators([lowered]), 200)
+
+        too_low = SimpleNamespace(
+            name="adx",
+            config={"length": 11, "conditions": [], "min_history": 5},
+        )
+        self.assertEqual(screener.required_candles_for_indicators([too_low]), 200)
+
+        # A min_history above the 200 recommendation is respected too, not capped.
+        raised = SimpleNamespace(
+            name="adx",
+            config={"length": 11, "conditions": [], "min_history": 350},
+        )
+        self.assertEqual(screener.required_candles_for_indicators([raised]), 350)
+
+        # Omitting it entirely must still default to 200, matching prior behavior exactly.
+        default = SimpleNamespace(name="adx", config={"length": 11, "conditions": []})
+        self.assertEqual(screener.required_candles_for_indicators([default]), 200)
+
     def test_required_candles_for_vlr_covers_longest_regression_and_timing(self):
         indicator = SimpleNamespace(
             name="vlr",
@@ -4840,7 +4867,7 @@ class MarketDataAsyncTests(unittest.IsolatedAsyncioTestCase):
             True,
         ):
             self.assertEqual(market_data._grouped_daily_date_concurrency(is_crypto=True), 1)
-            self.assertEqual(market_data._grouped_daily_date_concurrency(is_crypto=False), 8)
+            self.assertEqual(market_data._grouped_daily_date_concurrency(is_crypto=False), 36)
 
     def test_grouped_daily_date_concurrency_matches_stock_defaults_for_realtime_crypto(self):
         with patch.object(market_data.settings, "MASSIVE_FETCH_CONCURRENCY", None), patch.object(
@@ -4852,7 +4879,7 @@ class MarketDataAsyncTests(unittest.IsolatedAsyncioTestCase):
             "MASSIVE_CRYPTO_END_OF_DAY_ONLY",
             False,
         ):
-            self.assertEqual(market_data._grouped_daily_date_concurrency(is_crypto=True), 8)
+            self.assertEqual(market_data._grouped_daily_date_concurrency(is_crypto=True), 36)
 
     def test_grouped_daily_bulk_path_uses_lower_minimum_for_crypto(self):
         self.assertFalse(
