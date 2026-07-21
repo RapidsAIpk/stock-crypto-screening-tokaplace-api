@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     ALLOW_STALE_MARKET_DATA: bool = False
     MAX_STALE_MARKET_DATA_AGE_SECONDS: int = 300
 
+    # Stock intraday candle session policy for TradingView parity.
+    # tradingview_regular: keep only US cash-session bars (09:30-16:00 ET bar opens).
+    # provider_default: pass through Massive/Polygon intraday aggregates unchanged.
+    STOCK_INTRADAY_SESSION_POLICY: str = "tradingview_regular"
+
     MASSIVE_API_KEY: Optional[str] = None
     POLYGON_API_KEY: Optional[str] = None
     ADMIN_API_TOKEN: Optional[str] = None

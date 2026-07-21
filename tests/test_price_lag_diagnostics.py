@@ -22,6 +22,7 @@ if BACKEND_DIR not in sys.path:
 
 from core.config import Settings, settings  # noqa: E402
 from services import market_data, screener  # noqa: E402
+from services.stock_session import SESSION_POLICY_PROVIDER_DEFAULT  # noqa: E402
 
 
 class TimestampNormalizationTests(unittest.TestCase):
@@ -585,6 +586,8 @@ class CandlesLimitPropagationTests(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             market_data, "_polygon_api_key", return_value="token",
         ), patch.object(
+            settings, "STOCK_INTRADAY_SESSION_POLICY", SESSION_POLICY_PROVIDER_DEFAULT,
+        ), patch.object(
             market_data, "_download_polygon_rows", AsyncMock(return_value=twenty_rows),
         ) as download_mock:
             payload = await market_data.request_polygon_candles("AAPL", "1h", candles_limit=20)
@@ -745,6 +748,7 @@ class CacheSufficiencyForCandleHistoryTests(unittest.IsolatedAsyncioTestCase):
             "price": 100.0,
             "candles": [_candle_row(now - (19 - i) * 3600) for i in range(20)],
             "candles_provider": "massive",
+            "session_policy": "tradingview_regular",
             "shares_outstanding": None,
             "float_shares": None,
             "next_refresh_at": now + 3600,  # not due
@@ -902,6 +906,8 @@ class EndToEndHistoricalCandleIntegrationTests(unittest.IsolatedAsyncioTestCase)
             market_data.store, "register_interest",
         ), patch.object(
             market_data.store, "store_snapshots",
+        ), patch.object(
+            settings, "STOCK_INTRADAY_SESSION_POLICY", SESSION_POLICY_PROVIDER_DEFAULT,
         ), patch.object(
             market_data.integration_runtime, "is_enabled", return_value=True,
         ), patch.object(

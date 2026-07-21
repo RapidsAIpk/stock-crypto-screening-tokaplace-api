@@ -11,6 +11,12 @@ import httpx
 from core.config import settings
 from services.market_data_store import store
 from services.integration_runtime import integration_runtime
+from services.stock_session import (
+    apply_stock_session_policy,
+    expected_session_policy_for_symbol,
+    is_payload_session_compatible,
+    session_fetch_multiplier,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -642,6 +648,12 @@ def is_payload_for_symbol_provider(payload, symbol):
     return is_payload_for_provider(payload, expected_candle_provider_for_symbol(symbol))
 
 
+def is_payload_compatible_for_fetch(payload, symbol, timeframe):
+    if not is_payload_for_symbol_provider(payload, symbol):
+        return False
+    return is_payload_session_compatible(payload, symbol, timeframe)
+
+
 def _mark_unclosed_last_candle(candles, timeframe, now=None):
     if not candles:
         return candles
@@ -660,9 +672,13 @@ def _mark_unclosed_last_candle(candles, timeframe, now=None):
     return candles
 
 
-def _build_market_data_payload(symbol, candles, timeframe, candles_provider=None):
+def _build_market_data_payload(symbol, candles, timeframe, candles_provider=None, session_policy=None):
     candles = _mark_unclosed_last_candle(candles, timeframe)
-    return {
+    resolved_session_policy = session_policy
+    if resolved_session_policy is None and not is_crypto_symbol(symbol):
+        resolved_session_policy = expected_session_policy_for_symbol(symbol, timeframe)
+
+    payload = {
         "symbol": symbol,
         "price": candles[-1]["close"],
         "candles": candles,
@@ -673,6 +689,25 @@ def _build_market_data_payload(symbol, candles, timeframe, candles_provider=None
         "float_shares": None,
         "next_refresh_at": next_refresh_at_for_timeframe(timeframe),
     }
+    if resolved_session_policy:
+        payload["session_policy"] = resolved_session_policy
+    return payload
+
+
+def _finalize_intraday_candles(candles, symbol, timeframe, candles_limit, session_policy=None):
+    filtered = apply_stock_session_policy(candles, symbol, timeframe, session_policy)
+    return slice_recent(filtered, limit=candles_limit)
+
+
+def _polygon_download_limit(candles_limit, symbol, timeframe, session_policy=None):
+    normalized_limit = normalize_candles_limit(candles_limit)
+    multiplier = session_fetch_multiplier(symbol, timeframe, session_policy)
+    if multiplier <= 1.0:
+        return normalized_limit
+    return min(
+        MAX_CANDLES,
+        max(normalized_limit, int(math.ceil(normalized_limit * multiplier))),
+    )
 
 
 def _payload_with_recent_candles(payload, candles_limit):
@@ -1001,12 +1036,20 @@ async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
         return None
 
     normalized_limit = normalize_candles_limit(candles_limit)
+    session_policy = expected_session_policy_for_symbol(symbol, timeframe)
+    download_limit = _polygon_download_limit(normalized_limit, symbol, timeframe, session_policy)
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
         started = time.perf_counter()
         try:
-            rows = await _download_polygon_rows(symbol, timeframe, normalized_limit)
+            rows = await _download_polygon_rows(symbol, timeframe, download_limit)
             candles = normalize_polygon_rows(rows)
-            candles = slice_recent(candles, limit=normalized_limit)
+            candles = _finalize_intraday_candles(
+                candles,
+                symbol,
+                timeframe,
+                normalized_limit,
+                session_policy=session_policy,
+            )
 
             if not candles:
                 return None
@@ -1039,6 +1082,7 @@ async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
                 candles,
                 timeframe,
                 candles_provider=MARKET_DATA_PROVIDER,
+                session_policy=session_policy,
             )
         except Exception as exc:
             response = getattr(exc, "response", None)
@@ -1444,12 +1488,17 @@ def _build_polygon_snapshot_results(payload, requested_map, timeframe):
         candle = _snapshot_candle_from_polygon_item(item)
         if not candle:
             continue
+        session_policy = expected_session_policy_for_symbol(symbol, timeframe)
+        candles = _finalize_intraday_candles([candle], symbol, timeframe, 1, session_policy=session_policy)
+        if not candles:
+            continue
         results.append(
             _build_market_data_payload(
                 symbol,
-                [candle],
+                candles,
                 timeframe,
                 candles_provider=MARKET_DATA_PROVIDER,
+                session_policy=session_policy,
             )
         )
 
@@ -2501,7 +2550,7 @@ async def fetch_live_data(
                 continue
 
             cached_payload = cached["payload"] or {}
-            if not is_payload_for_symbol_provider(cached_payload, symbol):
+            if not is_payload_compatible_for_fetch(cached_payload, symbol, timeframe):
                 missing_symbols.append(symbol)
                 continue
 
@@ -2584,7 +2633,7 @@ async def fetch_live_data(
 
         cached_payload = cached["payload"] or {}
 
-        if not is_payload_for_symbol_provider(cached_payload, symbol):
+        if not is_payload_compatible_for_fetch(cached_payload, symbol, timeframe):
             next_refresh_map[symbol] = now
             stale_results[symbol] = cached_payload
             stale_updated_at[symbol] = cached.get("updated_at")
@@ -2660,8 +2709,8 @@ async def fetch_live_data(
 
                 if not stale_payload:
                     rejection_reason = "no_cached_payload"
-                elif not is_payload_for_symbol_provider(stale_payload, symbol):
-                    # When provider changed, avoid serving stale snapshots from another provider.
+                elif not is_payload_compatible_for_fetch(stale_payload, symbol, timeframe):
+                    # When provider/session policy changed, avoid serving stale snapshots.
                     rejection_reason = "cached_payload_provider_mismatch"
                 elif not allow_stale:
                     rejection_reason = "stale_fallback_disabled"
