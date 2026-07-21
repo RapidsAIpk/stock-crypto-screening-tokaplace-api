@@ -385,9 +385,12 @@ def required_candles_for_indicators(indicators):
             # driven by user-configured candles_since values.
             # Wilder RMA needs a long warm-up past its SMA seed before it converges
             # to TradingView's fully-warmed-up values (TradingView seeds from the
-            # start of the whole chart); 200 is a practical floor for that, confirmed
-            # against a live TradingView mismatch (ADX off by ~6 points on 22 candles).
-            needed = max(length + 1 + max(max_candles_since + 1, 10), 200)
+            # start of the whole chart); 200 is a hard floor for that, confirmed against
+            # a live TradingView mismatch (ADX off by ~6 points on 22 candles) - this is
+            # not user-lowerable, by explicit decision, even though `min_history` (UI:
+            # "History Depth") is user-adjustable upward for an extra accuracy margin.
+            min_history = _safe_int(config.get("min_history"), 200, minimum=200)
+            needed = max(length + 1 + max(max_candles_since + 1, 10), min_history)
         elif name == "vlr":
             num_regressions = _safe_int(config.get("num_regressions"), 3, minimum=1)
             start_period = _safe_int(config.get("start_period"), 12, minimum=2)
