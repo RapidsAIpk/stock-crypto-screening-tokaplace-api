@@ -1043,8 +1043,8 @@ class IndicatorMathTests(unittest.TestCase):
             18,
         )
 
-    def test_required_trend_channel_history_uses_extra_pivot_context(self):
-        self.assertEqual(trend_channels.required_trend_channel_history(8), 72)
+    def test_required_trend_channel_history_uses_full_screening_budget(self):
+        self.assertEqual(trend_channels.required_trend_channel_history(8), 500)
 
     def test_required_candles_for_trend_fetches_enough_history_for_pivot_channel(self):
         indicator = SimpleNamespace(
@@ -1064,7 +1064,7 @@ class IndicatorMathTests(unittest.TestCase):
 
         self.assertEqual(
             screener.required_candles_for_indicators([indicator]),
-            73,
+            500,
         )
 
     def test_required_candles_for_adx_covers_minimum_and_fixed_lookback_constants(self):
@@ -1858,19 +1858,101 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertFalse(channel["broken"])
         self.assertEqual(channel["start_index"], 2)
         self.assertEqual(channel["length"], 12)
+        self.assertEqual(channel["line_x1"], 0)
+        self.assertEqual(channel["line_x2"], 13)
 
-        # slope = (11.3 - 11.6) / (7 - 2) = -0.06, intercept = 11.72,
-        # offset = ATR(10) * 6 = 1.0 * 6 = 6.0, zone = offset / 7.
-        expected_top = [12.577142857142857 - 0.06 * x for x in range(2, 14)]
-        expected_bottom = [4.862857142857143 - 0.06 * x for x in range(2, 14)]
-        expected_middle = [8.72 - 0.06 * x for x in range(2, 14)]
+        # Pine extend=false extrapolates line endpoints each bar from anchors at
+        # pivot_index - length, not from a closed-form pivot intercept series.
+        self.assertAlmostEqual(float(channel["top"][0]), 12.484835164835165)
+        self.assertAlmostEqual(float(channel["top"][-1]), 11.977142857142855)
+        self.assertAlmostEqual(float(channel["bottom"][0]), 4.77054945054945)
+        self.assertAlmostEqual(float(channel["bottom"][-1]), 4.262857142857145)
+        self.assertAlmostEqual(float(channel["middle"][-1]), 8.119999999999997)
 
-        for actual, expected in zip(channel["top"], expected_top):
-            self.assertAlmostEqual(float(actual), expected)
-        for actual, expected in zip(channel["bottom"], expected_bottom):
-            self.assertAlmostEqual(float(actual), expected)
-        for actual, expected in zip(channel["middle"], expected_middle):
-            self.assertAlmostEqual(float(actual), expected)
+    def test_compute_trend_channel_freezes_broken_channel_line_endpoints(self):
+        bases = self._chartprime_fixture_bases() + [13.0, 12.5, 12.0, 11.5, 11.0, 10.5]
+        candles = self._chartprime_candles(bases)
+        candles[14] = {"open": 13.0, "high": 13.5, "low": 12.7, "close": 13.2, "volume": 100.0}
+
+        channel = trend_channels.compute_trend_channel(candles, length=2)
+
+        self.assertIsNotNone(channel)
+        self.assertTrue(channel["broken"])
+        self.assertEqual(channel["break_index"], 14)
+        self.assertEqual(channel["line_x2"], 14)
+
+        latest_index = len(candles) - 1
+        break_regression_index = channel["break_index"] - channel["start_index"]
+        bottom_at_break = float(channel["bottom"][break_regression_index])
+
+        # Frozen segment still extrapolates beyond the break bar, but from the
+        # break-time endpoints rather than continuing active per-bar updates.
+        self.assertNotAlmostEqual(float(channel["bottom"][-1]), bottom_at_break)
+
+        closed_form_bottom_at_latest = bottom_at_break + (latest_index - 14) * (-0.06)
+        self.assertNotAlmostEqual(float(channel["bottom"][-1]), closed_form_bottom_at_latest)
+
+    def test_evaluate_single_area_rejects_post_break_extrapolated_touch(self):
+        bases = self._chartprime_fixture_bases() + [13.0]
+        candles = self._chartprime_candles(bases)
+        candles[14] = {"open": 13.0, "high": 13.5, "low": 12.7, "close": 13.2, "volume": 100.0}
+        for _ in range(5):
+            candles.append({"open": 4.5, "high": 5.0, "low": 4.0, "close": 4.5, "volume": 100.0})
+
+        channel = trend_channels.compute_trend_channel(candles, length=2)
+
+        self.assertTrue(channel["broken"])
+        self.assertGreater(len(candles) - 1, channel["break_index"])
+
+        rule = {
+            "area": "bottom_line",
+            "action": "touched",
+            "touch_type": "wick",
+            "tolerance": 5,
+            "window": 1,
+            "confirmation": False,
+        }
+
+        # Latest bar is after the break but can match extrapolated frozen-line values.
+        self.assertTrue(
+            trend_channels.evaluate_line_action(
+                candles[-1],
+                channel["bottom"][-1],
+                rule,
+                "down",
+            )
+        )
+        self.assertFalse(trend_channels.evaluate_single_area(candles, channel, rule))
+
+    def test_evaluate_single_area_allows_pre_break_touch_within_window(self):
+        bases = self._chartprime_fixture_bases() + [13.0]
+        candles = self._chartprime_candles(bases)
+        candles[14] = {"open": 13.0, "high": 13.5, "low": 12.7, "close": 13.2, "volume": 100.0}
+        channel = trend_channels.compute_trend_channel(candles, length=2)
+
+        self.assertTrue(channel["broken"])
+        break_index = channel["break_index"]
+        start_index = len(candles) - channel["length"]
+        regression_index = break_index - start_index
+        touch_price = float(channel["bottom"][regression_index])
+        candles[break_index] = {
+            "open": touch_price + 0.2,
+            "high": touch_price + 0.5,
+            "low": touch_price,
+            "close": touch_price + 0.2,
+            "volume": 100.0,
+        }
+
+        rule = {
+            "area": "bottom_line",
+            "action": "touched",
+            "touch_type": "wick",
+            "tolerance": 1,
+            "window": 1,
+            "confirmation": False,
+        }
+
+        self.assertTrue(trend_channels.evaluate_single_area(candles, channel, rule))
 
     def test_compute_trend_channel_breaks_on_price_alone(self):
         bases = self._chartprime_fixture_bases() + [13.0]
@@ -3268,7 +3350,7 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
         args = fetch_live_data_mock.await_args.args
         kwargs = fetch_live_data_mock.await_args.kwargs
         self.assertEqual(args, (["AAPL"], "1h"))
-        self.assertEqual(kwargs.get("candles_limit"), 73)
+        self.assertEqual(kwargs.get("candles_limit"), 500)
 
     async def test_fetch_screening_data_accounts_for_confluence_channel_history(self):
         assets = [{"symbol": "AAPL", "asset_type": "stocks", "exchange": "NASDAQ"}]
