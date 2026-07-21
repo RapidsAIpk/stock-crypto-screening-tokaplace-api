@@ -1916,7 +1916,86 @@ class IndicatorMathTests(unittest.TestCase):
 
         self.assertEqual(
             sticker,
-            "LinReg Candles (11) | Bearish Candle Above Line + Close Above Line | Close $102.00 vs line $100.00 | No Pattern | Last 1 Candle",
+            "LinReg Candles (11) | Bearish Candle Above Line + Close Above Line | LinReg close $102.00 vs line $100.00 | No Pattern | Last 1 Candle",
+        )
+
+    def test_linreg_sticker_uses_virtual_close_for_position_rules(self):
+        candles = [{"open": 200.0, "high": 210.0, "low": 190.0, "close": 205.0}]
+        lr_result = {
+            "signal": [100.0],
+            "bopen": [101.0],
+            "bhigh": [103.0],
+            "blow": [99.0],
+            "bclose": [102.0],
+        }
+        config = {
+            "lr_length": 11,
+            "window": 1,
+            "price_position": "piercing_from_above",
+            "confirmation": False,
+        }
+        sticker = linear_regression_candles.build_linreg_candle_sticker(candles, lr_result, config)
+        self.assertIn("LinReg close $102.00", sticker)
+        self.assertNotIn("Close $205.00", sticker)
+
+    def test_linreg_closed_candles_ignore_forming_bar(self):
+        closed = [
+            {"open": 98.0, "high": 99.0, "low": 97.0, "close": 98.5, "time": 1},
+            {"open": 99.0, "high": 100.0, "low": 98.5, "close": 99.5, "time": 2},
+        ]
+        forming = {
+            "open": 50.0,
+            "high": 60.0,
+            "low": 40.0,
+            "close": 55.0,
+            "time": 3,
+            "is_closed": False,
+        }
+        # With forming bar included, compute still works; evaluate path in handle uses closed only.
+        trimmed = linear_regression_candles._closed_candles(closed + [forming])
+        self.assertEqual(len(trimmed), 2)
+        self.assertEqual(trimmed[-1]["time"], 2)
+
+        lr_result = {
+            "signal": [100.0, 100.0],
+            "bopen": [101.0, 101.0],
+            "bhigh": [102.0, 102.0],
+            "blow": [100.5, 100.5],
+            "bclose": [101.5, 101.5],
+        }
+        config = {"window": 1, "price_position": "above", "confirmation": False}
+        self.assertTrue(
+            linear_regression_candles.evaluate_linreg_candle_rules(trimmed, lr_result, config)
+        )
+        evidence = linear_regression_candles.build_linreg_evidence(
+            trimmed,
+            lr_result,
+            config,
+            True,
+            forming_bar=forming,
+        )
+        self.assertTrue(evidence["passed"])
+        self.assertIsNotNone(evidence["forming_bar_skipped"])
+        self.assertEqual(evidence["evaluation_bar"]["virtual_linreg"]["close"], 101.5)
+        self.assertEqual(evidence["settings"]["signal_smoothing"], 11)
+
+    def test_linreg_close_location_any_is_ignored(self):
+        candles = [{"open": 101.0, "high": 102.0, "low": 100.5, "close": 101.5}]
+        lr_result = {
+            "signal": [100.0],
+            "bopen": [101.0],
+            "bhigh": [102.0],
+            "blow": [100.5],
+            "bclose": [101.5],
+        }
+        config = {
+            "window": 1,
+            "price_position": "above",
+            "close_location": "any",
+            "confirmation": False,
+        }
+        self.assertTrue(
+            linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config)
         )
 
     def test_regression_r_filter_uses_absolute_strength(self):

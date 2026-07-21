@@ -32,9 +32,11 @@ from services.trend_channels import (
 )
 
 from services.linear_regression_candles import (
+    _closed_candles as linreg_closed_candles,
     compute_linreg_candles,
     evaluate_linreg_candle_rules,
-    build_linreg_candle_sticker
+    build_linreg_candle_sticker,
+    build_linreg_evidence,
 )
 
 from services.aroon_oscillator import (
@@ -369,9 +371,13 @@ def handle_trend(asset, candles, config):
 
 
 def handle_linreg_candles(asset, candles, config):
+    forming_bar = None
+    closed = linreg_closed_candles(candles)
+    if closed is not candles and candles:
+        forming_bar = candles[-1]
 
     lr_result = compute_linreg_candles(
-        candles,
+        closed,
         lr_length=config.get("lr_length", 11),
         signal_smoothing=config.get("signal_smoothing", 11),
         sma_signal=config.get("sma_signal", True),
@@ -379,16 +385,16 @@ def handle_linreg_candles(asset, candles, config):
     )
 
     if lr_result is None:
-        return False, None
+        return False, {
+            "sticker": None,
+            "evidence": build_linreg_evidence(closed, None, config, False, forming_bar),
+        }
 
-    if not evaluate_linreg_candle_rules(
-        candles,
-        lr_result,
-        config
-    ):
-        return False, None
+    passed = evaluate_linreg_candle_rules(closed, lr_result, config)
+    sticker = build_linreg_candle_sticker(closed, lr_result, config) if passed else None
+    evidence = build_linreg_evidence(closed, lr_result, config, passed, forming_bar)
 
-    return True, build_linreg_candle_sticker(candles, lr_result, config)
+    return passed, {"sticker": sticker, "evidence": evidence}
 
 
 def handle_aroon(asset, candles, config):
@@ -1080,6 +1086,13 @@ def _compile_selected_indicators(selected_indicators, registry):
 # MAIN ENGINE
 # =========================================================
 
+def _normalize_handler_result(result):
+    """Handlers may return a sticker string or {sticker, evidence}."""
+    if isinstance(result, dict):
+        return result.get("sticker"), result.get("evidence")
+    return result, None
+
+
 def apply_indicators(data, selected_indicators):
     compiled_indicators = _compile_selected_indicators(
         selected_indicators,
@@ -1107,11 +1120,12 @@ def apply_indicators(data, selected_indicators):
 
         for indicator_name, handler, config in compiled_indicators:
             try:
-                passed, sticker = handler(
+                passed, result = handler(
                     asset,
                     candles,
                     config
                 )
+                sticker, _evidence = _normalize_handler_result(result)
             except Exception:
                 logger.exception(
                     "Indicator evaluation failed, skipping symbol symbol=%s indicator=%s",
@@ -1154,16 +1168,18 @@ def evaluate_indicator_details(asset, selected_indicators, timeframe_scope=None)
     details = []
 
     for indicator_name, handler, config in compiled_indicators:
-        passed, sticker = handler(asset, candles, config)
-        details.append(
-            {
-                "name": indicator_name,
-                "timeframe_scope": timeframe_scope,
-                "passed": bool(passed),
-                "sticker": sticker,
-                "config": dict(config or {}),
-            }
-        )
+        passed, result = handler(asset, candles, config)
+        sticker, evidence = _normalize_handler_result(result)
+        detail = {
+            "name": indicator_name,
+            "timeframe_scope": timeframe_scope,
+            "passed": bool(passed),
+            "sticker": sticker,
+            "config": dict(config or {}),
+        }
+        if evidence:
+            detail["evidence"] = evidence
+        details.append(detail)
 
     return details
 
