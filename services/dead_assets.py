@@ -199,21 +199,19 @@ def _find_swing_points(candles, span=SWING_SPAN):
     return sorted(swings, key=lambda swing: swing["index"])
 
 
-def _max_consecutive_lower(swings, swing_type):
+def _trailing_consecutive_lower(swings, swing_type):
     prices = [s["price"] for s in swings if s["type"] == swing_type]
     if len(prices) < 2:
-        return len(prices)
+        return 0
 
-    max_run = 1
-    current_run = 1
-    for i in range(1, len(prices)):
+    lower_count = 0
+    for i in range(len(prices) - 1, 0, -1):
         if prices[i] < prices[i - 1]:
-            current_run += 1
-            max_run = max(max_run, current_run)
+            lower_count += 1
         else:
-            current_run = 1
+            break
 
-    return max_run
+    return lower_count
 
 
 # =========================================================
@@ -270,25 +268,25 @@ def _pct_closes_below_line(candles, trend_series, lookback):
     return below / total
 
 
-def _most_recent_confirmed_high_before(swings, index):
-    candidates = [s for s in swings if s["type"] == "high" and s["index"] <= index]
-    if not candidates:
-        return None
-    return candidates[-1]
-
-
 def _has_valid_higher_high(candles, swings, lookback):
     n = len(candles)
     start = max(0, n - int(lookback))
-    reference = _most_recent_confirmed_high_before(swings, start)
-    if reference is None:
+    highs = [s for s in swings if s["type"] == "high"]
+    if len(highs) < 2:
         return False
 
-    later_highs = [
-        s for s in swings
-        if s["type"] == "high" and reference["index"] < s["index"] < n
-    ]
-    return any(s["price"] > reference["price"] for s in later_highs)
+    reference = None
+    for high in highs:
+        if high["index"] < start:
+            reference = high
+            continue
+        if high["index"] >= n:
+            break
+        if reference is not None and high["price"] > reference["price"]:
+            return True
+        reference = high
+
+    return False
 
 
 def _recovery_check_confirms_downtrend(candles, swings, trend_series, config):
@@ -303,8 +301,8 @@ def _recovery_check_confirms_downtrend(candles, swings, trend_series, config):
 # =========================================================
 
 def _detect_strong_dead_trend(candles, swings, trend_series, config):
-    lower_highs = _max_consecutive_lower(swings, "high") >= int(config.lower_highs_required)
-    lower_lows = _max_consecutive_lower(swings, "low") >= int(config.lower_lows_required)
+    lower_highs = _trailing_consecutive_lower(swings, "high") >= int(config.lower_highs_required)
+    lower_lows = _trailing_consecutive_lower(swings, "low") >= int(config.lower_lows_required)
     downward = _trend_is_downward(trend_series, config.recovery_lookback)
 
     if not (lower_highs and lower_lows and downward):

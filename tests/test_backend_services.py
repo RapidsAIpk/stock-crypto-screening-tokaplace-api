@@ -808,6 +808,61 @@ class DeadAssetsTests(unittest.TestCase):
         )
         self.assertEqual(result, [])
 
+    def test_lower_swing_count_uses_only_active_sequence_and_counts_decreases(self):
+        swings = [
+            {"type": "high", "index": 10, "price": 10.0},
+            {"type": "high", "index": 20, "price": 9.0},
+            {"type": "high", "index": 30, "price": 8.0},
+            {"type": "high", "index": 40, "price": 12.0},
+            {"type": "high", "index": 50, "price": 11.0},
+            {"type": "high", "index": 60, "price": 10.0},
+        ]
+
+        self.assertEqual(dead_assets._trailing_consecutive_lower(swings, "high"), 2)
+
+        swings.append({"type": "high", "index": 70, "price": 9.0})
+        self.assertEqual(dead_assets._trailing_consecutive_lower(swings, "high"), 3)
+
+    def test_strong_dead_trend_does_not_reuse_run_before_swing_reset(self):
+        candles = [
+            {"open": 10.0, "high": 10.0, "low": 9.0, "close": 9.5, "volume": 1_000_000.0}
+            for _ in range(200)
+        ]
+        swings = [
+            {"type": "high", "index": 20, "price": 10.0},
+            {"type": "low", "index": 25, "price": 8.0},
+            {"type": "high", "index": 40, "price": 9.0},
+            {"type": "low", "index": 45, "price": 7.0},
+            {"type": "high", "index": 60, "price": 8.0},
+            {"type": "low", "index": 65, "price": 6.0},
+            {"type": "high", "index": 140, "price": 12.0},
+            {"type": "low", "index": 145, "price": 9.0},
+            {"type": "high", "index": 160, "price": 7.0},
+            {"type": "low", "index": 165, "price": 5.0},
+            {"type": "high", "index": 180, "price": 6.0},
+            {"type": "low", "index": 185, "price": 4.0},
+        ]
+        trend_series = np.linspace(20.0, 10.0, len(candles))
+        config = self._config(["strong_dead_trend"])
+
+        self.assertFalse(
+            dead_assets._detect_strong_dead_trend(candles, swings, trend_series, config)
+        )
+
+    def test_higher_high_is_found_when_lookback_uses_entire_candle_set(self):
+        candles = [
+            {"open": 10.0, "high": 10.0, "low": 9.0, "close": 9.5, "volume": 1_000_000.0}
+            for _ in range(200)
+        ]
+        swings = [
+            {"type": "high", "index": 20, "price": 10.0},
+            {"type": "high", "index": 60, "price": 9.0},
+            {"type": "high", "index": 140, "price": 12.0},
+            {"type": "high", "index": 180, "price": 11.0},
+        ]
+
+        self.assertTrue(dead_assets._has_valid_higher_high(candles, swings, 200))
+
     def test_slow_bleeding_trend_excludes_asset(self):
         candles = self._declining_wave_candles()
         config = self._config(["slow_bleeding_trend"])
