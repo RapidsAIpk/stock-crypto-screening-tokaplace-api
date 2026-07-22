@@ -5,6 +5,7 @@ from collections import defaultdict
 
 import numpy as np
 
+from services.market_data import MAX_CANDLES
 from services.utils import detect_touch, confirm_if_needed
 
 
@@ -12,6 +13,15 @@ MIN_TREND_HISTORY = 40
 VOLUME_BREAK_MULTIPLIER = 1.15
 RANGE_BREAK_MULTIPLIER = 1.2
 
+LINE_KEYS = (
+    "top",
+    "bottom",
+    "middle",
+    "top_zone_upper",
+    "top_zone_lower",
+    "bottom_zone_upper",
+    "bottom_zone_lower",
+)
 # Matches the ChartPrime Pine source: atr_10 = ta.atr(10) * 6, and each
 # boundary line sits offset/7 to either side of its anchor (pivot) line.
 ATR_PERIOD = 10
@@ -36,10 +46,11 @@ def _slope_non_negative(delta_y: float, delta_x: float) -> bool:
 
 
 def required_trend_channel_history(length=8):
-    normalized_length = max(2, int(length or 8))
-    # Pivot/liquidity channels need more runway than the regression fallback
-    # so the screener can confirm enough swings before evaluating the latest bar.
-    return min(500, max(normalized_length * 9, normalized_length * 2 + 5, MIN_TREND_HISTORY))
+    # ChartPrime Pine replays pivot/channel state from the first bar on the chart.
+    # Truncating history changes which pivots exist, which channels break, and which
+    # channel is active on the latest bar — always fetch the full screening budget.
+    _ = max(2, int(length or 8))
+    return MAX_CANDLES
 
 
 def compute_trend_channel(candles, length=8, wait_for_break=True, show_last_channel=True):
@@ -56,11 +67,8 @@ def compute_trend_channel(candles, length=8, wait_for_break=True, show_last_chan
     if pivot_channel is not None:
         return pivot_channel
 
-    high_pivots = sum(1 for pivot in confirmed_pivots if pivot["type"] == "high")
-    low_pivots = sum(1 for pivot in confirmed_pivots if pivot["type"] == "low")
-    if high_pivots < 2 or low_pivots < 2:
-        return _compute_regression_fallback_channel(candles, normalized_length)
-
+    # ChartPrime Pine never synthesizes a fallback channel. When pivot logic
+    # cannot form or retain a channel, there is simply no active channel.
     return None
 
 
@@ -130,7 +138,9 @@ def _compute_pivot_liquidity_channel(
                 last_high["index"] - prev_high["index"],
             )
         ):
-            candidate = _build_channel_state("down", prev_high, last_high, current_index, atr)
+            candidate = _build_channel_state(
+                "down", prev_high, last_high, current_index, atr, length
+            )
             if candidate is not None:
                 down_state = candidate
                 last_channel = dict(candidate)
@@ -146,7 +156,9 @@ def _compute_pivot_liquidity_channel(
                 last_low["index"] - prev_low["index"],
             )
         ):
-            candidate = _build_channel_state("up", prev_low, last_low, current_index, atr)
+            candidate = _build_channel_state(
+                "up", prev_low, last_low, current_index, atr, length
+            )
             if candidate is not None:
                 up_state = candidate
                 last_channel = dict(candidate)
@@ -154,7 +166,8 @@ def _compute_pivot_liquidity_channel(
                     down_state = None
 
         if down_state is not None:
-            break_direction = _check_channel_break(down_state, candles[current_index], current_index)
+            _advance_channel_line_endpoints(down_state, current_index)
+            break_direction = _check_channel_break(down_state, candles[current_index])
             if break_direction is not None:
                 down_state["broken"] = True
                 down_state["break_index"] = current_index
@@ -164,7 +177,8 @@ def _compute_pivot_liquidity_channel(
                 down_state = None
 
         if up_state is not None:
-            break_direction = _check_channel_break(up_state, candles[current_index], current_index)
+            _advance_channel_line_endpoints(up_state, current_index)
+            break_direction = _check_channel_break(up_state, candles[current_index])
             if break_direction is not None:
                 up_state["broken"] = True
                 up_state["break_index"] = current_index
@@ -242,7 +256,7 @@ def _is_pivot_low(candles, index, span):
     )
 
 
-def _build_channel_state(direction, first_pivot, second_pivot, current_index, atr_series):
+def _build_channel_state(direction, first_pivot, second_pivot, current_index, atr_series, pivot_length):
     first_index = first_pivot["index"]
     second_index = second_pivot["index"]
     span = second_index - first_index
@@ -256,7 +270,7 @@ def _build_channel_state(direction, first_pivot, second_pivot, current_index, at
     if offset <= 1e-9:
         return None
 
-    return {
+    state = {
         "direction": direction,
         "slope": slope,
         "anchor_intercept": intercept,
@@ -268,6 +282,46 @@ def _build_channel_state(direction, first_pivot, second_pivot, current_index, at
         "break_index": None,
         "break_direction": None,
         "liquidity_break": False,
+    }
+    _initialize_channel_line_endpoints(state, pivot_length)
+    return state
+
+
+def _initialize_channel_line_endpoints(channel_state, pivot_length):
+    """Seed Pine line anchors at pivot_index - length (see trend_channel.md)."""
+    x1 = channel_state["start_index"] - pivot_length
+    x2 = channel_state["anchor_end_index"] - pivot_length
+    channel_state["line_x1"] = x1
+    channel_state["line_x2"] = x2
+
+    lines_x1 = _channel_line_values(channel_state, x1)
+    lines_x2 = _channel_line_values(channel_state, x2)
+    for key in LINE_KEYS:
+        channel_state[f"line_y1_{key}"] = lines_x1[key]
+        channel_state[f"line_y2_{key}"] = lines_x2[key]
+
+
+def _advance_channel_line_endpoints(channel_state, bar_index):
+    """Mirror Pine's per-bar extrapolation when extend=false (y2 += dydx, x2 = bar_index)."""
+    dydx = channel_state["slope"]
+    channel_state["line_x2"] = bar_index
+    for key in LINE_KEYS:
+        channel_state[f"line_y2_{key}"] = channel_state[f"line_y2_{key}"] + dydx
+
+
+def _line_values_from_endpoints(channel_state, x_values):
+    x1 = channel_state["line_x1"]
+    x2 = channel_state["line_x2"]
+    x_arr = np.asarray(x_values, dtype=float)
+    if x2 == x1:
+        ratio = np.zeros_like(x_arr)
+    else:
+        ratio = (x_arr - x1) / float(x2 - x1)
+
+    return {
+        key: channel_state[f"line_y1_{key}"]
+        + (channel_state[f"line_y2_{key}"] - channel_state[f"line_y1_{key}"]) * ratio
+        for key in LINE_KEYS
     }
 
 
@@ -300,14 +354,17 @@ def _channel_line_values(channel_state, x):
     }
 
 
-def _check_channel_break(channel_state, candle, current_index):
-    lines = _channel_line_values(channel_state, current_index)
+def _check_channel_break(channel_state, candle):
+    # After _advance_channel_line_endpoints, x2 is the current bar and y2 holds
+    # the extrapolated boundary prices Pine uses for break checks.
+    top = channel_state["line_y2_top"]
+    bottom = channel_state["line_y2_bottom"]
     low = float(candle["low"])
     high = float(candle["high"])
 
-    if low > lines["top"]:
+    if low > top:
         return "up"
-    if high < lines["bottom"]:
+    if high < bottom:
         return "down"
     return None
 
@@ -364,8 +421,9 @@ def _candle_float(candle, key):
 
 
 def _build_rendered_channel(channel_state, current_index):
-    x = np.arange(channel_state["start_index"], current_index + 1, dtype=float)
-    lines = _channel_line_values(channel_state, x)
+    start_index = channel_state["start_index"]
+    x = np.arange(start_index, current_index + 1, dtype=float)
+    lines = _line_values_from_endpoints(channel_state, x)
 
     return {
         "middle": lines["middle"],
@@ -378,11 +436,13 @@ def _build_rendered_channel(channel_state, current_index):
         "length": len(x),
         "model": "pivot_liquidity",
         "direction": channel_state["direction"],
-        "start_index": channel_state["start_index"],
+        "start_index": start_index,
         "broken": bool(channel_state.get("broken")),
         "break_index": channel_state.get("break_index"),
         "break_direction": channel_state.get("break_direction"),
         "liquidity_break": bool(channel_state.get("liquidity_break")),
+        "line_x1": channel_state.get("line_x1"),
+        "line_x2": channel_state.get("line_x2"),
     }
 
 
@@ -436,55 +496,33 @@ def _wilder_atr(candles, period=10):
     return atr
 
 
-def _compute_regression_fallback_channel(candles, length):
-    if len(candles) < length:
-        return None
-
-    highs = np.array([c["high"] for c in candles[-length:]], dtype=float)
-    lows = np.array([c["low"] for c in candles[-length:]], dtype=float)
-
-    x = np.arange(length)
-
-    try:
-        top_slope, top_intercept = np.polyfit(x, highs, 1)
-        bottom_slope, bottom_intercept = np.polyfit(x, lows, 1)
-    except Exception:
-        return None
-
-    mid_slope = (top_slope + bottom_slope) / 2.0
-    mid_intercept = (top_intercept + bottom_intercept) / 2.0
-    mid = mid_intercept + mid_slope * x
-
-    top_dev = max(float(np.max(highs - mid)), 1e-9)
-    bottom_dev = max(float(np.max(mid - lows)), 1e-9)
-    top = mid + top_dev
-    bottom = mid - bottom_dev
-
-    width = np.maximum(top - bottom, 1e-9)
-    zone_buffer = np.maximum(width * 0.2, np.mean(width) * 0.05)
-
-    return {
-        "middle": mid,
-        "top": top,
-        "bottom": bottom,
-        "top_zone_upper": top + zone_buffer,
-        "top_zone_lower": top,
-        "bottom_zone_upper": bottom,
-        "bottom_zone_lower": bottom - zone_buffer,
-        "length": length,
-        "model": "regression_fallback",
-        "direction": "unknown",
-        "start_index": len(candles) - length,
-        "broken": False,
-        "break_index": None,
-        "break_direction": None,
-        "liquidity_break": False,
-    }
-
-
 # =========================================================
 # EVALUATE RULES
 # =========================================================
+
+def _channel_last_signal_index(tc):
+    """Last absolute candle index eligible for screener rules.
+
+    When a channel is broken, only bars at or before the break bar may
+    generate signals. Post-break extrapolated line values are retained for
+    rendering only and must not drive rule evaluation.
+    """
+    if not tc.get("broken"):
+        return None
+
+    break_index = tc.get("break_index")
+    if break_index is None:
+        return None
+
+    return int(break_index)
+
+
+def _candle_index_eligible_for_signal(tc, candle_index):
+    last_signal_index = _channel_last_signal_index(tc)
+    if last_signal_index is None:
+        return True
+    return int(candle_index) <= last_signal_index
+
 
 def evaluate_trend_channel_rules(candles, tc, config):
 
@@ -517,8 +555,12 @@ def evaluate_single_area(candles, tc, rule):
     length = tc["length"]
     start_index = len(candles) - length
     action = str(rule.get("action") or "").strip().lower()
+    latest_index = len(candles) - 1
 
     if action in {"closed_above", "closed_below", "on_line"}:
+        if not _candle_index_eligible_for_signal(tc, latest_index):
+            return False
+
         line_series, direction = _line_series_for_area(tc, area)
         if line_series is None:
             return False
@@ -529,6 +571,7 @@ def evaluate_single_area(candles, tc, rule):
             start_index,
             rule,
             direction,
+            tc=tc,
         )
         if signal_start_index is None:
             return False
@@ -545,6 +588,9 @@ def evaluate_single_area(candles, tc, rule):
         candle = recent_candles[i]
 
         candle_index = len(candles) - window + i
+        if not _candle_index_eligible_for_signal(tc, candle_index):
+            continue
+
         regression_index = candle_index - start_index
 
         if regression_index < 0 or regression_index >= length:
@@ -622,10 +668,14 @@ def _current_line_signal_start_index(
     start_index,
     rule,
     direction=None,
+    tc=None,
 ):
     latest_index = len(candles) - 1
 
     if latest_index < 0:
+        return None
+
+    if tc is not None and not _candle_index_eligible_for_signal(tc, latest_index):
         return None
 
     if not _line_action_matches_index(
@@ -639,9 +689,12 @@ def _current_line_signal_start_index(
         return None
 
     signal_start_index = latest_index
+    last_signal_index = _channel_last_signal_index(tc) if tc is not None else None
 
     while signal_start_index - 1 >= 0:
         previous_index = signal_start_index - 1
+        if last_signal_index is not None and previous_index > last_signal_index:
+            break
         if not _line_action_matches_index(
             candles,
             line_series,

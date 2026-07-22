@@ -20,7 +20,7 @@ class IndicatorDefaultTests(unittest.TestCase):
 
     def test_required_candles_uses_trend_pivot_history_budget(self):
         indicator = SimpleNamespace(name="trend", config={})
-        self.assertEqual(screener.required_candles_for_indicators([indicator]), 73)
+        self.assertEqual(screener.required_candles_for_indicators([indicator]), 500)
 
     def test_ema_helpers_use_default_length_9(self):
         candles = [{"close": float(price)} for price in range(1, 21)]
