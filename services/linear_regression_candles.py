@@ -89,6 +89,133 @@ def _virtual_candle_at(candles, lr_result, candle_idx: int) -> dict:
     return candles[candle_idx]
 
 
+def _position_streak_config(config):
+    """Signal age follows price_position only; close_location filters the latest bar."""
+    streak_config = dict(config or {})
+    streak_config.pop("close_location", None)
+    return streak_config
+
+
+def _linreg_candle_matches_at_index(candles, lr_result, config, candle_idx, *, include_close_rule=True):
+    lr_line = _signal_series(lr_result)
+    if candle_idx < 0 or candle_idx >= len(lr_line):
+        return False
+
+    position_rule = config.get("price_position")
+    if not position_rule:
+        return False
+
+    line = float(lr_line[candle_idx])
+    if not np.isfinite(line):
+        return False
+
+    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
+    close_rule = _normalize_close_location(config.get("close_location")) if include_close_rule else None
+    virtual_candle = _virtual_candle_at(candles, lr_result, candle_idx)
+    linreg_context = _linreg_context(lr_result, candle_idx)
+
+    if not check_price_position(virtual_candle, line, position_rule, tolerance_pct):
+        return False
+
+    if close_rule and not check_close_location(
+        virtual_candle,
+        line,
+        close_rule,
+        tolerance_pct,
+        linreg_context,
+    ):
+        return False
+
+    return True
+
+
+def _current_linreg_signal_start_index(candles, lr_result, config):
+    """Earliest index of the current continuous price_position streak."""
+    lr_line = _signal_series(lr_result)
+    latest_index = len(lr_line) - 1
+
+    if latest_index < 0:
+        return None
+
+    streak_config = _position_streak_config(config)
+    if not _linreg_candle_matches_at_index(
+        candles,
+        lr_result,
+        streak_config,
+        latest_index,
+        include_close_rule=False,
+    ):
+        return None
+
+    signal_start_index = latest_index
+
+    while signal_start_index - 1 >= 0:
+        previous_index = signal_start_index - 1
+        if not _linreg_candle_matches_at_index(
+            candles,
+            lr_result,
+            streak_config,
+            previous_index,
+            include_close_rule=False,
+        ):
+            break
+        signal_start_index = previous_index
+
+    return signal_start_index
+
+
+def _linreg_signal_age(candles, lr_result, config):
+    signal_start_index = _current_linreg_signal_start_index(candles, lr_result, config)
+    if signal_start_index is None:
+        return None
+    return len(_signal_series(lr_result)) - signal_start_index
+
+
+def trace_linreg_signal_window(candles, lr_result, config):
+    """Debug helper: streak, start index, age, window, and pass/fail reason."""
+    lr_line = _signal_series(lr_result)
+    window = max(1, int(config.get("window", 1) or 1))
+    position_rule = config.get("price_position")
+    signal_start_index = _current_linreg_signal_start_index(candles, lr_result, config)
+    latest_index = len(lr_line) - 1
+
+    if signal_start_index is None:
+        return {
+            "position_rule": position_rule,
+            "signal_streak": 0,
+            "signal_start_index": None,
+            "signal_age_candles": None,
+            "window": window,
+            "passed": False,
+            "reason": "latest candle does not satisfy the configured LinReg rules",
+        }
+
+    signal_age = len(lr_line) - signal_start_index
+    passed = signal_age <= window
+    if passed and config.get("confirmation"):
+        passed = confirm_if_needed(candles, signal_start_index, config)
+        reason = (
+            "signal age within window and confirmation passed"
+            if passed
+            else f"signal age {signal_age} within window {window} but confirmation failed"
+        )
+    elif passed:
+        reason = f"signal age {signal_age} within window {window}"
+    else:
+        reason = f"signal age {signal_age} exceeds window {window} (started too early)"
+
+    return {
+        "position_rule": position_rule,
+        "signal_streak": signal_age,
+        "signal_start_index": signal_start_index,
+        "latest_index": latest_index,
+        "signal_age_candles": signal_age,
+        "window": window,
+        "passed": passed,
+        "reason": reason,
+    }
+
+
 def evaluate_linreg_candle_rules(candles, lr_result, config):
     lr_line = _signal_series(lr_result)
     window = int(config.get("window", 1) or 1)
@@ -96,37 +223,28 @@ def evaluate_linreg_candle_rules(candles, lr_result, config):
     if window <= 0:
         window = 1
 
-    if len(lr_line) < window:
+    if len(lr_line) < 1:
         return False
 
     position_rule = config.get("price_position")
     if not position_rule:
         return False
 
-    close_rule = _normalize_close_location(config.get("close_location"))
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
-    start_idx = len(lr_line) - window
+    if not _linreg_candle_matches_at_index(candles, lr_result, config, len(lr_line) - 1):
+        return False
 
-    for candle_idx in range(start_idx, len(lr_line)):
-        line = float(lr_line[candle_idx])
-        if not np.isfinite(line):
-            continue
+    signal_start_index = _current_linreg_signal_start_index(candles, lr_result, config)
+    if signal_start_index is None:
+        return False
 
-        virtual_candle = _virtual_candle_at(candles, lr_result, candle_idx)
-        linreg_context = _linreg_context(lr_result, candle_idx)
+    signal_age = len(lr_line) - signal_start_index
+    if signal_age > window:
+        return False
 
-        if not check_price_position(virtual_candle, line, position_rule, tolerance_pct):
-            continue
+    if config.get("confirmation") and not confirm_if_needed(candles, signal_start_index, config):
+        return False
 
-        if close_rule and not check_close_location(virtual_candle, line, close_rule, tolerance_pct, linreg_context):
-            continue
-
-        if config.get("confirmation") and not confirm_if_needed(candles, candle_idx, config):
-            continue
-
-        return True
-
-    return False
+    return True
 
 
 def check_price_position(candle, line, rule, tolerance_pct=0):
@@ -269,6 +387,7 @@ def build_linreg_evidence(candles, lr_result, config, passed, forming_bar=None):
             "tolerance_pct": tolerance_pct,
             "window": int(config.get("window", 1) or 1),
         },
+        "signal_timing": trace_linreg_signal_window(candles, lr_result, config),
         "evaluation_bar": {
             "index": candle_idx,
             "time": bar_time,
@@ -343,34 +462,19 @@ def _linreg_plain_language(passed, position_rule, close_rule, skipped_forming):
 def _latest_matching_linreg_index(candles, lr_result, config):
     lr_line = _signal_series(lr_result)
     if not candles or len(lr_line) == 0:
-        return {"candle_idx": 0, "lr_idx": 0}
+        return {"candle_idx": 0, "lr_idx": 0, "signal_start_index": 0}
 
-    window = max(1, int(config.get("window", 1) or 1))
-    start_idx = max(0, len(lr_line) - window)
-    latest_match = None
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
-    close_rule = _normalize_close_location(config.get("close_location"))
-
-    for candle_idx in range(start_idx, len(lr_line)):
-        line = float(lr_line[candle_idx])
-        if not np.isfinite(line):
-            continue
-
-        virtual_candle = _virtual_candle_at(candles, lr_result, candle_idx)
-        linreg_context = _linreg_context(lr_result, candle_idx)
-
-        if not check_price_position(virtual_candle, line, config.get("price_position"), tolerance_pct):
-            continue
-        if close_rule and not check_close_location(virtual_candle, line, close_rule, tolerance_pct, linreg_context):
-            continue
-
-        latest_match = {"candle_idx": candle_idx, "lr_idx": candle_idx}
-
-    if latest_match is not None:
-        return latest_match
-
+    signal_start_index = _current_linreg_signal_start_index(candles, lr_result, config)
     last_idx = len(lr_line) - 1
-    return {"candle_idx": max(0, last_idx), "lr_idx": last_idx}
+
+    if signal_start_index is not None:
+        return {
+            "candle_idx": last_idx,
+            "lr_idx": last_idx,
+            "signal_start_index": signal_start_index,
+        }
+
+    return {"candle_idx": max(0, last_idx), "lr_idx": last_idx, "signal_start_index": None}
 
 
 def _linreg_decision(candle, position_rule, close_rule, linreg_context=None):

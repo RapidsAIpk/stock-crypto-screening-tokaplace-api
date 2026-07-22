@@ -1534,10 +1534,32 @@ class IndicatorMathTests(unittest.TestCase):
         }
         self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
 
-    def test_linreg_candle_window_uses_any_recent_candle(self):
+    def test_linreg_candle_window_counts_from_signal_start_until_now(self):
         candles = [
             {"open": 98.0, "high": 99.0, "low": 97.0, "close": 98.0},
-            {"open": 99.0, "high": 100.0, "low": 98.0, "close": 99.0},
+            {"open": 101.0, "high": 103.0, "low": 101.0, "close": 102.0},
+            {"open": 101.0, "high": 103.0, "low": 101.0, "close": 102.0},
+        ]
+        lr_line = [100.0, 100.0, 100.0]
+        config = {
+            "window": 1,
+            "price_position": "above",
+            "confirmation": False,
+        }
+        trace = linear_regression_candles.trace_linreg_signal_window(candles, lr_line, config)
+        self.assertEqual(trace["signal_streak"], 2)
+        self.assertEqual(trace["signal_start_index"], 1)
+        self.assertEqual(trace["signal_age_candles"], 2)
+        self.assertFalse(trace["passed"])
+        self.assertIn("exceeds window", trace["reason"])
+        self.assertFalse(
+            linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_line, config)
+        )
+
+    def test_linreg_candle_window_accepts_signal_started_within_window(self):
+        candles = [
+            {"open": 98.0, "high": 99.0, "low": 97.0, "close": 98.0},
+            {"open": 101.0, "high": 103.0, "low": 101.0, "close": 102.0},
             {"open": 101.0, "high": 103.0, "low": 101.0, "close": 102.0},
         ]
         lr_line = [100.0, 100.0, 100.0]
@@ -1546,9 +1568,145 @@ class IndicatorMathTests(unittest.TestCase):
             "price_position": "above",
             "confirmation": False,
         }
+        trace = linear_regression_candles.trace_linreg_signal_window(candles, lr_line, config)
+        self.assertEqual(trace["signal_streak"], 2)
+        self.assertTrue(trace["passed"])
         self.assertTrue(
             linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_line, config)
         )
+
+        config_window_1 = {**config, "window": 1}
+        trace_window_1 = linear_regression_candles.trace_linreg_signal_window(
+            candles,
+            lr_line,
+            config_window_1,
+        )
+        self.assertFalse(trace_window_1["passed"])
+        self.assertFalse(
+            linear_regression_candles.evaluate_linreg_candle_rules(
+                candles,
+                lr_line,
+                config_window_1,
+            )
+        )
+
+    def test_linreg_close_location_does_not_shorten_position_signal_age(self):
+        candles = [{"open": 0, "high": 0, "low": 0, "close": 0} for _ in range(5)]
+        lr_result = {
+            "signal": [100.0] * 5,
+            "bopen": [101.0, 101.0, 101.0, 101.0, 99.0],
+            "bhigh": [103.0, 103.0, 103.0, 103.0, 102.0],
+            "blow": [100.5, 100.5, 100.5, 100.5, 100.5],
+            "bclose": [98.0, 98.0, 98.0, 98.0, 101.5],
+        }
+        config = {
+            "window": 3,
+            "price_position": "above",
+            "close_location": "bullish",
+            "confirmation": False,
+        }
+        trace = linear_regression_candles.trace_linreg_signal_window(candles, lr_result, config)
+        self.assertEqual(trace["signal_streak"], 5)
+        self.assertFalse(trace["passed"])
+        self.assertFalse(
+            linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config)
+        )
+
+    def test_linreg_candle_window_signal_age_for_all_positions(self):
+        candles = [{"open": 0, "high": 0, "low": 0, "close": 0} for _ in range(6)]
+
+        def lr_from_virtual(bopens, bhighs, blows, bcloses, line=100.0):
+            return {
+                "signal": [line] * len(bopens),
+                "bopen": bopens,
+                "bhigh": bhighs,
+                "blow": blows,
+                "bclose": bcloses,
+            }
+
+        scenarios = [
+            (
+                "above",
+                lr_from_virtual(
+                    [98, 98, 98, 101, 101, 101],
+                    [99, 99, 99, 103, 103, 103],
+                    [97, 97, 97, 101, 101, 101],
+                    [98, 98, 98, 102, 102, 102],
+                ),
+                [
+                    (1, 6, False),
+                    (3, 6, True),
+                    (4, 6, True),
+                ],
+            ),
+            (
+                "below",
+                lr_from_virtual(
+                    [99, 99, 99, 99, 99, 99],
+                    [99, 99, 99, 99, 99, 99],
+                    [97, 97, 97, 97, 97, 97],
+                    [98, 98, 98, 98, 98, 98],
+                ),
+                [
+                    (1, 6, False),
+                    (3, 6, False),
+                    (6, 6, True),
+                ],
+            ),
+            (
+                "piercing_from_below",
+                lr_from_virtual(
+                    [98, 98, 98, 99, 101, 101],
+                    [99, 99, 99, 100, 103, 103],
+                    [97, 97, 97, 98, 101, 101],
+                    [98, 98, 98, 101, 102, 102],
+                ),
+                [
+                    (1, 4, True),
+                    (1, 5, False),
+                    (2, 4, True),
+                ],
+            ),
+            (
+                "piercing_from_above",
+                lr_from_virtual(
+                    [101, 99, 99, 99, 101, 99],
+                    [102, 100, 100, 100, 102, 100],
+                    [98, 98, 98, 98, 98, 98],
+                    [99, 98, 98, 98, 99, 98],
+                ),
+                [
+                    (1, 1, True),
+                    (1, 2, False),
+                    (1, 5, True),
+                ],
+            ),
+        ]
+
+        for position, lr_result, cases in scenarios:
+            for window, total_candles, expected_pass in cases:
+                with self.subTest(position=position, window=window, total_candles=total_candles):
+                    sliced_candles = candles[:total_candles]
+                    sliced_lr = {key: values[:total_candles] for key, values in lr_result.items()}
+                    config = {
+                        "window": window,
+                        "price_position": position,
+                        "confirmation": False,
+                    }
+                    trace = linear_regression_candles.trace_linreg_signal_window(
+                        sliced_candles,
+                        sliced_lr,
+                        config,
+                    )
+                    self.assertEqual(trace["passed"], expected_pass, trace["reason"])
+                    self.assertEqual(
+                        linear_regression_candles.evaluate_linreg_candle_rules(
+                            sliced_candles,
+                            sliced_lr,
+                            config,
+                        ),
+                        expected_pass,
+                    )
 
     def test_linreg_candle_uses_virtual_candle_instead_of_raw(self):
         candles = [
@@ -2118,10 +2276,10 @@ class IndicatorMathTests(unittest.TestCase):
 
         lr_result = {
             "signal": [100.0, 100.0],
-            "bopen": [101.0, 101.0],
-            "bhigh": [102.0, 102.0],
-            "blow": [100.5, 100.5],
-            "bclose": [101.5, 101.5],
+            "bopen": [99.0, 101.0],
+            "bhigh": [100.0, 102.0],
+            "blow": [97.0, 100.5],
+            "bclose": [98.0, 101.5],
         }
         config = {"window": 1, "price_position": "above", "confirmation": False}
         self.assertTrue(
