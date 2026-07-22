@@ -1,0 +1,939 @@
+# Full Code Documentation
+
+Project: Backend_Crypto_project
+Generated: 2026-07-21
+
+## 1. Executive Summary
+
+This repository is a Python FastAPI backend for stock and crypto screening. It builds an asset universe from local JSON cache files, fetches market candles from Massive/Polygon-compatible APIs and optionally Binance for crypto, applies technical indicators and post-filters, and returns normalized screening results to a frontend or API client.
+
+Core capabilities:
+
+- Single-timeframe stock or crypto screening.
+- Two-step gate/entry screening where a higher timeframe gate produces a short-lived session consumed by a lower timeframe entry scan.
+- Local technical indicators and channel filters.
+- Fundamental/metadata filters for stock and crypto universes.
+- SQLite-backed market-data cache.
+- Background worker that keeps selected candle timeframes warm.
+- Validation framework for comparing production screener behavior to frozen/golden references.
+
+## 2. Technology Stack
+
+Runtime:
+
+- Python
+- FastAPI
+- Uvicorn
+- Pydantic / pydantic-settings
+- httpx
+- requests
+- numpy
+- python-dotenv
+- SQLite via Python standard library
+
+Dependencies are declared in `requirements.txt`:
+
+- `fastapi>=0.135,<1.0`
+- `httpx>=0.28,<1.0`
+- `numpy>=2.2,<3.0`
+- `pydantic>=2.12,<3.0`
+- `pydantic-settings>=2.10,<3.0`
+- `python-dotenv>=1.0,<2.0`
+- `requests>=2.32,<3.0`
+- `uvicorn[standard]>=0.34,<1.0`
+- `httpx[http2]`
+
+## 3. Run Commands
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Start the API:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Run the backend regression suite mentioned in README:
+
+```bash
+python -m unittest tests/test_backend_services.py
+```
+
+Run all unittest tests:
+
+```bash
+python -m unittest discover
+```
+
+## 4. Top-Level Structure
+
+- `main.py`: FastAPI app factory, lifespan startup/shutdown, CORS, health/readiness routes.
+- `api/`: API routers. Currently focused on screening and operations endpoints.
+- `core/`: configuration and logging setup.
+- `models/`: Pydantic request/response models.
+- `services/`: business logic, market data, indicators, filters, asset routing, session/cache services.
+- `data/`: local stock and crypto universe JSON files plus generated SQLite cache.
+- `validation/`: validation pipelines, fixture handling, oracle/comparison utilities.
+- `production_screener_validation/`: production validation harness with fixtures, cases, golden references, and reports.
+- `scripts/`: CLI scripts for validation, fixture capture, universe updates, matrix generation, and diagnostics.
+- `tests/`: unit and regression tests.
+- `docs/`: existing architecture notes, PineScript comparison notes, validation guides, and client deliverables.
+- `Procfile`: deployment process definition.
+- `README.md`: quick overview and operating notes.
+- `Backend_Changes_Crypto.md`: recent market-data fix summary from 2026-07-20.
+
+## 5. Application Lifecycle
+
+`main.py` builds the FastAPI application through `create_app()`.
+
+Startup:
+
+- Logging is configured from `settings.LOG_LEVEL`.
+- A `MarketDataWorker` is created and placed on `app.state.market_data_worker`.
+- If `MARKET_DATA_WORKER_ENABLED=true`, the worker starts during lifespan startup.
+
+Shutdown:
+
+- The worker is stopped.
+- Massive/Polygon and Binance HTTP clients are closed.
+
+Important app helpers:
+
+- `_ready_mode_label()`: returns the active stock/crypto candle provider mode.
+- `_requires_market_data_api_key()`: currently true when the active candle provider is Massive.
+- `build_market_data_worker()`: builds a worker using configured poll interval and batch size.
+- `create_app()`: configures FastAPI, CORS, routes, global exception handling, and health endpoints.
+
+## 6. Public API Endpoints
+
+Base root endpoints:
+
+- `GET /`: returns service status, name, version, and environment.
+- `GET /healthz`: liveness endpoint.
+- `GET /readyz`: readiness endpoint with worker status and provider mode. Returns `503` if required market-data API key is missing or the configured worker is not running.
+
+Screening endpoints under `/screen`:
+
+- `POST /screen/run`: single-timeframe screening. Requires `timeframe_mode="single"`.
+- `POST /screen/run-gate`: gate phase for two-timeframe mode. Requires `timeframe_mode="gate_entry"`.
+- `POST /screen/run-entry`: entry phase for two-timeframe mode. Requires `gate_session_id`.
+- `POST /screen/details`: returns rich detail for one symbol and timeframe.
+- `GET /screen/crypto-exchanges`: returns crypto exchanges available in the local crypto universe.
+- `GET /screen/stock-filter-options`: returns stock asset category and sector options.
+
+Operations endpoints under `/screen/ops`:
+
+- `GET /screen/ops/worker`: worker status.
+- `POST /screen/ops/worker/start`: start background worker.
+- `POST /screen/ops/worker/stop`: stop background worker.
+- `POST /screen/ops/worker/refresh`: run one worker refresh cycle.
+- `POST /screen/ops/worker/config`: update runtime poll interval and batch size.
+- `GET /screen/ops/runtime-settings`: effective app, server, screening, worker, and integration settings.
+- `GET /screen/ops/integrations`: integration runtime snapshot.
+- `POST /screen/ops/integrations/config`: update provider enabled/paused/api_key/call_limit values at runtime.
+- `GET /screen/ops/integrations/{provider}/history`: provider history.
+- `POST /screen/ops/diagnose`: runtime diagnostics.
+
+Admin behavior:
+
+- Operations endpoints use `_require_admin()`.
+- If `ADMIN_API_TOKEN` is set, requests must send `X-Admin-Token`.
+- In production, if no admin token is configured, admin access is denied.
+- In non-production, missing admin token is allowed when no expected token is configured.
+
+## 7. Request Models
+
+Main request model: `models/filters.py::ScreeningRequest`.
+
+Primary fields:
+
+- `asset_type`: `"stocks"` or `"crypto"`.
+- `symbols`: optional manual symbol list. Manual stock symbols are uppercased; manual crypto symbols are normalized to `BASE-USD`.
+- `stock_sources`: stock universe sources. Current supported value is `"zoya"`.
+- `compliance_status`: stock compliance status: `"compliant"`, `"non-compliant"`, or `"questionable"`.
+- `compliance_standards`: rejected by current validation because Zoya universe data does not support it.
+- `exchanges`: optional crypto exchange filter.
+- `excluded_categories`: optional crypto category exclusion list.
+- `timeframe_mode`: `"single"` or `"gate_entry"`.
+- `single_timeframe`: required for single mode.
+- `gate_timeframe`: required for gate/entry mode.
+- `entry_timeframe`: required for gate/entry mode.
+- `gate_session_id`: required for entry calls.
+- `indicators`: list of `IndicatorConfig`.
+- `channel_respect`: optional post-filter.
+- `confluence`: optional post-filter.
+- `price_range`: optional price min/max.
+- `dead_assets`: optional dead-asset omission filter.
+- `asset_categories`: optional stock-only categories.
+- `sectors`: optional stock-only sectors.
+
+Validation rules:
+
+- Stocks require `stock_sources` unless manual `symbols` are provided.
+- Only `zoya` is accepted as a stock source.
+- `asset_categories` and `sectors` are only accepted for stocks.
+- Timeframes accept formats like `1m`, `15m`, `4h`, `1day`, `2day`, `1w`, and `1mo`.
+- In `gate_entry` mode, `gate_timeframe` must be greater than `entry_timeframe`.
+- `price_range.min_price` cannot exceed `price_range.max_price`.
+- Manual symbol count is capped by `MANUAL_SYMBOLS_MAX` unless configured as `0` or lower.
+
+Indicator model:
+
+- `name`: one of `rsi`, `stochrsi`, `wavetrend`, `aroon`, `adx`, `vlr`, `ema`, `sma`, `macd`, `volume`, `relative_volume`, `current_volume`, `float`, `shares_outstanding`, `volatility`, `lrc`, `regression`, `trend`, `linreg_candles`.
+- `timeframe`: `"single"`, `"primary"`, or `"secondary"`.
+- `config`: free-form indicator configuration dict.
+
+Channel respect model:
+
+- `channel_type`: `lrc`, `regression`, or `trend`.
+- `line`: `upper`, `middle`, `lower`, `both`, `upper_middle`, `lower_middle`, or `all`.
+- `min_respect`, `max_respect`, `tolerance_pct`, `cluster_gap`, `touch_type`.
+
+Confluence model:
+
+- `type`: `bullish`, `bearish`, `role_reversal`, `breakout`, or `any`.
+- Requires exactly two `sources` or exactly two legacy `channels`.
+- `lookback_candles` must be 1 through 4.
+- `tolerance_pct` cannot be negative.
+- Source selections are validated against channel type.
+
+Dead assets model:
+
+- Can detect `strong_dead_trend`, `slow_bleeding_trend`, `failed_recovery`, and `flat_dead_asset`.
+- Configures lower-high/lower-low requirements, trend source, recovery lookback, volume/volatility weakness, bounce threshold, failure window, and recovery override.
+
+## 8. Response Models
+
+Main response model: `models/results.py::ScreeningResponse`.
+
+Envelope:
+
+- `results`: list of `ScreeningResult`.
+- `gate_session_id`: returned by gate scans.
+
+Screening result fields:
+
+- `symbol`
+- `price`
+- `asset_type`
+- `data_source`
+- `timeframe`
+- `scan_stage`
+- `name`
+- `category`
+- `sector`
+- `asset_categories`
+- `cmc_id`
+- `rank`
+- `compliance_status`
+- `report_date`
+- `purification_ratio`
+- `candles_count`
+- `last_candle_time`
+- `exchange`
+- `exchange_availability`
+- `note`
+- `stickers`
+- `matched_indicators`
+- `market_data_freshness`
+
+Freshness metadata:
+
+- `is_stale`
+- `stale_age_seconds`
+- `stale_reason`
+- `data_source`: usually `live_provider`, `fresh_cache`, or `stale_cache`.
+
+Detail endpoint model:
+
+- `ScreeningResultDetail` extends `ScreeningResult`.
+- Adds `asset_metadata`, `request_filters`, `indicator_details`, `filter_details`, `market_data`, `channels`, and `confluence_channels`.
+
+## 9. Screening Pipeline
+
+Primary orchestration lives in `services/screener.py`.
+
+Single mode (`run_single`):
+
+1. Build the stock or crypto asset universe.
+2. Limit assets using `SCREENING_MAX_SYMBOLS` and manual symbol rules.
+3. Select indicators scoped to `"single"`.
+4. Determine required candle history.
+5. Fetch screening data for the requested timeframe.
+6. Attach channels needed by post-filters.
+7. Apply selected indicators.
+8. Apply price range, dead assets, channel respect, and confluence filters.
+9. Add filter stickers.
+10. Build normalized response rows.
+
+Gate mode (`run_gate`):
+
+1. Uses `"primary"` indicators.
+2. Fetches gate timeframe data.
+3. Applies indicators/post-filters.
+4. Stores passed metadata in SQLite gate-session storage.
+5. Returns results plus `gate_session_id`.
+
+Entry mode (`run_entry`):
+
+1. Requires `gate_session_id`.
+2. Consumes the matching gate session once.
+3. Uses the gate output as the entry universe.
+4. Uses `"secondary"` indicators.
+5. Fetches entry timeframe data.
+6. Applies indicators/post-filters.
+7. If entry fetch fails, the gate session is restored so it is not lost.
+
+Gate sessions:
+
+- Implemented through `services/gate_session_store.py`.
+- Scoped by request hash and client identity.
+- TTL controlled by `GATE_SESSION_TTL_SECONDS`.
+- Entry consumption is one-time for matching scope/client.
+
+## 10. Asset Universe
+
+Implemented in `services/asset_router.py`.
+
+Stock universe:
+
+- Loaded from `data/zoya_universe.json`.
+- Current file contains 5,076 stock rows.
+- Sample fields: `name`, `symbol`, `status`, `reportDate`, `purificationRatio`, `exchange`.
+- Stock rows are enriched from `data/stock_reference_metadata.json`.
+- Stock index membership is read from `data/index_constituents.json`.
+- Supported stock source is `zoya`.
+- Optional filters include compliance status, asset categories, and sectors.
+
+Crypto universe:
+
+- Loaded from `data/crypto_universe.json`.
+- Current file contains 598 crypto rows.
+- Sample fields: `symbol`, `name`, `category`, `exchanges`.
+- Symbols normalize to `BASE-USD`.
+- Provider symbols normalize to Massive format like `X:BTCUSD`.
+- Exchange filters respect local exchange availability.
+- If crypto provider is Binance, coins must have Binance availability.
+
+Manual symbols:
+
+- If `symbols` is provided, local universe filtering is bypassed.
+- Manual stock rows use `data_source="manual"`.
+- Manual crypto rows use normalized `BASE-USD` symbols and `exchange="manual"`.
+
+## 11. Market Data
+
+Main modules:
+
+- `services/market_data.py`
+- `services/market_data_store.py`
+- `services/market_data_worker.py`
+- `services/stock_session.py`
+
+Supported providers:
+
+- Stocks: Massive/Polygon-compatible provider only. Legacy Polygon names alias to Massive.
+- Crypto: Massive or Binance.
+
+Important market-data behavior:
+
+- `MAX_CANDLES` is 500.
+- Worker-cache timeframes are `1h`, `4h`, and `1day`.
+- `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, and `1day` have explicit second mappings.
+- `4h` candles can be aggregated from lower-level candle data when needed.
+- Latest candle can be marked as unclosed/in progress.
+- Stock intraday data can be filtered to TradingView regular session policy.
+- Massive/Polygon grouped daily paths are used for large daily/weekly scans.
+- Snapshot fast paths are used for large latest-only scans.
+- Binance quote and klines paths are used for configured crypto scans.
+
+Cache store:
+
+- SQLite path: `data/market_data_cache.db`.
+- Tables:
+  - `market_data_cache`
+  - `indicator_cache`
+  - `market_data_interest`
+  - `indicator_interest`
+- Cache key is `(symbol, timeframe)`.
+- Interest rows track `last_requested_at`, `last_refreshed_at`, and `next_refresh_at`.
+- TTL and retention vary by timeframe.
+
+Freshness:
+
+- Fresh payloads are tagged as `live_provider` or `fresh_cache`.
+- Stale fallback is disabled by default with `ALLOW_STALE_MARKET_DATA=False`.
+- If enabled, stale fallback is capped by `MAX_STALE_MARKET_DATA_AGE_SECONDS`.
+- Provider refresh failures can leave old cache stored without reporting it as fresh.
+
+Background worker:
+
+- Class: `services.market_data_worker.MarketDataWorker`.
+- Seeds stock/crypto universe interest rows when `MARKET_DATA_WORKER_SEED_UNIVERSE=true`.
+- Refreshes due symbols continuously.
+- Prunes stale cache and interest rows.
+- Runtime methods: `start`, `stop`, `refresh_once`, `update_runtime`, `refresh_due_symbols`, `status`.
+- Timeframe priority: `1day`, `4h`, `1h`, `30m`, `15m`, `5m`, `1m`.
+
+## 12. Indicator Engine
+
+Main module: `services/indicators.py`.
+
+Full candle handlers:
+
+- `lrc`: linear regression channel using `compute_lrc_channel`.
+- `regression`: DW regression channel using `compute_dw_regression_channel`.
+- `rsi`: RSI series and location/direction rules.
+- `trend`: pivot/liquidity trend channel and area rules.
+- `linreg_candles`: TradingView-style linear regression candles.
+- `aroon`: Aroon oscillator.
+- `wavetrend`: WaveTrend oscillator.
+- `adx`: Trendy ADX.
+- `vlr`: Volume Linear Regression.
+- `ema`: EMA price relationship.
+- `macd`: MACD line/signal/histogram rules.
+- `volume`: volume spike.
+- `relative_volume`: current volume divided by lookback average.
+- `current_volume`: absolute current candle volume.
+- `float`: stock float-share threshold.
+- `shares_outstanding`: stock shares outstanding threshold.
+- `volatility`: daily, range-average, or returns standard deviation volatility.
+
+Snapshot handlers:
+
+- `rsi`, `stochrsi`, `ema`, `sma`, `macd`, `aroon`, `adx`, `volume`, `relative_volume`, `current_volume`, `float`, `shares_outstanding`, and `volatility`.
+
+Engine behavior:
+
+- `unsupported_indicator_names()` rejects names not present in the active registry.
+- `_compile_selected_indicators()` resolves selected names to handler functions.
+- `apply_indicators()` short-circuits a symbol on the first failed indicator.
+- Exceptions inside one symbol/indicator are logged and cause that symbol to fail without stopping the whole scan.
+- Passing indicators add user-facing sticker strings and `matched_indicators`.
+- `evaluate_indicator_details()` returns per-indicator pass/fail details for the details endpoint.
+
+## 13. Indicator and Filter Modules
+
+`services/rsi.py`:
+
+- Computes RSI with Wilder-style smoothing.
+- Evaluates location and direction rules.
+- Builds RSI stickers and detects the latest matching RSI index.
+
+`services/macd.py`:
+
+- Computes MACD, signal, and histogram.
+- Evaluates cross/direction rules.
+- Builds MACD stickers.
+
+`services/ema.py`:
+
+- Computes EMA.
+- Evaluates price relation to EMA/SMA style moving averages.
+- Builds moving-average stickers.
+
+`services/aroon_oscillator.py`:
+
+- Computes Aroon oscillator.
+- Evaluates level and direction rules.
+- Supports configurable extreme level.
+
+`services/wavetrend.py`:
+
+- Computes WaveTrend values.
+- Evaluates zone and direction rules.
+- Builds WaveTrend stickers.
+
+`services/trendy_adx.py`:
+
+- Computes ADX and directional movement.
+- Evaluates directional, background, compression, and weak-trend conditions.
+- Builds ADX stickers.
+
+`services/vlr.py`:
+
+- Computes multiple rolling Pearson regression channels.
+- Evaluates reversal, crossing, volume confirmation, and candle confirmation conditions.
+- Builds VLR stickers.
+
+`services/volume.py`:
+
+- Evaluates volume-spike conditions.
+- Builds volume stickers.
+
+`services/regression_channels.py`:
+
+- Computes simple LRC and DW regression channels.
+- Evaluates line rules, touch rules, close-above/below behavior, and R-strength filters.
+- Builds regression stickers.
+
+`services/trend_channels.py`:
+
+- Computes liquidity-aware trend channels.
+- Supports pivot detection, ATR offsets, channel breaks, elevated liquidity/range checks, and regression fallback.
+- Evaluates line and zone area rules.
+
+`services/linear_regression_candles.py`:
+
+- Computes virtual linear-regression candles.
+- Ignores unclosed/forming bars for signal logic.
+- Evaluates price position and close-location rules.
+- Builds evidence for detail responses.
+
+`services/channel_respect.py`:
+
+- Counts channel touches with tolerance and cluster-gap rules.
+- Supports line normalization across regression and trend channels.
+- Produces detail and sticker output.
+
+`services/confluence.py`:
+
+- Evaluates bullish, bearish, role-reversal, breakout, and any confluence.
+- Works on exactly two selected channel sources.
+- Supports trend selections like `top_line`, `middle_line`, `bottom_line`, `top_zone`, and `bottom_zone`.
+- Supports regression selections like `upper`, `middle`, and `lower`.
+- Can require liquidity sweep.
+
+`services/dead_assets.py`:
+
+- Filters out assets matching dead-trend patterns.
+- Looks at swing highs/lows, trend source, recovery behavior, volume weakness, ATR/volatility weakness, and recovery override rules.
+
+`services/utils.py`:
+
+- Candle geometry helpers.
+- Number/price formatting helpers.
+- Generic sticker builder.
+- Candlestick pattern detection.
+- Touch detection.
+- Series direction matching.
+- Confirmation-candle logic.
+
+`services/pine_math.py`:
+
+- PineScript-compatible math helpers: EMA, SMA, RMA, LWMA, ALMA, VWMA, filter selection, rolling linear regression, DW channel math, volatility, and relative volume.
+
+## 14. Configuration
+
+Configuration lives in `core/config.py`.
+
+Important fields:
+
+- `APP_NAME`
+- `APP_VERSION`
+- `APP_ENV`
+- `DEBUG`
+- `LOG_LEVEL`
+- `HOST`
+- `PORT`
+- `CORS_ALLOW_ORIGINS`
+- `CORS_ALLOW_CREDENTIALS`
+- `MARKET_DATA_WORKER_ENABLED`
+- `MARKET_DATA_WORKER_SEED_UNIVERSE`
+- `MARKET_DATA_WORKER_POLL_INTERVAL`
+- `MARKET_DATA_WORKER_BATCH_SIZE`
+- `MARKET_DATA_FETCH_BATCH_SIZE`
+- `MASSIVE_FETCH_CONCURRENCY`
+- `POLYGON_FETCH_CONCURRENCY`
+- `BINANCE_FETCH_CONCURRENCY`
+- `MASSIVE_HTTP2`
+- `POLYGON_HTTP2`
+- `MASSIVE_REQUESTS_PER_SECOND`
+- `POLYGON_REQUESTS_PER_SECOND`
+- `BINANCE_REQUESTS_PER_SECOND`
+- `MASSIVE_CRYPTO_REQUESTS_PER_MINUTE`
+- `MASSIVE_CRYPTO_END_OF_DAY_ONLY`
+- `CANDLES_PROVIDER`
+- `CRYPTO_CANDLES_PROVIDER`
+- `MANUAL_SYMBOLS_MAX`
+- `GATE_SESSION_TTL_SECONDS`
+- `SCREENING_MAX_SYMBOLS`
+- `ALLOW_STALE_MARKET_DATA`
+- `MAX_STALE_MARKET_DATA_AGE_SECONDS`
+- `STOCK_INTRADAY_SESSION_POLICY`
+- `MASSIVE_API_KEY`
+- `POLYGON_API_KEY`
+- `ADMIN_API_TOKEN`
+- `ZOYA_ENDPOINT`
+- `MARKET_DATA_PROVIDER_DOCS_URL`
+- `MARKET_DATA_API_BASE_URL`
+- `BINANCE_PROVIDER_DOCS_URL`
+- `BINANCE_API_BASE_URL`
+
+Provider aliases:
+
+- `polygon`, `polygonio`, and `polygon.io` normalize to `massive`.
+- Crypto provider accepts `massive` and `binance`.
+- Stock candle provider is forced back to `massive` if anything else is configured.
+
+CORS:
+
+- Production uses only configured origins.
+- Non-production defaults to local frontend origins and known deployed domains.
+- Non-production also adds a localhost regex in `main.py`.
+
+## 15. Integration Runtime
+
+The API imports `services.integration_runtime.integration_runtime`.
+
+Responsibilities visible from usage:
+
+- Tracks integration providers such as local stock and crypto universe caches.
+- Exposes `snapshot()`, `update_provider()`, `get_history()`, and `diagnose()`.
+- Records calls for universe cache integrations.
+- Supports runtime provider enable/disable, pause, API key, and call-limit configuration.
+
+## 16. Data Files
+
+`data/zoya_universe.json`:
+
+- Stock universe cache.
+- Current count: 5,076 rows.
+- Used by `load_zoya_universe()`.
+
+`data/crypto_universe.json`:
+
+- Crypto universe cache.
+- Current count: 598 rows.
+- Used by `load_crypto_universe()`.
+
+`data/stock_reference_metadata.json`:
+
+- Stock metadata keyed by symbol.
+- Current count: 5,076 entries.
+- Used to enrich stock rows with sector, exchange category, float, shares outstanding, and related metadata.
+
+`data/index_constituents.json`:
+
+- Index membership sets.
+- Current keys: `sp500`, `dow_jones`, `russell_2000`.
+
+`data/market_data_cache.db`:
+
+- Runtime SQLite cache created by `MarketDataStore`.
+- Generated file, not source logic.
+
+## 17. Validation System
+
+There are two validation areas.
+
+`validation/`:
+
+- General validation utilities.
+- Massive fixture fetcher/client/pipeline.
+- Twelve Data client/pipeline/schema and indicator adapters.
+- Screener backend runner, cases, comparator, and oracle.
+- Indicator comparison pipeline and adapters for RSI, MACD, EMA, and Aroon.
+- Example tolerances and screener cases.
+
+`production_screener_validation/`:
+
+- Production-oriented validation harness.
+- Contracts for `IndicatorRule`, `ScreenerCase`, `CaseSuite`, `SymbolEvidence`, and `CaseResult`.
+- Fixture store for immutable candles and metadata.
+- Golden store for candidate/approved references.
+- Capture client for Massive fixture data.
+- Reference engines for TA-Lib, custom indicators, rules, oracle, and confirmation oracle.
+- Production runner and evidence builder.
+- Comparison, readable reporting, and production reports.
+- Case JSON examples and minimal cases.
+- Frozen fixture/golden data under `production_screener_validation/data/`.
+
+## 18. Scripts
+
+Universe and metadata:
+
+- `scripts/update_zoya_universe.py`: update local Zoya stock universe cache.
+- `scripts/update_crypto_universe.py`: update crypto universe cache.
+- `scripts/filter_zoya_universe_by_massive.py`: filter stock universe by Massive availability.
+- `scripts/enrich_stock_reference_metadata.py`: build/enrich stock reference metadata.
+
+Validation capture and comparison:
+
+- `scripts/fetch_massive_validation.py`
+- `scripts/fetch_production_screener_fixtures.py`
+- `scripts/freeze_twelve_validation.py`
+- `scripts/calculate_validation_indicators.py`
+- `scripts/compare_validation_indicators.py`
+- `scripts/compare_validation_screener.py`
+- `scripts/run_validation_pipeline.py`
+- `scripts/validate_production_screener.py`
+
+Production screener validation:
+
+- `scripts/generate_production_screener_reference.py`
+- `scripts/approve_production_screener_reference.py`
+- `scripts/run_production_screener_suite.py`
+
+Indicator matrix and diagnostics:
+
+- `scripts/build_rsi_filter_matrix.py`
+- `scripts/build_custom_indicator_filter_matrix.py`
+- `scripts/build_standard_screener_case_matrix.py`
+- `scripts/run_custom_indicator_suite.py`
+- `scripts/run_lrc_brute_force.py`
+- `scripts/walk_forward_rsi_check.py`
+- `scripts/export_tv_validation_sheets.py`
+- `scripts/diag_zbio_1h.py`
+- `scripts/twelve_test.py`
+- `scripts/custom_indicator_matrix/common.py`
+- `scripts/custom_indicator_matrix/builders.py`
+
+## 19. Tests
+
+Current test files:
+
+- `tests/test_backend_services.py`
+- `tests/test_confluence_freshness.py`
+- `tests/test_custom_indicator_matrix.py`
+- `tests/test_indicator_defaults.py`
+- `tests/test_integration_runtime.py`
+- `tests/test_price_lag_diagnostics.py`
+- `tests/test_regression_channel_dw.py`
+- `tests/test_stock_session.py`
+- `tests/unit/test_production_screener_validation.py`
+- `tests/unit/test_stock_reference.py`
+- `tests/unit/test_validation_phases_1_2.py`
+- `tests/unit/test_validation_phases_3_4.py`
+- `tests/unit/test_validation_phases_5_6.py`
+
+Covered areas include:
+
+- API smoke tests.
+- Request validation.
+- Indicator defaults and edge cases.
+- Market-data fetch paths, cache behavior, backoff, grouped daily paths, snapshots, and provider selection.
+- Worker lifecycle and refresh scheduling.
+- Gate/entry sessions and scope isolation.
+- Stock session policy.
+- Stock reference/category behavior.
+- Confluence freshness.
+- Production validation contracts and fixture behavior.
+
+## 20. Existing Documentation
+
+Architecture docs:
+
+- `docs/architecture/architecture.md`
+- `docs/architecture/PROJECT_MASTER.md`
+- `docs/architecture/IMPLEMENTATION_ROADMAP.md`
+- `docs/architecture/VALIDATION_APPROCH_MASTER.md`
+- `docs/architecture/validator_plan.md`
+- `docs/architecture/TALIB_plan.md`
+- `docs/architecture/custom_indicator_plan.md`
+- `docs/architecture/testing_appraoch.md`
+- `docs/architecture/file_info.md`
+- `docs/architecture/CLIENT_TESTING_VERIFICATION_GUIDE.md`
+- `docs/architecture/CLIENT_DELIVERABLES.md`
+- `docs/architecture/approach.md`
+- `docs/architecture/approach_1.md`
+
+PineScript comparison docs:
+
+- `docs/pinescript/wavetrend.md`
+- `docs/pinescript/volatility.md`
+- `docs/pinescript/trend_channel.md`
+- `docs/pinescript/relative_volumn.md`
+- `docs/pinescript/regression_channel.md`
+- `docs/pinescript/linear_regression_channel.md`
+- `docs/pinescript/linear_regression_candle.md`
+- `docs/pinescript/comparison.md`
+- `docs/pinescript/fix_summary.md`
+- `docs/pinescript/tv_validation/*.md`
+
+Other docs:
+
+- `docs/Ammer/stock_session_policy.md`
+- `docs/extras/dead_assets_combos.md`
+- `production_screener_validation/README.md`
+- `validation/README.md`
+
+## 21. File-by-File Inventory
+
+### Root
+
+- `main.py`: FastAPI app factory, CORS, global exception handler, root/health/readiness endpoints, market-data worker lifecycle.
+- `test.py`: small standalone test/helper file.
+- `__init__.py`: package marker.
+- `Procfile`: deployment command.
+- `README.md`: high-level usage and architecture.
+- `requirements.txt`: Python dependencies.
+- `Backend_Changes_Crypto.md`: recent market-data change log.
+
+### api
+
+- `api/screening.py`: screening API router, request helper models, admin guard, screening routes, details route, worker ops, runtime settings, integration config/history, and gate/entry routes.
+- `api/__init__.py`: package marker.
+
+### core
+
+- `core/config.py`: settings class, environment loading, provider normalization, default performance/rate-limit settings, CORS parsing, API key resolution.
+- `core/logging_config.py`: logging setup.
+- `core/__init__.py`: package marker.
+
+### models
+
+- `models/filters.py`: request-side Pydantic models and validation.
+- `models/results.py`: response-side Pydantic models and detail models.
+- `models/__init__.py`: package marker.
+
+### services
+
+- `services/asset_router.py`: stock/crypto universe loading, normalization, filtering, manual symbol handling, metadata resolution.
+- `services/aroon_oscillator.py`: Aroon compute/evaluate/sticker logic.
+- `services/channel_respect.py`: channel touch/respect counting and details.
+- `services/confluence.py`: confluence source selection and scenario matching.
+- `services/dead_assets.py`: dead-trend detection and omission filter.
+- `services/ema.py`: EMA/moving-average rules and stickers.
+- `services/gate_session_store.py`: SQLite-backed gate session storage.
+- `services/indicators.py`: indicator registry, handlers, snapshot handlers, indicator application engine.
+- `services/integration_runtime.py`: runtime integration provider state, history, limits, diagnostics.
+- `services/linear_regression_candles.py`: linear-regression candle calculation, evaluation, evidence.
+- `services/macd.py`: MACD computation and evaluation.
+- `services/market_data.py`: provider clients, timeframes, candle normalization, cache/live fetches, grouped daily/snapshot paths, Binance support, fundamentals attachment.
+- `services/market_data_store.py`: SQLite cache/interest/indicator-cache store.
+- `services/market_data_worker.py`: background cache warmer and refresh scheduler.
+- `services/pine_math.py`: Pine-compatible numeric functions.
+- `services/regression_channels.py`: LRC and DW regression channels.
+- `services/rsi.py`: RSI calculation and evaluation.
+- `services/screener.py`: main screening orchestration and response construction.
+- `services/stock_reference.py`: stock metadata enrichment, sector/category mapping, stock universe filters.
+- `services/stock_session.py`: TradingView regular-session filtering for stock intraday candles.
+- `services/trend_channels.py`: trend channel computation and area evaluation.
+- `services/trendy_adx.py`: ADX/DI computation and rule evaluation.
+- `services/utils.py`: shared candle math, formatting, pattern, touch, and confirmation helpers.
+- `services/vlr.py`: Volume Linear Regression indicator.
+- `services/volume.py`: volume spike logic.
+- `services/wavetrend.py`: WaveTrend indicator.
+- `services/__init__.py`: package marker.
+
+### validation
+
+- `validation/alignment.py`: candle/result alignment helpers.
+- `validation/comparison.py`: generic comparison helpers.
+- `validation/spec.py`: validation specifications.
+- `validation/fixture_store.py`: validation fixture storage.
+- `validation/massive/client.py`: Massive validation client.
+- `validation/massive/fetcher.py`: Massive fixture fetcher.
+- `validation/massive/pipeline.py`: Massive validation pipeline.
+- `validation/twelve/client.py`: Twelve Data client.
+- `validation/twelve/candles.py`: Twelve candle handling.
+- `validation/twelve/common.py`: shared Twelve helpers.
+- `validation/twelve/rsi.py`, `macd.py`, `ema.py`, `aroon.py`: Twelve indicator logic.
+- `validation/twelve/pipeline.py`: Twelve validation pipeline.
+- `validation/twelve/schema.py`: Twelve schemas.
+- `validation/indicators/common.py`: shared indicator adapter helpers.
+- `validation/indicators/rsi_adapter.py`, `macd_adapter.py`, `ema_adapter.py`, `aroon_adapter.py`: backend indicator adapters.
+- `validation/indicators/pipeline.py`: indicator validation pipeline.
+- `validation/screener/backend_runner.py`: runs backend screener for validation cases.
+- `validation/screener/cases.py`: screener case parsing/loading.
+- `validation/screener/comparator.py`: screener output comparator.
+- `validation/screener/oracle.py`: screener oracle.
+- `validation/README.md`: validation documentation.
+
+### production_screener_validation
+
+- `production_screener_validation/contracts.py`: dataclass contracts and semantic hashing.
+- `production_screener_validation/fixture_store.py`: immutable fixture and golden reference storage.
+- `production_screener_validation/capture.py`: Massive fixture capture client.
+- `production_screener_validation/pipeline.py`: validation pipeline orchestration.
+- `production_screener_validation/production/runner.py`: runs production screener cases.
+- `production_screener_validation/production/evidence.py`: evidence generation.
+- `production_screener_validation/comparison/comparator.py`: production/reference comparison.
+- `production_screener_validation/comparison/reporting.py`: report entry point.
+- `production_screener_validation/comparison/readable_reports.py`: readable Markdown summaries.
+- `production_screener_validation/comparison/production_reports.py`: production suite reports.
+- `production_screener_validation/reference/talib_engine.py`: TA-Lib/reference indicator engine.
+- `production_screener_validation/reference/rule_engine.py`: reference rule engine.
+- `production_screener_validation/reference/custom_engine.py`: custom indicator reference engine.
+- `production_screener_validation/reference/oracle.py`: oracle orchestration.
+- `production_screener_validation/reference/confirmation_oracle.py`: confirmation oracle.
+- `production_screener_validation/cases/*.json`: example and minimal validation cases.
+- `production_screener_validation/data/fixtures/*`: frozen candle fixtures.
+- `production_screener_validation/data/golden/*`: candidate and approved golden outputs.
+
+## 22. Security and Operational Notes
+
+- API keys are read from `.env` through settings.
+- `MASSIVE_API_KEY` and legacy `POLYGON_API_KEY` both feed `settings.market_data_api_key`.
+- Admin routes should use `ADMIN_API_TOKEN` in production.
+- Provider error logging includes secret redaction for keys/tokens.
+- The `.env` file exists locally and should not be committed.
+- Runtime cache database is generated under `data/`.
+
+## 23. Recent Known Change Summary
+
+`Backend_Changes_Crypto.md` records a market-data update dated 2026-07-20:
+
+- Historical candle requests now return complete history rather than one candle.
+- Incomplete cached data no longer satisfies larger historical requests.
+- Provider limit calculation was fixed for hourly/custom candles.
+- Stock intraday historical windows were expanded to handle market gaps.
+- Silent stale fallback was disabled by default.
+- Freshness metadata was added to screening and details responses.
+- API key redaction was added for provider logs.
+- Focused market-data tests passed at the time of that note.
+
+## 24. Practical Request Examples
+
+Single crypto RSI scan:
+
+```json
+{
+  "asset_type": "crypto",
+  "symbols": ["BTC-USD", "ETH-USD"],
+  "timeframe_mode": "single",
+  "single_timeframe": "1h",
+  "indicators": [
+    {
+      "name": "rsi",
+      "timeframe": "single",
+      "config": {
+        "length": 14,
+        "location": "oversold"
+      }
+    }
+  ]
+}
+```
+
+Single stock scan with Zoya universe:
+
+```json
+{
+  "asset_type": "stocks",
+  "stock_sources": ["zoya"],
+  "compliance_status": "compliant",
+  "timeframe_mode": "single",
+  "single_timeframe": "1day",
+  "indicators": [
+    {
+      "name": "macd",
+      "timeframe": "single",
+      "config": {
+        "rule": "bullish_cross"
+      }
+    }
+  ]
+}
+```
+
+Gate/entry flow:
+
+1. Call `/screen/run-gate` with `timeframe_mode="gate_entry"`, a larger `gate_timeframe`, smaller `entry_timeframe`, and primary indicators.
+2. Read `gate_session_id` from response.
+3. Call `/screen/run-entry` with the same scope fields and `gate_session_id`, using secondary indicators.
+
+## 25. Maintenance Notes
+
+- Add new indicators by implementing a handler in `services/indicators.py` or a separate service module, registering it in `INDICATOR_REGISTRY`, and updating `models/filters.py::IndicatorName`.
+- If the indicator supports cached snapshot evaluation, also add a snapshot handler in `SNAPSHOT_INDICATOR_REGISTRY`.
+- Update tests in `tests/test_backend_services.py` or focused unit files for rule behavior.
+- Add validation cases under `production_screener_validation/cases/` when behavior must be frozen.
+- Keep local universe files updated through scripts, not manual editing.
+- Treat `data/market_data_cache.db` as runtime cache, not source-of-truth code.
+

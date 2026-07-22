@@ -1885,16 +1885,21 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertFalse(channel["broken"])
         self.assertEqual(channel["start_index"], 2)
         self.assertEqual(channel["length"], 12)
-        self.assertEqual(channel["line_x1"], 0)
+        # Pivot highs are at actual bars 2 (11.6) and 7 (11.3); the line anchor
+        # must sit on those actual pivot bars, not `pivot_index - length` again
+        # (Python's pivot dicts already store the actual bar separately from
+        # confirm_index, so no further length subtraction belongs here - see
+        # `_initialize_channel_line_endpoints`).
+        self.assertEqual(channel["line_x1"], 2)
         self.assertEqual(channel["line_x2"], 13)
 
         # Pine extend=false extrapolates line endpoints each bar from anchors at
-        # pivot_index - length, not from a closed-form pivot intercept series.
-        self.assertAlmostEqual(float(channel["top"][0]), 12.484835164835165)
-        self.assertAlmostEqual(float(channel["top"][-1]), 11.977142857142855)
-        self.assertAlmostEqual(float(channel["bottom"][0]), 4.77054945054945)
-        self.assertAlmostEqual(float(channel["bottom"][-1]), 4.262857142857145)
-        self.assertAlmostEqual(float(channel["middle"][-1]), 8.119999999999997)
+        # the actual pivot bar, not from a closed-form pivot intercept series.
+        self.assertAlmostEqual(float(channel["top"][0]), 12.457142857142857)
+        self.assertAlmostEqual(float(channel["top"][-1]), 11.857142857142856)
+        self.assertAlmostEqual(float(channel["bottom"][0]), 4.742857142857143)
+        self.assertAlmostEqual(float(channel["bottom"][-1]), 4.142857142857146)
+        self.assertAlmostEqual(float(channel["middle"][-1]), 7.999999999999999)
 
     def test_compute_trend_channel_freezes_broken_channel_line_endpoints(self):
         bases = self._chartprime_fixture_bases() + [13.0, 12.5, 12.0, 11.5, 11.0, 10.5]
@@ -1935,7 +1940,7 @@ class IndicatorMathTests(unittest.TestCase):
             "area": "bottom_line",
             "action": "touched",
             "touch_type": "wick",
-            "tolerance": 5,
+            "tolerance": 10,
             "window": 1,
             "confirmation": False,
         }
