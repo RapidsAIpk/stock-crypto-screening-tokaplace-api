@@ -1551,12 +1551,12 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertEqual(trace["signal_start_index"], 1)
         self.assertEqual(trace["signal_age_candles"], 2)
         self.assertFalse(trace["passed"])
-        self.assertIn("exceeds window", trace["reason"])
+        self.assertIn("exceeds configured candles", trace["reason"])
         self.assertFalse(
             linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_line, config)
         )
 
-    def test_linreg_candle_window_accepts_signal_started_within_window(self):
+    def test_linreg_candle_window_requires_exact_signal_age(self):
         candles = [
             {"open": 98.0, "high": 99.0, "low": 97.0, "close": 98.0},
             {"open": 101.0, "high": 103.0, "low": 101.0, "close": 102.0},
@@ -1612,6 +1612,124 @@ class IndicatorMathTests(unittest.TestCase):
             linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config)
         )
 
+    def test_linreg_price_position_any_or_null_disables_position_window_filter(self):
+        candles = [{"open": 0, "high": 0, "low": 0, "close": 0} for _ in range(3)]
+        lr_result = {
+            "signal": [100.0, 100.0, 100.0],
+            "bopen": [101.0, 101.0, 101.0],
+            "bhigh": [103.0, 103.0, 103.0],
+            "blow": [101.0, 101.0, 101.0],
+            "bclose": [102.0, 102.0, 102.0],
+        }
+
+        for price_position in (None, "any"):
+            with self.subTest(price_position=price_position):
+                config = {
+                    "window": 1,
+                    "price_position": price_position,
+                    "close_location": "any",
+                    "confirmation": False,
+                }
+                trace = linear_regression_candles.trace_linreg_signal_window(candles, lr_result, config)
+                self.assertTrue(trace["passed"], trace["reason"])
+                self.assertIsNone(trace["signal_age_candles"])
+                self.assertIn("signal window not applied", trace["reason"])
+                self.assertTrue(
+                    linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config)
+                )
+
+    def test_linreg_price_position_any_signal_unions_real_signals_and_respects_window(self):
+        candles = [{"open": 0, "high": 0, "low": 0, "close": 0} for _ in range(3)]
+        lr_result = {
+            "signal": [100.0, 100.0, 100.0],
+            "bopen": [98.0, 101.0, 101.0],
+            "bhigh": [99.0, 103.0, 103.0],
+            "blow": [97.0, 101.0, 101.0],
+            "bclose": [98.0, 102.0, 102.0],
+        }
+        config = {
+            "price_position": "any_signal",
+            "close_location": "any",
+            "window": 1,
+            "confirmation": False,
+        }
+
+        trace_window_1 = linear_regression_candles.trace_linreg_signal_window(candles, lr_result, config)
+        self.assertFalse(trace_window_1["passed"])
+        self.assertIn("no LinReg position signal", trace_window_1["reason"])
+        self.assertFalse(linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config))
+
+        trace_window_2 = linear_regression_candles.trace_linreg_signal_window(
+            candles,
+            lr_result,
+            {**config, "window": 2},
+        )
+        self.assertTrue(trace_window_2["passed"], trace_window_2["reason"])
+        self.assertEqual(trace_window_2["matched_position_rule"], "above")
+        self.assertTrue(
+            linear_regression_candles.evaluate_linreg_candle_rules(
+                candles,
+                lr_result,
+                {**config, "window": 2},
+            )
+        )
+
+    def test_linreg_price_position_any_signal_can_match_piercing_event(self):
+        candles = [{"open": 0, "high": 0, "low": 0, "close": 0} for _ in range(2)]
+        lr_result = {
+            "signal": [100.0, 100.0],
+            "bopen": [101.0, 99.0],
+            "bhigh": [102.0, 103.0],
+            "blow": [99.0, 98.0],
+            "bclose": [101.0, 101.0],
+        }
+        config = {
+            "price_position": "any_signal",
+            "close_location": "any",
+            "window": 1,
+            "confirmation": False,
+        }
+
+        trace = linear_regression_candles.trace_linreg_signal_window(candles, lr_result, config)
+        self.assertTrue(trace["passed"], trace["reason"])
+        self.assertEqual(trace["matched_position_rule"], "piercing_from_below")
+        self.assertTrue(linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config))
+
+    def test_linreg_price_position_any_still_applies_close_location(self):
+        candles = [{"open": 0, "high": 0, "low": 0, "close": 0}]
+        lr_result = {
+            "signal": [100.0],
+            "bopen": [101.0],
+            "bhigh": [103.0],
+            "blow": [101.0],
+            "bclose": [102.0],
+        }
+
+        self.assertTrue(
+            linear_regression_candles.evaluate_linreg_candle_rules(
+                candles,
+                lr_result,
+                {
+                    "window": 1,
+                    "price_position": None,
+                    "close_location": "bullish",
+                    "confirmation": False,
+                },
+            )
+        )
+        self.assertFalse(
+            linear_regression_candles.evaluate_linreg_candle_rules(
+                candles,
+                lr_result,
+                {
+                    "window": 1,
+                    "price_position": "any",
+                    "close_location": "bearish",
+                    "confirmation": False,
+                },
+            )
+        )
+
     def test_linreg_candle_window_signal_age_for_all_positions(self):
         candles = [{"open": 0, "high": 0, "low": 0, "close": 0} for _ in range(6)]
 
@@ -1636,7 +1754,7 @@ class IndicatorMathTests(unittest.TestCase):
                 [
                     (1, 6, False),
                     (3, 6, True),
-                    (4, 6, True),
+                    (4, 6, False),
                 ],
             ),
             (
@@ -1664,7 +1782,8 @@ class IndicatorMathTests(unittest.TestCase):
                 [
                     (1, 4, True),
                     (1, 5, False),
-                    (2, 4, True),
+                    (2, 4, False),
+                    (2, 5, True),
                 ],
             ),
             (
@@ -1707,6 +1826,85 @@ class IndicatorMathTests(unittest.TestCase):
                         ),
                         expected_pass,
                     )
+
+    def test_linreg_piercing_requires_exact_event_age_not_a_continuous_streak(self):
+        candles = [{"open": 100, "high": 101, "low": 99, "close": 100} for _ in range(5)]
+        lr_result = {
+            "signal": [100.0] * 5,
+            "bopen": [101.0, 101.0, 101.0, 99.0, 101.0],
+            "bhigh": [102.0, 102.0, 102.0, 102.0, 103.0],
+            "blow": [99.0, 99.0, 99.0, 98.0, 100.5],
+            "bclose": [101.0, 101.0, 101.0, 101.0, 102.0],
+        }
+        config = {
+            "window": 2,
+            "price_position": "piercing_from_below",
+            "confirmation": False,
+        }
+
+        trace = linear_regression_candles.trace_linreg_signal_window(candles, lr_result, config)
+        self.assertTrue(trace["passed"])
+        self.assertEqual(trace["signal_start_index"], 3)
+        self.assertEqual(trace["signal_age_candles"], 2)
+        self.assertTrue(linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config))
+        self.assertFalse(
+            linear_regression_candles.evaluate_linreg_candle_rules(
+                candles,
+                lr_result,
+                {**config, "window": 1},
+            )
+        )
+
+    def test_linreg_window_boundary_uses_exact_one_based_age_without_off_by_one(self):
+        candles = [{"open": 100, "high": 101, "low": 99, "close": 100} for _ in range(5)]
+        lr_result = {
+            "signal": [100.0] * 5,
+            "bopen": [101.0, 101.0, 99.0, 101.0, 101.0],
+            "bhigh": [102.0, 102.0, 102.0, 103.0, 103.0],
+            "blow": [99.0, 99.0, 98.0, 100.5, 100.5],
+            "bclose": [101.0, 101.0, 101.0, 102.0, 102.0],
+        }
+        config = {
+            "window": 3,
+            "price_position": "piercing_from_below",
+            "confirmation": False,
+        }
+
+        self.assertTrue(linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config))
+        self.assertFalse(
+            linear_regression_candles.evaluate_linreg_candle_rules(
+                candles,
+                lr_result,
+                {**config, "window": 2},
+            )
+        )
+
+    def test_linreg_piercing_evidence_uses_latest_confirmed_event(self):
+        candles = [
+            {"open": 101, "high": 102, "low": 99, "close": 100},
+            {"open": 99, "high": 102, "low": 98, "close": 101},
+            {"open": 101, "high": 102, "low": 99, "close": 100},
+            {"open": 101, "high": 101.1, "low": 98.9, "close": 99},
+            {"open": 101, "high": 101.1, "low": 98.9, "close": 99},
+        ]
+        lr_result = {
+            "signal": [100.0] * 5,
+            "bopen": [101.0, 99.0, 101.0, 99.0, 101.0],
+            "bhigh": [102.0] * 5,
+            "blow": [98.0] * 5,
+            "bclose": [101.0, 101.0, 101.0, 101.0, 101.0],
+        }
+        config = {
+            "window": 4,
+            "price_position": "piercing_from_below",
+            "confirmation": True,
+            "confirmation_type": "bullish",
+            "confirmation_window": 1,
+        }
+
+        self.assertTrue(linear_regression_candles.evaluate_linreg_candle_rules(candles, lr_result, config))
+        match = linear_regression_candles._latest_matching_linreg_index(candles, lr_result, config)
+        self.assertEqual(match["candle_idx"], 1)
 
     def test_linreg_candle_uses_virtual_candle_instead_of_raw(self):
         candles = [
@@ -4351,6 +4549,102 @@ class MarketDataIntegrationTests(unittest.TestCase):
             payload = market_data._build_market_data_payload("AAA", candles, "1h")
 
         self.assertNotIn("is_closed", payload["candles"][-1])
+
+    def test_stock_daily_close_timestamp_is_closed_without_adding_another_day(self):
+        session_close = 1_000_000
+        candles = [
+            {"time": session_close, "open": 98.0, "high": 99.0, "low": 97.0, "close": 97.5, "volume": 10},
+        ]
+
+        with patch.object(market_data.time, "time", return_value=session_close + 60):
+            payload = market_data._build_market_data_payload("QCRH", candles, "1day")
+
+        self.assertNotIn("is_closed", payload["candles"][-1])
+
+    def test_massive_crypto_daily_close_timestamp_is_closed_without_adding_another_day(self):
+        session_close = 1_000_000
+        candles = [
+            {"time": session_close, "open": 98.0, "high": 99.0, "low": 97.0, "close": 97.5, "volume": 10},
+        ]
+
+        with patch.object(market_data.time, "time", return_value=session_close + 60):
+            payload = market_data._build_market_data_payload(
+                "BTC-USD",
+                candles,
+                "1day",
+                candles_provider=market_data.MARKET_DATA_PROVIDER,
+            )
+
+        self.assertNotIn("is_closed", payload["candles"][-1])
+
+    def test_binance_crypto_daily_start_timestamp_remains_open_until_day_elapses(self):
+        session_start = 1_000_000
+        candles = [
+            {"time": session_start, "open": 98.0, "high": 99.0, "low": 97.0, "close": 97.5, "volume": 10},
+        ]
+
+        with patch.object(market_data.time, "time", return_value=session_start + 60):
+            payload = market_data._build_market_data_payload(
+                "BTC-USD",
+                candles,
+                "1day",
+                candles_provider=market_data.BINANCE_PROVIDER,
+            )
+
+        self.assertIs(payload["candles"][-1]["is_closed"], False)
+
+    def test_cached_massive_crypto_daily_payload_removes_expired_unclosed_marker(self):
+        session_close = 1_000_000
+        payload = {
+            "symbol": "BTC-USD",
+            "candles_provider": market_data.MARKET_DATA_PROVIDER,
+            "candles": [
+                {
+                    "time": session_close,
+                    "open": 98.0,
+                    "high": 99.0,
+                    "low": 97.0,
+                    "close": 97.5,
+                    "volume": 10,
+                    "is_closed": False,
+                },
+            ],
+        }
+
+        refreshed = market_data._refresh_payload_candle_closed_state(
+            payload,
+            "BTC-USD",
+            "1day",
+            now=session_close + 60,
+        )
+
+        self.assertNotIn("is_closed", refreshed["candles"][-1])
+
+    def test_cached_stock_daily_payload_removes_expired_unclosed_marker(self):
+        session_close = 1_000_000
+        payload = {
+            "symbol": "QCRH",
+            "candles": [
+                {
+                    "time": session_close,
+                    "open": 98.0,
+                    "high": 99.0,
+                    "low": 97.0,
+                    "close": 97.5,
+                    "volume": 10,
+                    "is_closed": False,
+                },
+            ],
+        }
+
+        refreshed = market_data._refresh_payload_candle_closed_state(
+            payload,
+            "QCRH",
+            "1day",
+            now=session_close + 60,
+        )
+
+        self.assertNotIn("is_closed", refreshed["candles"][-1])
 
     def test_confirm_if_needed_rejects_signal_candle_still_in_progress_from_live_payload(self):
         now = 1_000_000

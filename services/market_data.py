@@ -653,7 +653,19 @@ def is_payload_compatible_for_fetch(payload, symbol, timeframe):
     return is_payload_session_compatible(payload, symbol, timeframe)
 
 
-def _mark_unclosed_last_candle(candles, timeframe, now=None):
+def _daily_candle_timestamp_is_close_time(symbol, timeframe, candles_provider=None):
+    parsed_timeframe = parse_timeframe_spec(timeframe)
+    if parsed_timeframe != (1, "d"):
+        return False
+    if symbol is None:
+        return False
+    provider = normalize_market_data_provider_name(candles_provider or expected_candle_provider_for_symbol(symbol))
+    if is_crypto_symbol(symbol):
+        return provider == MARKET_DATA_PROVIDER
+    return True
+
+
+def _mark_unclosed_last_candle(candles, timeframe, now=None, symbol=None, candles_provider=None):
     if not candles:
         return candles
 
@@ -663,16 +675,54 @@ def _mark_unclosed_last_candle(candles, timeframe, now=None):
         return candles
 
     reference = int(time.time()) if now is None else int(now)
-    if reference >= int(last_time) + timeframe_seconds(timeframe):
+    close_time = (
+        int(last_time)
+        if _daily_candle_timestamp_is_close_time(symbol, timeframe, candles_provider)
+        else int(last_time) + timeframe_seconds(timeframe)
+    )
+
+    if reference >= close_time:
+        if last.get("is_closed") is not False:
+            return candles
+        candles = list(candles)
+        closed_last = dict(last)
+        closed_last.pop("is_closed", None)
+        candles[-1] = closed_last
         return candles
 
+    if last.get("is_closed") is False:
+        return candles
     candles = list(candles)
     candles[-1] = {**last, "is_closed": False}
     return candles
 
 
+def _refresh_payload_candle_closed_state(payload, symbol, timeframe, now=None):
+    if not isinstance(payload, dict):
+        return payload
+    candles = payload.get("candles") or []
+    refreshed = _mark_unclosed_last_candle(
+        candles,
+        timeframe,
+        now=now,
+        symbol=symbol,
+        candles_provider=payload.get("candles_provider"),
+    )
+    if refreshed is candles:
+        return payload
+    return {**payload, "candles": refreshed}
+
+
 def _build_market_data_payload(symbol, candles, timeframe, candles_provider=None, session_policy=None):
-    candles = _mark_unclosed_last_candle(candles, timeframe)
+    resolved_provider = normalize_market_data_provider_name(
+        candles_provider or expected_candle_provider_for_symbol(symbol)
+    )
+    candles = _mark_unclosed_last_candle(
+        candles,
+        timeframe,
+        symbol=symbol,
+        candles_provider=resolved_provider,
+    )
     resolved_session_policy = session_policy
     if resolved_session_policy is None and not is_crypto_symbol(symbol):
         resolved_session_policy = expected_session_policy_for_symbol(symbol, timeframe)
@@ -681,9 +731,7 @@ def _build_market_data_payload(symbol, candles, timeframe, candles_provider=None
         "symbol": symbol,
         "price": candles[-1]["close"],
         "candles": candles,
-        "candles_provider": normalize_market_data_provider_name(
-            candles_provider or expected_candle_provider_for_symbol(symbol)
-        ),
+        "candles_provider": resolved_provider,
         "shares_outstanding": None,
         "float_shares": None,
         "next_refresh_at": next_refresh_at_for_timeframe(timeframe),
@@ -2547,7 +2595,9 @@ async def fetch_live_data(
                 missing_symbols.append(symbol)
                 continue
 
-            cached_payload = cached["payload"] or {}
+            cached_payload = _refresh_payload_candle_closed_state(
+                cached["payload"] or {}, symbol, timeframe, now=now
+            )
             if not is_payload_compatible_for_fetch(cached_payload, symbol, timeframe):
                 missing_symbols.append(symbol)
                 continue
@@ -2629,7 +2679,9 @@ async def fetch_live_data(
             missing_symbols.append(symbol)
             continue
 
-        cached_payload = cached["payload"] or {}
+        cached_payload = _refresh_payload_candle_closed_state(
+            cached["payload"] or {}, symbol, timeframe, now=now
+        )
 
         if not is_payload_compatible_for_fetch(cached_payload, symbol, timeframe):
             next_refresh_map[symbol] = now

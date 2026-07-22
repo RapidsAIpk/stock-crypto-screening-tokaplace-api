@@ -42,13 +42,23 @@ def wavetrend(candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str
 
 
 def linear_regression_candles(candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, np.ndarray]:
-    close = arrays(candles)["close"]
+    values = arrays(candles)
     lr_length = int(config["lr_length"])
     signal_smoothing = int(config["signal_smoothing"])
-    bclose = rolling_linreg(close, lr_length, 0)
+    lin_reg = bool(config.get("lin_reg", True))
+    bopen = rolling_linreg(values["open"], lr_length, 0) if lin_reg else values["open"]
+    bhigh = rolling_linreg(values["high"], lr_length, 0) if lin_reg else values["high"]
+    blow = rolling_linreg(values["low"], lr_length, 0) if lin_reg else values["low"]
+    bclose = rolling_linreg(values["close"], lr_length, 0) if lin_reg else values["close"]
     sma_signal = bool(config.get("sma_signal", True))
     line = pine_sma(bclose, signal_smoothing) if sma_signal else pine_ema(bclose, signal_smoothing)
-    return {"line": line, "bclose": bclose}
+    return {
+        "line": line,
+        "bopen": bopen,
+        "bhigh": bhigh,
+        "blow": blow,
+        "bclose": bclose,
+    }
 
 
 def lrc(candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, np.ndarray | float]:

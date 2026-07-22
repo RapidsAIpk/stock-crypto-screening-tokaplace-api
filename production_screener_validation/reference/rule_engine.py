@@ -167,15 +167,147 @@ def evaluate_custom(name: str, candles: list[dict[str, Any]], metadata: dict[str
         passed, index = _window_match(candles, wt1, config, predicate)
         return _evidence(name, passed, index, dates, {"wt1": finite_at(wt1, index or 0), "wt2": finite_at(wt2, index or 0)})
     if name == "linreg_candles":
-        line = linear_regression_candles(candles, config)["line"]
+        eval_candles = candles[:-1] if candles and candles[-1].get("is_closed") is False else candles
+        if not eval_candles:
+            raise InsufficientReferenceData("linreg_candles has no closed candles")
+        values = linear_regression_candles(eval_candles, config)
+        line = values["line"]
+        eval_dates = _dates(eval_candles)
+        latest = len(eval_candles) - 1
+        window = max(1, int(config.get("window", 1) or 1))
+        position = str(config.get("price_position") or "").strip().lower()
+        if position in {"", "any", "auto", "none"}:
+            position = None
+        if position in {"any_signals", "any_position_signal"}:
+            position = "any_signal"
+        close_location = str(config.get("close_location") or "").strip().lower()
+        if close_location in {"", "any", "auto", "none"}:
+            close_location = None
+
+        def position_predicate(index: int) -> bool:
+            value = float(line[index])
+            if not np.isfinite(value):
+                return False
+            candle = {
+                "open": float(values["bopen"][index]),
+                "high": float(values["bhigh"][index]),
+                "low": float(values["blow"][index]),
+                "close": float(values["bclose"][index]),
+            }
+            if not all(np.isfinite(item) for item in candle.values()):
+                return False
+            amount = abs(value) * tolerance / 100.0
+            body_low, body_high = sorted((candle["open"], candle["close"]))
+            effective_position = position
+            if effective_position == "any_signal":
+                effective_position = str(config.get("_candidate_price_position") or "")
+            return (
+                True if effective_position is None else
+                candle["low"] >= value - amount if effective_position == "above" else
+                candle["high"] <= value + amount if effective_position == "below" else
+                body_low <= value + amount and body_high >= value - amount if effective_position == "on" else
+                candle["open"] <= value + amount and candle["close"] >= value - amount if effective_position == "piercing_from_below" else
+                candle["open"] >= value - amount and candle["close"] <= value + amount if effective_position == "piercing_from_above" else
+                False
+            )
+
         def predicate(index: int) -> bool:
-            value = float(line[index]); candle = candles[index]; amount = abs(value) * tolerance / 100.0; position = config.get("price_position"); close = float(candle["close"])
-            position_ok = close >= value - amount if position == "above" else close <= value + amount if position == "below" else _line_touch(candle, value, tolerance, "both") if position == "touch" else False
-            location = config.get("close_location")
-            location_ok = True if not location else close >= float(candle["open"]) if location == "bullish" else close <= float(candle["open"]) if location == "bearish" else False
-            return position_ok and location_ok
-        passed, index = _window_match(candles, line, config, predicate)
-        return _evidence(name, passed, index, dates, {"line": finite_at(line, index or 0), "close": float(candles[index or latest]["close"])})
+            if not position_predicate(index):
+                return False
+            value = float(line[index])
+            candle_open = float(values["bopen"][index])
+            candle_close = float(values["bclose"][index])
+            amount = abs(value) * tolerance / 100.0
+            location_ok = (
+                True if close_location is None else
+                candle_close >= value - amount if close_location == "close_above" else
+                candle_close <= value + amount if close_location == "close_below" else
+                abs(candle_close - value) <= amount if close_location == "close_on" else
+                candle_close > candle_open if close_location == "bullish" else
+                candle_close < candle_open if close_location == "bearish" else
+                False
+            )
+            return location_ok
+
+        index = None
+        def evaluate_position(candidate_position: str | None) -> int | None:
+            nonlocal position
+            original_position = position
+            position = candidate_position
+            try:
+                if candidate_position is None:
+                    if predicate(latest):
+                        confirmed, _ = confirmation_matches(eval_candles, latest, config)
+                        if confirmed:
+                            return latest
+                    return None
+
+                if candidate_position in {"piercing_from_below", "piercing_from_above"}:
+                    candidate = latest - window + 1
+                    if candidate >= 0 and predicate(candidate):
+                        confirmed, _ = confirmation_matches(eval_candles, candidate, config)
+                        if confirmed:
+                            return candidate
+                    return None
+
+                if predicate(latest):
+                    signal_start = latest
+                    while signal_start > 0 and position_predicate(signal_start - 1):
+                        signal_start -= 1
+                    signal_age = latest - signal_start + 1
+                    confirmed, _ = confirmation_matches(eval_candles, signal_start, config)
+                    if signal_age == window and confirmed:
+                        return latest
+                return None
+            finally:
+                position = original_position
+
+        if position == "any_signal":
+            for candidate_position in (
+                "above",
+                "below",
+                "piercing_from_below",
+                "piercing_from_above",
+                "on",
+            ):
+                index = evaluate_position(candidate_position)
+                if index is not None:
+                    break
+        elif position is None:
+            if predicate(latest):
+                confirmed, _ = confirmation_matches(eval_candles, latest, config)
+                if confirmed:
+                    index = latest
+        elif position in {"piercing_from_below", "piercing_from_above"}:
+            candidate = latest - window + 1
+            if candidate >= 0 and predicate(candidate):
+                confirmed, _ = confirmation_matches(eval_candles, candidate, config)
+                if confirmed:
+                    index = candidate
+        elif predicate(latest):
+            signal_start = latest
+            while signal_start > 0 and position_predicate(signal_start - 1):
+                signal_start -= 1
+            signal_age = latest - signal_start + 1
+            confirmed, _ = confirmation_matches(eval_candles, signal_start, config)
+            if signal_age == window and confirmed:
+                index = latest
+
+        passed = index is not None
+        evidence_index = index if index is not None else latest
+        return _evidence(
+            name,
+            passed,
+            evidence_index,
+            eval_dates,
+            {
+                "line": finite_at(line, evidence_index),
+                "bopen": finite_at(values["bopen"], evidence_index),
+                "bhigh": finite_at(values["bhigh"], evidence_index),
+                "blow": finite_at(values["blow"], evidence_index),
+                "bclose": finite_at(values["bclose"], evidence_index),
+            },
+        )
     if name in {"lrc", "regression", "trend"}:
         channel = lrc(candles, config) if name == "lrc" else regression_channel(candles, config) if name == "regression" else trend_channel(candles, config)
         middle_key = "middle" if name != "trend" else "middle_line"
