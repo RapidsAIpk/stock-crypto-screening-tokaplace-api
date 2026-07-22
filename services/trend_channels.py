@@ -139,7 +139,7 @@ def _compute_pivot_liquidity_channel(
             )
         ):
             candidate = _build_channel_state(
-                "down", prev_high, last_high, current_index, atr, length
+                "down", prev_high, last_high, current_index, atr
             )
             if candidate is not None:
                 down_state = candidate
@@ -157,7 +157,7 @@ def _compute_pivot_liquidity_channel(
             )
         ):
             candidate = _build_channel_state(
-                "up", prev_low, last_low, current_index, atr, length
+                "up", prev_low, last_low, current_index, atr
             )
             if candidate is not None:
                 up_state = candidate
@@ -256,7 +256,7 @@ def _is_pivot_low(candles, index, span):
     )
 
 
-def _build_channel_state(direction, first_pivot, second_pivot, current_index, atr_series, pivot_length):
+def _build_channel_state(direction, first_pivot, second_pivot, current_index, atr_series):
     first_index = first_pivot["index"]
     second_index = second_pivot["index"]
     span = second_index - first_index
@@ -283,14 +283,24 @@ def _build_channel_state(direction, first_pivot, second_pivot, current_index, at
         "break_direction": None,
         "liquidity_break": False,
     }
-    _initialize_channel_line_endpoints(state, pivot_length)
+    _initialize_channel_line_endpoints(state)
     return state
 
 
-def _initialize_channel_line_endpoints(channel_state, pivot_length):
-    """Seed Pine line anchors at pivot_index - length (see trend_channel.md)."""
-    x1 = channel_state["start_index"] - pivot_length
-    x2 = channel_state["anchor_end_index"] - pivot_length
+def _initialize_channel_line_endpoints(channel_state):
+    """Seed Pine line anchors at the actual pivot bar indexes.
+
+    Pine stores `last_pivot_high_index := bar_index` at the *confirmation*
+    bar (bar_index = actual_pivot_index + length), then builds the line with
+    `last_pivot_high_index - length`, which lands back on the actual pivot
+    bar. Python's pivot dicts already separate "index" (actual pivot bar)
+    from "confirm_index" (index + length), and `_build_channel_state` seeds
+    start_index/anchor_end_index from the actual pivot bar directly - so no
+    further `- length` belongs here. Subtracting length again would anchor
+    the line `length` bars before the pivot it's supposed to pass through.
+    """
+    x1 = channel_state["start_index"]
+    x2 = channel_state["anchor_end_index"]
     channel_state["line_x1"] = x1
     channel_state["line_x2"] = x2
 
@@ -524,30 +534,119 @@ def _candle_index_eligible_for_signal(tc, candle_index):
     return int(candle_index) <= last_signal_index
 
 
-def evaluate_trend_channel_rules(candles, tc, config):
+def evaluate_trend_channel_rules(candles, tc, config, evidence=None):
 
     selected_areas = config.get("areas", [])
 
     if not selected_areas:
         return False
 
+    all_passed = True
+
     for area_rule in selected_areas:
 
         if not evaluate_single_area(
             candles,
             tc,
-            area_rule
+            area_rule,
+            evidence=evidence,
         ):
-            return False
+            all_passed = False
+            # Short-circuit on the hot screening path (evidence=None); keep
+            # evaluating every configured area when evidence collection was
+            # requested so the caller gets a full picture of what failed.
+            if evidence is None:
+                return False
 
-    return True
+    return all_passed
 
 
 # =========================================================
 # SINGLE AREA EVALUATION
 # =========================================================
 
-def evaluate_single_area(candles, tc, rule):
+def evaluate_single_area(candles, tc, rule, evidence=None):
+    matched = _evaluate_single_area_core(candles, tc, rule)
+
+    if evidence is not None:
+        evidence.append(_build_area_evidence(candles, tc, rule, matched))
+
+    return matched
+
+
+def _build_area_evidence(candles, tc, rule, matched):
+    """Diagnostic snapshot of the latest closed candle against this area
+    rule, for the indicator-details evidence surface (see Phase 7 of the
+    trend-channel parity audit). For window=1 rules - the common case, e.g.
+    the FLL/GITS/CCU manual-validation configs - this candle is exactly the
+    one the pass/fail decision above was made from.
+    """
+    checked_candle_index = len(candles) - 1
+
+    area = rule.get("area")
+    action = str(rule.get("action") or "").strip().lower()
+
+    info = {
+        "area": area,
+        "action": action,
+        "touch_type": rule.get("touch_type"),
+        "matched": bool(matched),
+        "channel_direction": tc.get("direction"),
+        "channel_start_index": tc.get("start_index"),
+        "channel_break_index": tc.get("break_index"),
+    }
+
+    if checked_candle_index < 0:
+        return info
+
+    candle = candles[checked_candle_index]
+    info["checked_candle_index"] = checked_candle_index
+    info["checked_candle_time"] = candle.get("time")
+    info["checked_candle_closed"] = candle.get("is_closed", True) is not False
+    info["candle_low"] = float(candle["low"])
+    info["candle_high"] = float(candle["high"])
+    info["body_low"] = min(float(candle["open"]), float(candle["close"]))
+    info["body_high"] = max(float(candle["open"]), float(candle["close"]))
+
+    start_index = tc.get("start_index")
+    length = tc.get("length")
+    regression_index = (
+        checked_candle_index - start_index if start_index is not None else None
+    )
+    in_range = (
+        regression_index is not None
+        and length is not None
+        and 0 <= regression_index < length
+    )
+    raw_tolerance = rule.get("tolerance")
+
+    line_key_by_area = {"top_line": "top", "middle_line": "middle", "bottom_line": "bottom"}
+    if area in line_key_by_area and in_range:
+        series = tc.get(line_key_by_area[area])
+        if series is not None:
+            info["line_value"] = float(series[regression_index])
+        default_pct = 0.1 if action == "on_line" else 0.0
+        info["tolerance_pct"] = default_pct if raw_tolerance is None else float(raw_tolerance)
+
+    zone_keys_by_area = {
+        "top_zone": ("top_zone_lower", "top_zone_upper"),
+        "bottom_zone": ("bottom_zone_lower", "bottom_zone_upper"),
+    }
+    if area in zone_keys_by_area and in_range:
+        lower_key, upper_key = zone_keys_by_area[area]
+        lower_series = tc.get(lower_key)
+        upper_series = tc.get(upper_key)
+        if lower_series is not None and upper_series is not None:
+            lower_value = float(lower_series[regression_index])
+            upper_value = float(upper_series[regression_index])
+            info["zone_low"] = min(lower_value, upper_value)
+            info["zone_high"] = max(lower_value, upper_value)
+        info["tolerance_pct"] = 0.0 if raw_tolerance is None else float(raw_tolerance)
+
+    return info
+
+
+def _evaluate_single_area_core(candles, tc, rule):
 
     area = rule.get("area")
     window = int(rule.get("window", 1) or 1)
@@ -759,7 +858,8 @@ def evaluate_line_action(candle, line_value, rule, direction=None):
 
 
 def _line_tolerance_bounds(line_value, rule, default_pct=0.0):
-    tolerance_pct = float(rule.get("tolerance", default_pct) or default_pct)
+    raw_tolerance = rule.get("tolerance")
+    tolerance_pct = default_pct if raw_tolerance is None else float(raw_tolerance)
     tolerance = abs(float(line_value)) * (tolerance_pct / 100.0)
     return float(line_value) - tolerance, float(line_value) + tolerance
 
@@ -768,26 +868,65 @@ def _line_tolerance_bounds(line_value, rule, default_pct=0.0):
 # ZONE ACTIONS
 # =========================================================
 
+def _body_bounds_candle(candle):
+    return min(candle["open"], candle["close"]), max(candle["open"], candle["close"])
+
+
+def _zone_tolerance_bounds(zone_low, zone_high, rule):
+    """Expand a normalized zone symmetrically by `tolerance` percent per edge.
+
+    Unlike `_line_tolerance_bounds` (which tightens a directional pass/fail
+    threshold, e.g. closed_above/closed_below), this widens the target area -
+    the same convention already used by `touched`'s tolerance band for lines.
+    tolerance=None is treated as 0.0; tolerance=0 is preserved as exactly
+    zero (no `or default` fallback that would silently replace a real zero).
+    """
+    raw_tolerance = rule.get("tolerance")
+    tolerance_pct = 0.0 if raw_tolerance is None else float(raw_tolerance)
+    low_tolerance = abs(float(zone_low)) * (tolerance_pct / 100.0)
+    high_tolerance = abs(float(zone_high)) * (tolerance_pct / 100.0)
+    return zone_low - low_tolerance, zone_high + high_tolerance
+
+
+def _zone_geometry_overlaps(candle, zone_low, zone_high, touch_type):
+    wick_overlap = candle["low"] <= zone_high and candle["high"] >= zone_low
+
+    if touch_type == "wick":
+        return wick_overlap
+
+    body_low, body_high = _body_bounds_candle(candle)
+    body_overlap = body_low <= zone_high and body_high >= zone_low
+
+    if touch_type == "body":
+        return body_overlap
+
+    # "both": either the wick or the body overlapping the zone counts.
+    return wick_overlap or body_overlap
+
+
 def evaluate_zone_action(candle, lower, upper, rule, direction=None):
 
     action = rule.get("action")
-
-    # candle intersects zone
-    wick_entry = candle["low"] <= upper and candle["high"] >= lower
+    zone_low = min(float(lower), float(upper))
+    zone_high = max(float(lower), float(upper))
+    tol_zone_low, tol_zone_high = _zone_tolerance_bounds(zone_low, zone_high, rule)
+    touch_type = rule.get("touch_type", "wick")
 
     if action == "entered":
-        return wick_entry
+        return _zone_geometry_overlaps(candle, tol_zone_low, tol_zone_high, touch_type)
 
     if action == "rejected":
 
-        if not wick_entry:
+        if not _zone_geometry_overlaps(candle, tol_zone_low, tol_zone_high, touch_type):
             return False
 
         if direction == "up":
-            return candle["close"] < lower
+            return candle["close"] < zone_low
 
         if direction == "down":
-            return candle["close"] > upper
+            return candle["close"] > zone_high
+
+        return False
 
     if action == "breach":
         breach_direction = rule.get("breach_direction", "any")
@@ -797,27 +936,31 @@ def evaluate_zone_action(candle, lower, upper, rule, direction=None):
             direction = "down"
 
         breach_type = rule.get("breach_type", rule.get("touch_type", "wick"))
-        if breach_type in {"body", "both"}:
-            if direction == "up":
-                body_high = max(candle["open"], candle["close"])
-                if body_high > upper:
-                    return True
-            if direction == "down":
-                body_low = min(candle["open"], candle["close"])
-                if body_low < lower:
-                    return True
-            if direction is None and (
-                max(candle["open"], candle["close"]) > upper
-                or min(candle["open"], candle["close"]) < lower
-            ):
-                return True
+        # Breach uses the zone's outer boundary only, with the same
+        # stricter-buffer tolerance convention as closed_above/closed_below.
+        _, top_tol = _line_tolerance_bounds(zone_high, rule)
+        bottom_tol, _ = _line_tolerance_bounds(zone_low, rule)
+        body_low, body_high = _body_bounds_candle(candle)
 
-        if breach_type in {"wick", "both"}:
-            if direction == "up":
-                return candle["high"] > upper
-            if direction == "down":
-                return candle["low"] < lower
-            return candle["high"] > upper or candle["low"] < lower
+        def _breached_up():
+            if breach_type in {"body", "both"} and body_high > top_tol:
+                return True
+            if breach_type in {"wick", "both"} and candle["high"] > top_tol:
+                return True
+            return False
+
+        def _breached_down():
+            if breach_type in {"body", "both"} and body_low < bottom_tol:
+                return True
+            if breach_type in {"wick", "both"} and candle["low"] < bottom_tol:
+                return True
+            return False
+
+        if direction == "up":
+            return _breached_up()
+        if direction == "down":
+            return _breached_down()
+        return _breached_up() or _breached_down()
 
     return False
 

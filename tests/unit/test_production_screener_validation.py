@@ -7,6 +7,9 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
 
 
 BACKEND = Path(__file__).resolve().parents[2]
@@ -18,6 +21,7 @@ from production_screener_validation.contracts import CaseSuite, IndicatorRule, S
 from production_screener_validation.fixture_store import FixtureStore, GoldenStore
 from production_screener_validation.pipeline import ValidationPipeline
 from production_screener_validation.reference.oracle import ReferenceOracle
+from production_screener_validation.reference.rule_engine import evaluate_custom
 from production_screener_validation.reference.talib_engine import TALIB_VERSION, calculate
 
 
@@ -77,6 +81,144 @@ class ProductionScreenerValidationTests(unittest.IsolatedAsyncioTestCase):
         }
         values.update(overrides)
         return ScreenerCase(**values)
+
+    def test_linreg_reference_supports_virtual_ohlc_and_all_position_actions(self):
+        rows = [
+            {"date": f"2025-01-0{index + 1}", "open": 200, "high": 201, "low": 199, "close": 200, "volume": 1, "closed": True}
+            for index in range(3)
+        ]
+
+        scenarios = {
+            "above": ([101, 101, 101], [103, 103, 103], [101, 101, 101], [102, 102, 102]),
+            "below": ([99, 99, 99], [99, 99, 99], [97, 97, 97], [98, 98, 98]),
+            "on": ([99, 99, 99], [102, 102, 102], [98, 98, 98], [101, 101, 101]),
+            "piercing_from_below": ([101, 99, 101], [102, 102, 103], [98, 98, 100.5], [101, 101, 102]),
+            "piercing_from_above": ([99, 101, 99], [102, 102, 100], [98, 98, 97], [99, 99, 98]),
+        }
+
+        for position, (bopen, bhigh, blow, bclose) in scenarios.items():
+            values = {
+                "line": np.array([100.0] * 3),
+                "bopen": np.array(bopen, dtype=float),
+                "bhigh": np.array(bhigh, dtype=float),
+                "blow": np.array(blow, dtype=float),
+                "bclose": np.array(bclose, dtype=float),
+            }
+            config = {
+                "lr_length": 1,
+                "signal_smoothing": 1,
+                "price_position": position,
+                "window": 2 if position.startswith("piercing_") else 3,
+                "tolerance_pct": 0,
+                "confirmation": False,
+            }
+            with self.subTest(position=position), patch(
+                "production_screener_validation.reference.rule_engine.linear_regression_candles",
+                return_value=values,
+            ):
+                result = evaluate_custom("linreg_candles", rows, {}, config)
+                self.assertTrue(result["passed"])
+                self.assertEqual(result["values"]["bclose"], float(bclose[result["signal_index"]]))
+
+                younger_or_older = {**config, "window": config["window"] + 1}
+                mismatch = evaluate_custom("linreg_candles", rows, {}, younger_or_older)
+                self.assertFalse(mismatch["passed"])
+
+    def test_linreg_reference_on_zero_tolerance_rejects_near_miss_and_ignores_forming_bar(self):
+        rows = [
+            {"date": "2025-01-01", "open": 200, "high": 201, "low": 199, "close": 200, "volume": 1, "closed": True},
+            {"date": "2025-01-02", "open": 200, "high": 201, "low": 199, "close": 200, "volume": 1, "closed": True},
+            {"date": "2025-01-03", "open": 99, "high": 102, "low": 98, "close": 101, "volume": 1, "is_closed": False},
+        ]
+        values = {
+            "line": np.array([100.0, 100.0]),
+            "bopen": np.array([99.0, 99.0]),
+            "bhigh": np.array([99.9, 99.9]),
+            "blow": np.array([98.0, 98.0]),
+            "bclose": np.array([99.9, 99.9]),
+        }
+        config = {
+            "lr_length": 1,
+            "signal_smoothing": 1,
+            "price_position": "on",
+            "window": 2,
+            "tolerance_pct": 0,
+            "confirmation": False,
+        }
+
+        with patch(
+            "production_screener_validation.reference.rule_engine.linear_regression_candles",
+            return_value=values,
+        ) as engine:
+            result = evaluate_custom("linreg_candles", rows, {}, config)
+
+        self.assertFalse(result["passed"])
+        self.assertEqual(len(engine.call_args.args[0]), 2)
+
+    def test_linreg_reference_price_position_any_or_null_does_not_apply_window(self):
+        rows = [
+            {"date": f"2025-01-0{index + 1}", "open": 200, "high": 201, "low": 199, "close": 200, "volume": 1, "closed": True}
+            for index in range(3)
+        ]
+        values = {
+            "line": np.array([100.0, 100.0, 100.0]),
+            "bopen": np.array([101.0, 101.0, 101.0]),
+            "bhigh": np.array([103.0, 103.0, 103.0]),
+            "blow": np.array([101.0, 101.0, 101.0]),
+            "bclose": np.array([102.0, 102.0, 102.0]),
+        }
+
+        for price_position in (None, "any"):
+            config = {
+                "lr_length": 1,
+                "signal_smoothing": 1,
+                "price_position": price_position,
+                "close_location": "any",
+                "window": 1,
+                "tolerance_pct": 0,
+                "confirmation": False,
+            }
+            with self.subTest(price_position=price_position), patch(
+                "production_screener_validation.reference.rule_engine.linear_regression_candles",
+                return_value=values,
+            ):
+                result = evaluate_custom("linreg_candles", rows, {}, config)
+
+            self.assertTrue(result["passed"])
+            self.assertEqual(result["signal_index"], 2)
+
+    def test_linreg_reference_any_signal_unions_real_positions_and_respects_window(self):
+        rows = [
+            {"date": f"2025-01-0{index + 1}", "open": 200, "high": 201, "low": 199, "close": 200, "volume": 1, "closed": True}
+            for index in range(3)
+        ]
+        values = {
+            "line": np.array([100.0, 100.0, 100.0]),
+            "bopen": np.array([98.0, 101.0, 101.0]),
+            "bhigh": np.array([99.0, 103.0, 103.0]),
+            "blow": np.array([97.0, 101.0, 101.0]),
+            "bclose": np.array([98.0, 102.0, 102.0]),
+        }
+        config = {
+            "lr_length": 1,
+            "signal_smoothing": 1,
+            "price_position": "any_signal",
+            "close_location": "any",
+            "window": 1,
+            "tolerance_pct": 0,
+            "confirmation": False,
+        }
+
+        with patch(
+            "production_screener_validation.reference.rule_engine.linear_regression_candles",
+            return_value=values,
+        ):
+            too_young = evaluate_custom("linreg_candles", rows, {}, config)
+            exact = evaluate_custom("linreg_candles", rows, {}, {**config, "window": 2})
+
+        self.assertFalse(too_young["passed"])
+        self.assertTrue(exact["passed"])
+        self.assertEqual(exact["signal_index"], 2)
 
     def approve(self, pipeline: ValidationPipeline, case: ScreenerCase) -> str:
         candidate, _ = pipeline.generate_candidate(case)
