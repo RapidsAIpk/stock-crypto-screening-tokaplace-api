@@ -333,12 +333,23 @@ def handle_rsi(asset, candles, config):
     return True, build_rsi_sticker(rsi_series, config)
 
 
+def _trend_closed_candles(candles):
+    """Drop the still-forming last bar so channel geometry, break state, and
+    area-rule signals are all derived from completed candles only - an
+    unclosed bar must never generate a confirmed Trend Channel match.
+    """
+    if candles and candles[-1].get("is_closed") is False:
+        return candles[:-1]
+    return candles
+
+
 def handle_trend(asset, candles, config):
     wait_for_break = config.get("wait_for_break")
     show_last_channel = config.get("show_last_channel")
+    closed_candles = _trend_closed_candles(candles)
 
     tc = compute_trend_channel(
-        candles,
+        closed_candles,
         length=config.get("length", 8),
         wait_for_break=True if wait_for_break is None else bool(wait_for_break),
         show_last_channel=True if show_last_channel is None else bool(show_last_channel),
@@ -347,12 +358,16 @@ def handle_trend(asset, candles, config):
     if not tc:
         return False, None
 
-    if not evaluate_trend_channel_rules(
-        candles,
+    evidence = []
+    passed = evaluate_trend_channel_rules(
+        closed_candles,
         tc,
-        config
-    ):
-        return False, None
+        config,
+        evidence=evidence,
+    )
+
+    if not passed:
+        return False, {"sticker": None, "evidence": evidence}
 
     asset["channels"]["trend"] = tc
 
@@ -360,7 +375,7 @@ def handle_trend(asset, candles, config):
     area_labels = [_trend_area_condition(area_rule) for area_rule in area_rules]
     condition = " + ".join(area_labels) if area_labels else "Area Match"
     sticker_config = _trend_sticker_config(area_rules)
-    return True, build_indicator_sticker(
+    sticker = build_indicator_sticker(
         "Trend Channel",
         condition,
         sticker_config,
@@ -368,6 +383,7 @@ def handle_trend(asset, candles, config):
         window=sticker_config["window"],
         decision=_trend_decision(area_rules),
     )
+    return True, {"sticker": sticker, "evidence": evidence}
 
 
 def handle_linreg_candles(asset, candles, config):
