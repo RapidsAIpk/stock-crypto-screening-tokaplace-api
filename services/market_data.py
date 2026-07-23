@@ -1,10 +1,11 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import logging
 import math
 import re
 import time
 from urllib.parse import quote
+
 
 import httpx
 
@@ -12,9 +13,13 @@ from core.config import settings
 from services.market_data_store import store
 from services.integration_runtime import integration_runtime
 from services.stock_session import (
+    SESSION_POLICY_TRADINGVIEW_REGULAR,
+    aggregate_session_anchored_candles,
     apply_stock_session_policy,
     expected_session_policy_for_symbol,
     is_payload_session_compatible,
+    resolve_session_bucket_start,
+    session_bucket_close_unix,
     session_fetch_multiplier,
 )
 
@@ -41,15 +46,6 @@ MAX_CANDLES = 500
 ONE_DAY_SECONDS = 24 * 60 * 60
 SLOW_FETCH_WARNING_SECONDS = 10.0
 FAILED_REFRESH_BACKOFF_SECONDS = 5 * 60
-TIMEFRAME_SECONDS = {
-    "1m": 60,
-    "5m": 5 * 60,
-    "15m": 15 * 60,
-    "30m": 30 * 60,
-    "1h": 60 * 60,
-    "4h": 4 * 60 * 60,
-    "1day": 24 * 60 * 60,
-}
 REFRESH_BUFFER_SECONDS = 5
 FUNDAMENTALS_CACHE = {}
 MASSIVE_BASE_URL = str(settings.MARKET_DATA_API_BASE_URL or "").strip() or "https://api.massive.com"
@@ -243,93 +239,122 @@ def timeframe_uses_worker_cache(timeframe):
 # TIMEFRAME MAP
 # =========================================================
 
+_POLYGON_TIMESPAN_BY_UNIT = {
+    "m": "minute",
+    "h": "hour",
+    "d": "day",
+    "w": "week",
+    "mo": "month",
+}
+
+
 def map_timeframe_for_polygon(tf):
-    parsed = parse_timeframe_spec(tf)
-
-    if parsed:
-        amount, unit = parsed
-        if unit == "m":
-            return amount, "minute"
-        if unit == "h":
-            return amount, "hour"
-        if unit == "d":
-            return amount, "day"
-        if unit == "w":
-            return amount, "week"
-        if unit == "mo":
-            return amount, "month"
-
-    mapping = {
-        "1m": (1, "minute"),
-        "5m": (5, "minute"),
-        "15m": (15, "minute"),
-        "30m": (30, "minute"),
-        "1h": (1, "hour"),
-        "4h": (4, "hour"),
-        "1day": (1, "day"),
-    }
-    return mapping.get(tf, (1, "day"))
+    amount, unit = validate_timeframe(tf)
+    return amount, _POLYGON_TIMESPAN_BY_UNIT[unit]
 
 
 def map_timeframe_for_binance(tf):
     parsed = parse_timeframe_spec(tf)
-
-    if parsed:
-        amount, unit = parsed
-        if unit == "m" and amount in {1, 3, 5, 15, 30}:
-            return f"{amount}m"
-        if unit == "h" and amount in {1, 2, 4, 6, 8, 12}:
-            return f"{amount}h"
-        if unit == "d" and amount in {1, 3}:
-            return f"{amount}d"
-        if unit == "w" and amount == 1:
-            return "1w"
-        if unit == "mo" and amount == 1:
-            return "1M"
+    if parsed is None:
         return None
+    amount, unit = parsed
 
-    mapping = {
-        "1m": "1m",
-        "5m": "5m",
-        "15m": "15m",
-        "30m": "30m",
-        "1h": "1h",
-        "4h": "4h",
-        "1day": "1d",
-    }
-    return mapping.get(tf)
+    if unit == "m" and amount in {1, 3, 5, 15, 30}:
+        return f"{amount}m"
+    if unit == "h" and amount in {1, 2, 4, 6, 8, 12}:
+        return f"{amount}h"
+    if unit == "d" and amount in {1, 3}:
+        return f"{amount}d"
+    if unit == "w" and amount == 1:
+        return "1w"
+    if unit == "mo" and amount == 1:
+        return "1M"
+    return None
 
 
 def timeframe_seconds(tf):
-    parsed = parse_timeframe_spec(tf)
+    # Nominal (approximate for week/month) duration in seconds. This is
+    # correct and sufficient for request-sizing/buffer heuristics, but must
+    # NOT be used to decide whether a specific candle has actually closed or
+    # when its bucket really ends - see timeframe_bucket_close_unix for that.
+    amount, unit = validate_timeframe(tf)
+    if unit == "m":
+        return amount * 60
+    if unit == "h":
+        return amount * 60 * 60
+    if unit == "d":
+        return amount * 24 * 60 * 60
+    if unit == "w":
+        return amount * 7 * 24 * 60 * 60
+    return amount * 30 * 24 * 60 * 60
 
-    if parsed:
-        amount, unit = parsed
-        if unit == "m":
-            return amount * 60
-        if unit == "h":
-            return amount * 60 * 60
-        if unit == "d":
-            return amount * 24 * 60 * 60
-        if unit == "w":
-            return amount * 7 * 24 * 60 * 60
-        if unit == "mo":
-            return amount * 30 * 24 * 60 * 60
 
-    return TIMEFRAME_SECONDS.get(tf, 24 * 60 * 60)
+def _calendar_bucket_close_unix(bucket_start_unix, amount, unit):
+    """Close time of the calendar bucket (day-block/week/month) containing
+    `bucket_start_unix`, computed from the actual calendar rather than a
+    fixed N*86400 duration - correct regardless of how many days are in a
+    given month or which weekday a trading week happens to start on.
+    """
+    amount = max(1, int(amount))
+    candle_date = datetime.fromtimestamp(int(bucket_start_unix), tz=timezone.utc).date()
+
+    if unit == "w":
+        week_start = candle_date - timedelta(days=candle_date.weekday())
+        close_date = week_start + timedelta(weeks=amount)
+    elif unit == "mo":
+        month_index = candle_date.year * 12 + (candle_date.month - 1)
+        close_year, close_month0 = divmod(month_index + amount, 12)
+        close_date = date(close_year, close_month0 + 1, 1)
+    else:
+        block_index = candle_date.toordinal() // amount
+        close_date = date.fromordinal((block_index + 1) * amount)
+
+    return int(datetime(close_date.year, close_date.month, close_date.day, tzinfo=timezone.utc).timestamp())
+
+
+def timeframe_bucket_close_unix(bucket_start_unix, timeframe, *, symbol=None, session_policy=None, candles_provider=None):
+    """Real close time of the bucket starting at `bucket_start_unix` for
+    `timeframe` - the single source of truth for candle-closed-state and
+    freshness/refresh decisions everywhere in the pipeline.
+
+    Deliberately NOT always `bucket_start_unix + timeframe_seconds(...)`:
+      - RTH-anchored stock intraday buckets (m/h under the tradingview_
+        regular session policy) close at the session close on their trading
+        date when that is earlier than the nominal duration would suggest
+        (e.g. the short 15:30-16:00 ET tail of a 1h chart).
+      - Weekly/monthly (and any multi-day) buckets close at the real
+        calendar boundary, not a fixed 7-day/30-day duration.
+      - A native (1, "d") bar represents an already-settled trading day and
+        is closed as soon as it exists.
+    """
+    amount, unit = validate_timeframe(timeframe)
+    bucket_start_unix = int(bucket_start_unix)
+
+    if unit in ("m", "h"):
+        duration_seconds = amount * (3600 if unit == "h" else 60)
+        if symbol and not is_crypto_symbol(symbol):
+            effective_policy = session_policy
+            if effective_policy is None:
+                effective_policy = expected_session_policy_for_symbol(symbol, timeframe)
+            if effective_policy == SESSION_POLICY_TRADINGVIEW_REGULAR:
+                bucket_minutes = amount * 60 if unit == "h" else amount
+                return session_bucket_close_unix(bucket_start_unix, bucket_minutes)
+        return bucket_start_unix + duration_seconds
+
+    if unit == "d" and amount == 1 and _daily_candle_timestamp_is_close_time(symbol, timeframe, candles_provider):
+        return bucket_start_unix
+
+    return _calendar_bucket_close_unix(bucket_start_unix, amount, unit)
 
 
 def next_refresh_at_for_timeframe(timeframe, now=None):
-
     reference = int(time.time()) if now is None else int(now)
+    amount, unit = validate_timeframe(timeframe)
+
+    if unit in ("w", "mo") or (unit == "d" and amount > 1):
+        return _calendar_bucket_close_unix(reference, amount, unit) + REFRESH_BUFFER_SECONDS
+
     seconds = timeframe_seconds(timeframe)
-    if seconds <= 0:
-        logger.warning(
-            "Invalid timeframe seconds=%s for timeframe=%s; falling back to 1day refresh cadence.",
-            seconds,
-            timeframe,
-        )
-        seconds = ONE_DAY_SECONDS
     next_boundary = ((reference // seconds) + 1) * seconds
     return next_boundary + REFRESH_BUFFER_SECONDS
 
@@ -349,7 +374,14 @@ def is_payload_fresh(payload, timeframe, now=None):
         return False
 
     reference = int(time.time()) if now is None else int(now)
-    return reference < (int(latest_time) + timeframe_seconds(timeframe))
+    close_time = timeframe_bucket_close_unix(
+        int(latest_time),
+        timeframe,
+        symbol=payload.get("symbol"),
+        session_policy=payload.get("session_policy"),
+        candles_provider=payload.get("candles_provider"),
+    )
+    return reference < close_time
 
 
 def is_refresh_due(payload, timeframe, now=None):
@@ -411,6 +443,43 @@ def slice_recent(candles, limit=MAX_CANDLES):
     return candles[-normalized_limit:]
 
 
+def _sanitize_candles(candles, *, source):
+    """Graceful validation applied to every raw provider row after it has
+    been coerced into our candle shape: drop rows whose OHLC values are
+    internally inconsistent (low <= open/close <= high must hold), then
+    sort and de-duplicate by timestamp (last write wins) so a re-fetched or
+    out-of-order page can never leave the pipeline with unsorted or
+    repeated candle times.
+    """
+    if not candles:
+        return candles
+
+    valid = []
+    malformed = 0
+    for candle in candles:
+        low = candle["low"]
+        high = candle["high"]
+        open_ = candle["open"]
+        close = candle["close"]
+        if low > high or low > min(open_, close) or high < max(open_, close):
+            malformed += 1
+            continue
+        valid.append(candle)
+
+    if malformed:
+        logger.warning(
+            "%s dropped %s malformed OHLC row(s) (low/high inconsistent with open/close)",
+            source,
+            malformed,
+        )
+
+    deduped_by_time = {}
+    for candle in valid:
+        deduped_by_time[candle["time"]] = candle
+
+    return sorted(deduped_by_time.values(), key=lambda item: item["time"])
+
+
 def normalize_polygon_rows(rows):
     candles = []
 
@@ -436,7 +505,7 @@ def normalize_polygon_rows(rows):
             }
         )
 
-    return candles
+    return _sanitize_candles(candles, source=MARKET_DATA_PROVIDER)
 
 
 def normalize_binance_rows(rows):
@@ -467,7 +536,7 @@ def normalize_binance_rows(rows):
             }
         )
 
-    return candles
+    return _sanitize_candles(candles, source=BINANCE_PROVIDER)
 
 
 def _coerce_number(value, default=None):
@@ -480,104 +549,94 @@ def _coerce_number(value, default=None):
         return default
 
 
-def aggregate_candles(candles, group_size):
-
-    if group_size <= 1:
-        return candles
-
-    trimmed_length = len(candles) - (len(candles) % group_size)
-    if trimmed_length <= 0:
-        return []
-
-    grouped = []
-
-    for index in range(0, trimmed_length, group_size):
-        chunk = candles[index:index + group_size]
-
-        grouped.append({
-            "time": chunk[0]["time"],
-            "open": chunk[0]["open"],
-            "high": max(item["high"] for item in chunk),
-            "low": min(item["low"] for item in chunk),
-            "close": chunk[-1]["close"],
-            "volume": sum(item["volume"] for item in chunk),
-        })
-
-    return grouped
-
-
-def candles_for_timeframe(candles, timeframe, limit=MAX_CANDLES):
-    parsed = parse_timeframe_spec(timeframe)
-
-    if not parsed:
-        if timeframe == "4h":
-            aggregated = aggregate_candles(candles, 4)
-            return slice_recent(aggregated, limit=limit)
-        return slice_recent(candles, limit=limit)
-
-    amount, unit = parsed
-    if amount <= 1:
-        return slice_recent(candles, limit=limit)
-
-    if unit == "m":
-        if amount < 60:
-            return slice_recent(aggregate_candles(candles, amount), limit=limit)
-        if amount in {60, 90}:
-            return slice_recent(candles, limit=limit)
-        if amount % 60 == 0:
-            return slice_recent(aggregate_candles(candles, amount // 60), limit=limit)
-        return slice_recent(candles, limit=limit)
-
-    if unit == "h":
-        return slice_recent(aggregate_candles(candles, amount), limit=limit)
-    if unit == "d":
-        return slice_recent(aggregate_candles(candles, amount), limit=limit)
-    if unit == "w":
-        return slice_recent(aggregate_candles(candles, amount), limit=limit)
-    if unit == "mo":
-        return slice_recent(aggregate_candles(candles, amount), limit=limit)
-
-    return slice_recent(candles, limit=limit)
-
-
 def parse_timeframe_spec(tf):
+    """Single, reusable timeframe parser for the whole pipeline.
+
+    Returns (amount, unit) with unit in {"m", "h", "d", "w", "mo"}, or None
+    when `tf` is not a recognized timeframe. Every other timeframe-handling
+    function (duration, provider mapping, aggregation, closure, refresh
+    scheduling) must derive its behavior from this single parsed
+    representation rather than re-deriving its own amount/unit split.
+
+    Case handling is deliberately NOT a blanket lowercase of the whole
+    string: multi-letter word units ("min", "hour", "month", ...) are
+    unambiguous and matched case-insensitively, but the single-letter units
+    collide across two different quantities - lowercase "m" is minute
+    (TradingView/most providers' convention) while uppercase "M" is month
+    (the "1D, 1W, 1M" convention). Folding the whole string to lowercase
+    before matching silently turns every "1M" (month) request into "1m"
+    (minute). "d"/"D" and "w"/"W" have no such collision, so those stay
+    case-insensitive.
+    """
     if not isinstance(tf, str):
         return None
 
-    lowered = tf.strip().lower()
-    mapping = {
-        "1m": (1, "m"),
-        "5m": (5, "m"),
-        "15m": (15, "m"),
-        "30m": (30, "m"),
-        "1h": (1, "h"),
-        "4h": (4, "h"),
-        "1day": (1, "d"),
-    }
+    stripped = tf.strip()
+    if not stripped:
+        return None
 
-    if lowered in mapping:
-        return mapping[lowered]
-
-    match = re.match(
-        r"^(\d+)\s*(m|min|mins|minute|minutes|h|hr|hour|hours|d|day|days|w|wk|week|weeks|mo|mon|month|months)$",
-        lowered,
-    )
+    match = re.match(r"^(\d+)\s*([A-Za-z]+)$", stripped)
     if not match:
         return None
 
     amount = int(match.group(1))
     if amount <= 0:
         return None
-    unit = match.group(2)
-    if unit in {"m", "min", "mins", "minute", "minutes"}:
+
+    unit_raw = match.group(2)
+    unit_lower = unit_raw.lower()
+
+    if unit_lower in {"min", "mins", "minute", "minutes"}:
         return amount, "m"
-    if unit in {"h", "hr", "hour", "hours"}:
+    if unit_lower in {"h", "hr", "hour", "hours"}:
         return amount, "h"
-    if unit in {"d", "day", "days"}:
+    if unit_lower in {"d", "day", "days"}:
         return amount, "d"
-    if unit in {"w", "wk", "week", "weeks"}:
+    if unit_lower in {"w", "wk", "week", "weeks"}:
         return amount, "w"
-    return amount, "mo"
+    if unit_lower in {"mo", "mon", "month", "months"}:
+        return amount, "mo"
+
+    # Ambiguous single letter: lowercase "m" = minute, uppercase "M" = month.
+    if unit_raw == "m":
+        return amount, "m"
+    if unit_raw == "M":
+        return amount, "mo"
+
+    return None
+
+
+def validate_timeframe(tf):
+    """Parse `tf` or raise ValueError with a clear diagnostic reason.
+
+    Use this at pipeline entry points so an unsupported/malformed timeframe
+    fails fast and visibly instead of being silently coerced into some other
+    timeframe (e.g. defaulted to 1day).
+    """
+    parsed = parse_timeframe_spec(tf)
+    if parsed is None:
+        raise ValueError(f"Unsupported timeframe: {tf!r}")
+    return parsed
+
+
+def canonicalize_timeframe(tf):
+    """Canonical string form for a parsed timeframe.
+
+    Used at every public fetch entry point so equivalent spellings of the
+    same timeframe ("1D" vs "1day", "1M" vs "1mo") always take the same code
+    path and share the same cache row, instead of silently fragmenting into
+    separate (and inconsistent) results.
+    """
+    amount, unit = validate_timeframe(tf)
+    if unit == "m":
+        return f"{amount}m"
+    if unit == "h":
+        return f"{amount}h"
+    if unit == "d":
+        return "1day" if amount == 1 else f"{amount}day"
+    if unit == "w":
+        return f"{amount}w"
+    return f"{amount}mo"
 
 
 # =========================================================
@@ -647,10 +706,50 @@ def is_payload_for_symbol_provider(payload, symbol):
     return is_payload_for_provider(payload, expected_candle_provider_for_symbol(symbol))
 
 
+# Bump whenever the candle-anchoring/aggregation algorithm changes, so any
+# payload cached under a previous (possibly buggy) algorithm is treated as
+# incompatible and refetched rather than silently served. v3: candle "time"
+# for RTH intraday timeframes is now always derived from
+# resolve_session_bucket_start rather than the provider's own row
+# timestamp, which was previously trusted as already anchored and could
+# drift by whatever offset the provider's fetch window started at.
+CANDLE_ALIGNMENT_VERSION = 3
+
+
+def _payload_candles_are_session_anchored(payload, target_minutes):
+    """True only if every candle's stored time already sits exactly on its
+    resolve_session_bucket_start boundary - the direct, self-verifying
+    check that a cached payload's timestamps match the timeframe's expected
+    boundaries, independent of any version tag.
+    """
+    candles = payload.get("candles") or []
+    for candle in candles:
+        candle_time = candle.get("time")
+        if candle_time is None:
+            return False
+        candle_time = int(candle_time)
+        if resolve_session_bucket_start(candle_time, target_minutes) != candle_time:
+            return False
+    return True
+
+
 def is_payload_compatible_for_fetch(payload, symbol, timeframe):
     if not is_payload_for_symbol_provider(payload, symbol):
         return False
-    return is_payload_session_compatible(payload, symbol, timeframe)
+    if not is_payload_session_compatible(payload, symbol, timeframe):
+        return False
+    plan = _session_anchor_plan_for_symbol(symbol, timeframe)
+    if plan is not None:
+        # This timeframe is built via session-anchored aggregation. A
+        # payload cached under an older/different alignment algorithm must
+        # never be served as if it were compatible, even though its
+        # session_policy string alone still matches.
+        if not isinstance(payload, dict) or payload.get("candle_alignment_version") != CANDLE_ALIGNMENT_VERSION:
+            return False
+        target_minutes = plan[2]
+        if not _payload_candles_are_session_anchored(payload, target_minutes):
+            return False
+    return True
 
 
 def _daily_candle_timestamp_is_close_time(symbol, timeframe, candles_provider=None):
@@ -665,7 +764,7 @@ def _daily_candle_timestamp_is_close_time(symbol, timeframe, candles_provider=No
     return True
 
 
-def _mark_unclosed_last_candle(candles, timeframe, now=None, symbol=None, candles_provider=None):
+def _mark_unclosed_last_candle(candles, timeframe, now=None, symbol=None, candles_provider=None, session_policy=None):
     if not candles:
         return candles
 
@@ -675,10 +774,12 @@ def _mark_unclosed_last_candle(candles, timeframe, now=None, symbol=None, candle
         return candles
 
     reference = int(time.time()) if now is None else int(now)
-    close_time = (
-        int(last_time)
-        if _daily_candle_timestamp_is_close_time(symbol, timeframe, candles_provider)
-        else int(last_time) + timeframe_seconds(timeframe)
+    close_time = timeframe_bucket_close_unix(
+        int(last_time),
+        timeframe,
+        symbol=symbol,
+        session_policy=session_policy,
+        candles_provider=candles_provider,
     )
 
     if reference >= close_time:
@@ -707,6 +808,7 @@ def _refresh_payload_candle_closed_state(payload, symbol, timeframe, now=None):
         now=now,
         symbol=symbol,
         candles_provider=payload.get("candles_provider"),
+        session_policy=payload.get("session_policy"),
     )
     if refreshed is candles:
         return payload
@@ -717,15 +819,17 @@ def _build_market_data_payload(symbol, candles, timeframe, candles_provider=None
     resolved_provider = normalize_market_data_provider_name(
         candles_provider or expected_candle_provider_for_symbol(symbol)
     )
+    resolved_session_policy = session_policy
+    if resolved_session_policy is None and not is_crypto_symbol(symbol):
+        resolved_session_policy = expected_session_policy_for_symbol(symbol, timeframe)
+
     candles = _mark_unclosed_last_candle(
         candles,
         timeframe,
         symbol=symbol,
         candles_provider=resolved_provider,
+        session_policy=resolved_session_policy,
     )
-    resolved_session_policy = session_policy
-    if resolved_session_policy is None and not is_crypto_symbol(symbol):
-        resolved_session_policy = expected_session_policy_for_symbol(symbol, timeframe)
 
     payload = {
         "symbol": symbol,
@@ -735,6 +839,7 @@ def _build_market_data_payload(symbol, candles, timeframe, candles_provider=None
         "shares_outstanding": None,
         "float_shares": None,
         "next_refresh_at": next_refresh_at_for_timeframe(timeframe),
+        "candle_alignment_version": CANDLE_ALIGNMENT_VERSION,
     }
     if resolved_session_policy:
         payload["session_policy"] = resolved_session_policy
@@ -1070,6 +1175,12 @@ def _polygon_backoff_seconds(exc, attempt):
 async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
     global _polygon_key_warning_emitted
 
+    try:
+        timeframe = canonicalize_timeframe(timeframe)
+    except ValueError as exc:
+        logger.warning("%s candle request rejected for %s: %s", MARKET_DATA_PROVIDER, symbol, exc)
+        return None
+
     if not integration_runtime.is_enabled(MARKET_DATA_PROVIDER):
         return None
 
@@ -1159,7 +1270,106 @@ async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
     return None
 
 
+# =========================================================
+# STOCK SESSION-ANCHORED INTRADAY AGGREGATION (all intraday timeframes)
+#
+# The provider's own candle "time" is never trusted as already being on a
+# clean 09:30-ET-anchored boundary - its custom-bars endpoint aggregates
+# relative to the requested fetch window (which trails "now"), not to fixed
+# clock marks, so even NATIVE 1m/5m/15m/30m rows can come back offset by
+# whatever the fetch window's start happened to be (e.g. 13:42/14:42/...
+# instead of 13:30/14:30/...). Every RTH-policy intraday timeframe -
+# including ones that are already at a "native" granularity - is therefore
+# routed through aggregate_session_anchored_candles, which re-derives each
+# bucket's stored time from resolve_session_bucket_start rather than
+# copying the source row's own timestamp. For a native granularity this is
+# a same-resolution "self-rebucket" (ratio 1:1) that is a no-op when the
+# source was already correctly anchored and a correction when it was not.
+# =========================================================
+
+_SESSION_ANCHOR_SOURCE_CANDIDATE_MINUTES = (30, 15, 5, 1)
+_SESSION_ANCHOR_SOURCE_TIMEFRAME_BY_MINUTES = {1: "1m", 5: "5m", 15: "15m", 30: "30m"}
+
+
+def _stock_session_target_minutes(timeframe):
+    parsed = parse_timeframe_spec(timeframe)
+    if not parsed:
+        return None
+
+    amount, unit = parsed
+    if unit == "m":
+        return amount
+    if unit == "h":
+        return amount * 60
+    return None
+
+
+def _stock_session_anchor_source_plan(timeframe):
+    """Return (source_timeframe, source_minutes, target_minutes): the
+    largest native granularity that evenly divides `timeframe`, used to
+    build every RTH-policy intraday candle through session-anchored
+    aggregation. Returns None only for non-intraday units (d/w/mo), which
+    use the separate calendar-grouped-history path instead.
+    """
+    target_minutes = _stock_session_target_minutes(timeframe)
+    if not target_minutes:
+        return None
+
+    for source_minutes in _SESSION_ANCHOR_SOURCE_CANDIDATE_MINUTES:
+        if source_minutes <= target_minutes and target_minutes % source_minutes == 0:
+            return (
+                _SESSION_ANCHOR_SOURCE_TIMEFRAME_BY_MINUTES[source_minutes],
+                source_minutes,
+                target_minutes,
+            )
+
+    return None
+
+
+def _session_anchor_plan_for_symbol(symbol, timeframe):
+    if is_crypto_symbol(symbol):
+        return None
+    if expected_session_policy_for_symbol(symbol, timeframe) != SESSION_POLICY_TRADINGVIEW_REGULAR:
+        return None
+    return _stock_session_anchor_source_plan(timeframe)
+
+
+async def _request_polygon_session_anchored_candles(symbol, timeframe, candles_limit, plan):
+    source_timeframe, source_minutes, target_minutes = plan
+    normalized_limit = normalize_candles_limit(candles_limit)
+    ratio = target_minutes // source_minutes
+    source_limit = normalize_candles_limit(
+        (normalized_limit + _polygon_buffer_bars(normalized_limit)) * ratio
+    )
+
+    source_payload = await request_polygon_candles(symbol, source_timeframe, candles_limit=source_limit)
+    if not source_payload:
+        return None
+
+    aggregated = aggregate_session_anchored_candles(source_payload.get("candles") or [], target_minutes)
+    aggregated = slice_recent(aggregated, limit=normalized_limit)
+    if not aggregated:
+        return None
+
+    # _build_market_data_payload's closure marking (via timeframe_bucket_
+    # close_unix) is itself session-anchor-aware, so no separate manual
+    # is_closed computation is needed here.
+    return _build_market_data_payload(
+        symbol,
+        aggregated,
+        timeframe,
+        candles_provider=MARKET_DATA_PROVIDER,
+        session_policy=SESSION_POLICY_TRADINGVIEW_REGULAR,
+    )
+
+
 async def request_massive_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
+    try:
+        timeframe = canonicalize_timeframe(timeframe)
+    except ValueError as exc:
+        logger.warning("%s candle request rejected for %s: %s", MARKET_DATA_PROVIDER, symbol, exc)
+        return None
+
     if _timeframe_uses_grouped_daily_history(timeframe):
         grouped_items = await request_massive_grouped_daily_candles(
             [symbol],
@@ -1169,6 +1379,13 @@ async def request_massive_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
         if not grouped_items:
             return None
         return grouped_items[0]
+
+    session_anchor_plan = _session_anchor_plan_for_symbol(symbol, timeframe)
+    if session_anchor_plan is not None:
+        return await _request_polygon_session_anchored_candles(
+            symbol, timeframe, candles_limit, session_anchor_plan
+        )
+
     return await request_polygon_candles(symbol, timeframe, candles_limit=candles_limit)
 
 
@@ -1401,6 +1618,12 @@ async def request_binance_quotes(symbols, timeframe):
 
 
 async def request_binance_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
+    try:
+        timeframe = canonicalize_timeframe(timeframe)
+    except ValueError as exc:
+        logger.warning("%s candle request rejected for %s: %s", BINANCE_PROVIDER, symbol, exc)
+        return None
+
     if not integration_runtime.is_enabled(BINANCE_PROVIDER):
         return None
 
@@ -2354,6 +2577,12 @@ async def fetch_batches(
     if not symbols:
         return []
 
+    try:
+        timeframe = canonicalize_timeframe(timeframe)
+    except ValueError as exc:
+        logger.warning("fetch_batches rejected symbols=%s: %s", len(symbols), exc)
+        return []
+
     provider = _fetch_provider_label(symbols)
     normalized_limit = normalize_candles_limit(candles_limit)
     effective_batch_size = batch_size
@@ -2514,6 +2743,12 @@ async def fetch_live_data(
     latest_only=False,
 ):
     if not symbols:
+        return []
+
+    try:
+        timeframe = canonicalize_timeframe(timeframe)
+    except ValueError as exc:
+        logger.warning("fetch_live_data rejected symbols=%s: %s", len(symbols), exc)
         return []
 
     normalized_limit = normalize_candles_limit(candles_limit)

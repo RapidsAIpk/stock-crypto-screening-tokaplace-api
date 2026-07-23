@@ -31,6 +31,7 @@ ZONE_OFFSET_FRACTION = 1.0 / 7.0
 
 # =========================================================
 # COMPUTE TREND CHANNEL
+
 # =========================================================
 
 def _slope_non_positive(delta_y: float, delta_x: float) -> bool:
@@ -566,186 +567,309 @@ def evaluate_trend_channel_rules(candles, tc, config, evidence=None):
 # =========================================================
 
 def evaluate_single_area(candles, tc, rule, evidence=None):
-    matched = _evaluate_single_area_core(candles, tc, rule)
+    result = _evaluate_single_area_core(candles, tc, rule)
 
     if evidence is not None:
-        evidence.append(_build_area_evidence(candles, tc, rule, matched))
+        evidence.append(_build_area_evidence(candles, tc, rule, result))
 
-    return matched
+    return result["matched"]
 
 
-def _build_area_evidence(candles, tc, rule, matched):
-    """Diagnostic snapshot of the latest closed candle against this area
-    rule, for the indicator-details evidence surface (see Phase 7 of the
-    trend-channel parity audit). For window=1 rules - the common case, e.g.
-    the FLL/GITS/CCU manual-validation configs - this candle is exactly the
-    one the pass/fail decision above was made from.
+# Area -> (line series key, break-eligibility direction) used by both the
+# window-scan and the closed/on_line "run" evaluators, and by evidence.
+_LINE_AREA_SERIES_KEY = {"top_line": "top", "bottom_line": "bottom", "middle_line": "middle"}
+_LINE_AREA_DIRECTION = {"top_line": "up", "bottom_line": "down", "middle_line": None}
+_ZONE_AREA_KEYS = {
+    "top_zone": ("top_zone_lower", "top_zone_upper", "up"),
+    "bottom_zone": ("bottom_zone_lower", "bottom_zone_upper", "down"),
+}
+
+
+def _base_candidate_info(candle, candle_index):
+    """Per-candidate diagnostic scaffold shared by every evaluation path -
+    see the `checked_candidates` schema in evaluate_single_area's evidence.
     """
-    checked_candle_index = len(candles) - 1
+    open_ = float(candle["open"])
+    close = float(candle["close"])
+    return {
+        "candle_index": candle_index,
+        "candle_time": candle.get("time"),
+        "is_closed": candle.get("is_closed", True) is not False,
+        "open": open_,
+        "high": float(candle["high"]),
+        "low": float(candle["low"]),
+        "close": close,
+        "body_low": min(open_, close),
+        "body_high": max(open_, close),
+        "line_value": None,
+        "zone_low": None,
+        "zone_high": None,
+        "geometry_overlap": False,
+        "wick_overlap": False,
+        "signal_eligible": True,
+        "failure_reason": "",
+    }
 
+
+def _evaluate_area_geometry(tc, rule, area, candle, regression_index):
+    """Evaluate one candle against one area's configured action.
+
+    Returns (matched, line_value, zone_low, zone_high, wick_overlap).
+    `matched` is exactly the touch_type/action-aware result that decides
+    pass/fail (identical to what evaluate_line_action/evaluate_zone_action
+    already compute) - `wick_overlap` is a separate, touch_type-independent
+    diagnostic showing whether the candle's raw high/low range reaches the
+    target at all, useful for explaining near-misses in evidence.
+    """
+    low = float(candle["low"])
+    high = float(candle["high"])
+
+    if area in _LINE_AREA_SERIES_KEY:
+        line_series = tc.get(_LINE_AREA_SERIES_KEY[area])
+        if line_series is None or regression_index >= len(line_series):
+            return False, None, None, None, False
+        line_value = float(line_series[regression_index])
+        wick_overlap = low <= line_value <= high
+        matched = evaluate_line_action(candle, line_value, rule, _LINE_AREA_DIRECTION[area])
+        return matched, line_value, None, None, wick_overlap
+
+    if area in _ZONE_AREA_KEYS:
+        lower_key, upper_key, direction = _ZONE_AREA_KEYS[area]
+        lower_series = tc.get(lower_key)
+        upper_series = tc.get(upper_key)
+        if lower_series is None or upper_series is None or regression_index >= len(lower_series):
+            return False, None, None, None, False
+        lower_value = float(lower_series[regression_index])
+        upper_value = float(upper_series[regression_index])
+        zone_low = min(lower_value, upper_value)
+        zone_high = max(lower_value, upper_value)
+        wick_overlap = low <= zone_high and high >= zone_low
+        matched = evaluate_zone_action(candle, lower_value, upper_value, rule, direction)
+        return matched, None, zone_low, zone_high, wick_overlap
+
+    return False, None, None, None, False
+
+
+def _finalize_area_result(candidates, matched_index, empty_reason="no_candidates_checked"):
+    matched = matched_index is not None
+    failure_reason = None
+    if not matched:
+        if not candidates:
+            failure_reason = empty_reason
+        elif all(not c["signal_eligible"] for c in candidates):
+            failure_reason = "channel_broken_before_window"
+        else:
+            failure_reason = "no_candidate_matched"
+    return {
+        "matched": matched,
+        "matched_index": matched_index,
+        "candidates": candidates,
+        "failure_reason": failure_reason,
+    }
+
+
+def _evaluate_window_area(candles, tc, rule, area, window, start_index, length):
+    """touched/breach (line areas) and entered/rejected/breach (zone areas):
+    scan every candle in the trailing `window`, oldest to newest, first
+    match wins - identical priority to the pre-fix implementation, but now
+    every candidate examined is recorded so evidence can report exactly
+    which one (if any) actually matched instead of assuming the latest.
+    """
+    candidates = []
+    matched_index = None
+    window = max(1, window)
+    first_checked_index = max(0, len(candles) - window)
+
+    for candle_index in range(first_checked_index, len(candles)):
+        candle = candles[candle_index]
+        candidate = _base_candidate_info(candle, candle_index)
+
+        if not _candle_index_eligible_for_signal(tc, candle_index):
+            candidate["signal_eligible"] = False
+            candidate["failure_reason"] = "candle_after_channel_break"
+            candidates.append(candidate)
+            continue
+
+        regression_index = candle_index - start_index
+        if regression_index < 0 or regression_index >= length:
+            candidate["failure_reason"] = "outside_channel_range"
+            candidates.append(candidate)
+            continue
+
+        matched, line_value, zone_low, zone_high, wick_overlap = _evaluate_area_geometry(
+            tc, rule, area, candle, regression_index,
+        )
+        candidate["line_value"] = line_value
+        candidate["zone_low"] = zone_low
+        candidate["zone_high"] = zone_high
+        candidate["geometry_overlap"] = matched
+        candidate["wick_overlap"] = wick_overlap
+
+        if not matched:
+            candidate["failure_reason"] = "no_geometry_overlap"
+            candidates.append(candidate)
+            continue
+
+        if not confirm_if_needed(candles, candle_index, rule):
+            candidate["failure_reason"] = "confirmation_failed"
+            candidates.append(candidate)
+            continue
+
+        candidates.append(candidate)
+        matched_index = candle_index
+        break
+
+    return _finalize_area_result(candidates, matched_index)
+
+
+def _evaluate_run_area(candles, tc, rule, area, window, start_index):
+    """closed_above/closed_below/on_line: requires an unbroken run of
+    matching candles ending at the LATEST candle, with the run's start
+    falling within `window` bars of it (mirrors the pre-fix backward walk
+    in _current_line_signal_start_index exactly, one candidate at a time).
+    """
+    latest_index = len(candles) - 1
+    if latest_index < 0:
+        return _finalize_area_result([], None, empty_reason="no_candles")
+
+    line_series, direction = _line_series_for_area(tc, area)
+    if line_series is None:
+        return _finalize_area_result([], None, empty_reason="unsupported_area_for_action")
+
+    last_signal_index = _channel_last_signal_index(tc)
+    candidates = []
+    signal_start_index = None
+    candle_index = latest_index
+
+    while candle_index >= 0:
+        candle = candles[candle_index]
+        candidate = _base_candidate_info(candle, candle_index)
+
+        eligible = last_signal_index is None or candle_index <= last_signal_index
+        if not eligible:
+            candidate["signal_eligible"] = False
+            candidate["failure_reason"] = "candle_after_channel_break"
+            candidates.append(candidate)
+            break
+
+        regression_index = candle_index - start_index
+        if regression_index < 0 or regression_index >= len(line_series):
+            candidate["failure_reason"] = "outside_channel_range"
+            candidates.append(candidate)
+            break
+
+        line_value = float(line_series[regression_index])
+        candidate["line_value"] = line_value
+        candidate["wick_overlap"] = float(candle["low"]) <= line_value <= float(candle["high"])
+        matched = evaluate_line_action(candle, line_value, rule, direction)
+        candidate["geometry_overlap"] = matched
+
+        if not matched:
+            candidate["failure_reason"] = "no_geometry_overlap"
+            candidates.append(candidate)
+            break
+
+        candidates.append(candidate)
+        signal_start_index = candle_index
+        candle_index -= 1
+
+    if signal_start_index is None:
+        return _finalize_area_result(candidates, None)
+
+    if (len(candles) - signal_start_index) > window:
+        for candidate in candidates:
+            if candidate["candle_index"] == signal_start_index:
+                candidate["failure_reason"] = "outside_window"
+        return {"matched": False, "matched_index": None, "candidates": candidates, "failure_reason": "outside_window"}
+
+    if not confirm_if_needed(candles, signal_start_index, rule):
+        for candidate in candidates:
+            if candidate["candle_index"] == signal_start_index:
+                candidate["failure_reason"] = "confirmation_failed"
+        return {"matched": False, "matched_index": None, "candidates": candidates, "failure_reason": "confirmation_failed"}
+
+    return {"matched": True, "matched_index": signal_start_index, "candidates": candidates, "failure_reason": None}
+
+
+def _evaluate_single_area_core(candles, tc, rule):
+    """Evaluate `rule` and return full diagnostics:
+    {"matched": bool, "matched_index": int|None, "candidates": [...],
+     "failure_reason": str|None}. See _evaluate_window_area/_evaluate_run_
+    area for the two matching strategies this dispatches to.
+    """
+    area = rule.get("area")
+    window = int(rule.get("window", 1) or 1)
+    length = tc["length"]
+    start_index = len(candles) - length
+    action = str(rule.get("action") or "").strip().lower()
+
+    if action in {"closed_above", "closed_below", "on_line"}:
+        return _evaluate_run_area(candles, tc, rule, area, window, start_index)
+
+    return _evaluate_window_area(candles, tc, rule, area, window, start_index, length)
+
+
+def _build_area_evidence(candles, tc, rule, result):
+    """Diagnostic snapshot of every candidate candle examined for this area
+    rule (see the `checked_candidates` schema), reporting the candle that
+    actually matched - or a clear per-candidate failure reason when none
+    did - instead of always assuming the latest candle in `candles`.
+    """
     area = rule.get("area")
     action = str(rule.get("action") or "").strip().lower()
+    matched = result["matched"]
+    matched_index = result.get("matched_index")
+    candidates = result.get("candidates") or []
+
+    matched_candle_time = None
+    if matched_index is not None and 0 <= matched_index < len(candles):
+        matched_candle_time = candles[matched_index].get("time")
 
     info = {
         "area": area,
         "action": action,
         "touch_type": rule.get("touch_type"),
+        "window": int(rule.get("window", 1) or 1),
         "matched": bool(matched),
         "channel_direction": tc.get("direction"),
         "channel_start_index": tc.get("start_index"),
         "channel_break_index": tc.get("break_index"),
+        "channel_broken": bool(tc.get("broken")),
+        "break_index": tc.get("break_index"),
+        "checked_candidates": candidates,
+        "matched_candle_index": matched_index,
+        "matched_candle_time": matched_candle_time,
+        "failure_reason": "" if matched else (result.get("failure_reason") or "no_candidate_matched"),
     }
 
-    if checked_candle_index < 0:
-        return info
+    # Legacy single-candle summary fields, sourced from the candle that
+    # actually decided the result (the match when one exists, otherwise the
+    # most recently examined candidate) rather than always `candles[-1]`.
+    reference_candidate = None
+    if matched_index is not None:
+        reference_candidate = next((c for c in candidates if c["candle_index"] == matched_index), None)
+    if reference_candidate is None and candidates:
+        reference_candidate = candidates[-1]
 
-    candle = candles[checked_candle_index]
-    info["checked_candle_index"] = checked_candle_index
-    info["checked_candle_time"] = candle.get("time")
-    info["checked_candle_closed"] = candle.get("is_closed", True) is not False
-    info["candle_low"] = float(candle["low"])
-    info["candle_high"] = float(candle["high"])
-    info["body_low"] = min(float(candle["open"]), float(candle["close"]))
-    info["body_high"] = max(float(candle["open"]), float(candle["close"]))
-
-    start_index = tc.get("start_index")
-    length = tc.get("length")
-    regression_index = (
-        checked_candle_index - start_index if start_index is not None else None
-    )
-    in_range = (
-        regression_index is not None
-        and length is not None
-        and 0 <= regression_index < length
-    )
-    raw_tolerance = rule.get("tolerance")
-
-    line_key_by_area = {"top_line": "top", "middle_line": "middle", "bottom_line": "bottom"}
-    if area in line_key_by_area and in_range:
-        series = tc.get(line_key_by_area[area])
-        if series is not None:
-            info["line_value"] = float(series[regression_index])
-        default_pct = 0.1 if action == "on_line" else 0.0
-        info["tolerance_pct"] = default_pct if raw_tolerance is None else float(raw_tolerance)
-
-    zone_keys_by_area = {
-        "top_zone": ("top_zone_lower", "top_zone_upper"),
-        "bottom_zone": ("bottom_zone_lower", "bottom_zone_upper"),
-    }
-    if area in zone_keys_by_area and in_range:
-        lower_key, upper_key = zone_keys_by_area[area]
-        lower_series = tc.get(lower_key)
-        upper_series = tc.get(upper_key)
-        if lower_series is not None and upper_series is not None:
-            lower_value = float(lower_series[regression_index])
-            upper_value = float(upper_series[regression_index])
-            info["zone_low"] = min(lower_value, upper_value)
-            info["zone_high"] = max(lower_value, upper_value)
-        info["tolerance_pct"] = 0.0 if raw_tolerance is None else float(raw_tolerance)
+    if reference_candidate is not None:
+        info["checked_candle_index"] = reference_candidate["candle_index"]
+        info["checked_candle_time"] = reference_candidate["candle_time"]
+        info["checked_candle_closed"] = reference_candidate["is_closed"]
+        info["candle_low"] = reference_candidate["low"]
+        info["candle_high"] = reference_candidate["high"]
+        info["body_low"] = reference_candidate["body_low"]
+        info["body_high"] = reference_candidate["body_high"]
+        if reference_candidate["line_value"] is not None:
+            info["line_value"] = reference_candidate["line_value"]
+        if reference_candidate["zone_low"] is not None:
+            info["zone_low"] = reference_candidate["zone_low"]
+            info["zone_high"] = reference_candidate["zone_high"]
+        if area in _LINE_AREA_SERIES_KEY or area in _ZONE_AREA_KEYS:
+            default_pct = 0.1 if action == "on_line" else 0.0
+            raw_tolerance = rule.get("tolerance")
+            info["tolerance_pct"] = default_pct if raw_tolerance is None else float(raw_tolerance)
 
     return info
-
-
-def _evaluate_single_area_core(candles, tc, rule):
-
-    area = rule.get("area")
-    window = int(rule.get("window", 1) or 1)
-
-    length = tc["length"]
-    start_index = len(candles) - length
-    action = str(rule.get("action") or "").strip().lower()
-    latest_index = len(candles) - 1
-
-    if action in {"closed_above", "closed_below", "on_line"}:
-        if not _candle_index_eligible_for_signal(tc, latest_index):
-            return False
-
-        line_series, direction = _line_series_for_area(tc, area)
-        if line_series is None:
-            return False
-
-        signal_start_index = _current_line_signal_start_index(
-            candles,
-            line_series,
-            start_index,
-            rule,
-            direction,
-            tc=tc,
-        )
-        if signal_start_index is None:
-            return False
-
-        if (len(candles) - signal_start_index) > window:
-            return False
-
-        return confirm_if_needed(candles, signal_start_index, rule)
-
-    recent_candles = candles[-window:]
-
-    for i in range(window):
-
-        candle = recent_candles[i]
-
-        candle_index = len(candles) - window + i
-        if not _candle_index_eligible_for_signal(tc, candle_index):
-            continue
-
-        regression_index = candle_index - start_index
-
-        if regression_index < 0 or regression_index >= length:
-            continue
-
-        # -----------------------------
-        # LINE AREAS
-        # -----------------------------
-
-        if area == "top_line":
-
-            line_value = tc["top"][regression_index]
-
-            if evaluate_line_action(candle, line_value, rule, "up"):
-                if confirm_if_needed(candles, candle_index, rule):
-                    return True
-
-        elif area == "bottom_line":
-
-            line_value = tc["bottom"][regression_index]
-
-            if evaluate_line_action(candle, line_value, rule, "down"):
-                if confirm_if_needed(candles, candle_index, rule):
-                    return True
-
-        elif area == "middle_line":
-
-            line_value = tc["middle"][regression_index]
-
-            if evaluate_line_action(candle, line_value, rule):
-                if confirm_if_needed(candles, candle_index, rule):
-                    return True
-
-        # -----------------------------
-        # ZONE AREAS
-        # -----------------------------
-
-        elif area == "top_zone":
-
-            lower = tc["top_zone_lower"][regression_index]
-            upper = tc["top_zone_upper"][regression_index]
-
-            if evaluate_zone_action(candle, lower, upper, rule, "up"):
-                if confirm_if_needed(candles, candle_index, rule):
-                    return True
-
-        elif area == "bottom_zone":
-
-            lower = tc["bottom_zone_lower"][regression_index]
-            upper = tc["bottom_zone_upper"][regression_index]
-
-            if evaluate_zone_action(candle, lower, upper, rule, "down"):
-                if confirm_if_needed(candles, candle_index, rule):
-                    return True
-
-    return False
 
 
 def _line_series_for_area(tc, area):
@@ -759,74 +883,6 @@ def _line_series_for_area(tc, area):
         return tc.get("middle"), None
 
     return None, None
-
-
-def _current_line_signal_start_index(
-    candles,
-    line_series,
-    start_index,
-    rule,
-    direction=None,
-    tc=None,
-):
-    latest_index = len(candles) - 1
-
-    if latest_index < 0:
-        return None
-
-    if tc is not None and not _candle_index_eligible_for_signal(tc, latest_index):
-        return None
-
-    if not _line_action_matches_index(
-        candles,
-        line_series,
-        latest_index,
-        start_index,
-        rule,
-        direction,
-    ):
-        return None
-
-    signal_start_index = latest_index
-    last_signal_index = _channel_last_signal_index(tc) if tc is not None else None
-
-    while signal_start_index - 1 >= 0:
-        previous_index = signal_start_index - 1
-        if last_signal_index is not None and previous_index > last_signal_index:
-            break
-        if not _line_action_matches_index(
-            candles,
-            line_series,
-            previous_index,
-            start_index,
-            rule,
-            direction,
-        ):
-            break
-        signal_start_index = previous_index
-
-    return signal_start_index
-
-
-def _line_action_matches_index(
-    candles,
-    line_series,
-    candle_index,
-    start_index,
-    rule,
-    direction=None,
-):
-    regression_index = candle_index - start_index
-
-    if regression_index < 0 or regression_index >= len(line_series):
-        return False
-
-    return evaluate_line_action(
-        candles[candle_index],
-        line_series[regression_index],
-        rule,
-        direction,
-    )
 
 
 # =========================================================

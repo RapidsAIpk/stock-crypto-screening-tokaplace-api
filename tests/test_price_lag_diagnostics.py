@@ -748,13 +748,19 @@ class CacheSufficiencyForCandleHistoryTests(unittest.IsolatedAsyncioTestCase):
             "price": 100.0,
             "candles": [_candle_row(now - (19 - i) * 3600) for i in range(20)],
             "candles_provider": "massive",
-            "session_policy": "tradingview_regular",
             "shares_outstanding": None,
             "float_shares": None,
             "next_refresh_at": now + 3600,  # not due
         }
 
+        # provider_default keeps this a generic cache-reuse mechanism test
+        # (arbitrary hourly timestamps, not real 09:30-ET-anchored trading
+        # boundaries); the RTH session-anchoring/alignment-version cache
+        # gate is covered with realistic timestamps in
+        # tests/test_timeframe_pipeline.py.
         with patch.object(
+            settings, "STOCK_INTRADAY_SESSION_POLICY", "provider_default",
+        ), patch.object(
             market_data.time, "time", return_value=now,
         ), patch.object(
             market_data.store,
