@@ -2571,6 +2571,34 @@ async def fetch_live_data(
                         for item in fallback_items
                     })
 
+                if worker_cache_enabled and len(latest_map) < len(symbols):
+                    still_missing = [symbol for symbol in symbols if symbol not in latest_map]
+                    cached_map = await asyncio.to_thread(store.get_cached, still_missing, timeframe)
+                    for symbol in still_missing:
+                        cached = cached_map.get(symbol)
+                        if not cached:
+                            continue
+
+                        cached_payload = _refresh_payload_candle_closed_state(
+                            cached["payload"] or {}, symbol, timeframe, now=now
+                        )
+                        if not is_payload_compatible_for_fetch(cached_payload, symbol, timeframe):
+                            continue
+
+                        cached_candles = cached_payload.get("candles") or []
+                        if not cached_candles:
+                            continue
+
+                        if is_refresh_due(cached_payload, timeframe, now):
+                            continue
+
+                        latest_map[symbol] = _with_freshness_metadata(
+                            _payload_with_recent_candles(cached_payload, 1),
+                            is_stale=False,
+                            market_data_source=MARKET_DATA_SOURCE_FRESH_CACHE,
+                            stale_age_seconds=_cache_age_seconds(cached.get("updated_at"), now) or 0,
+                        )
+
             if latest_map:
                 results = [latest_map[symbol] for symbol in symbols if symbol in latest_map]
                 if include_fundamentals:

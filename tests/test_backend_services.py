@@ -892,6 +892,18 @@ class DeadAssetsTests(unittest.TestCase):
         self.assertEqual(decision["type"], "flat_dead_asset")
         self.assertEqual(decision["label"], "Excluded — Flat Dead Asset")
 
+    def test_dead_assets_atr_uses_wilder_smoothing(self):
+        candles = [
+            {"open": 0.0, "close": 0.0, "high": float(i), "low": 0.0, "volume": 1_000_000.0}
+            for i in range(1, 6)
+        ]
+
+        atr = dead_assets._atr_series(candles, period=3)
+
+        self.assertAlmostEqual(float(atr[2]), 2.0)
+        self.assertAlmostEqual(float(atr[3]), (2.0 * 2.0 + 4.0) / 3.0)
+        self.assertAlmostEqual(float(atr[4]), (((2.0 * 2.0 + 4.0) / 3.0) * 2.0 + 5.0) / 3.0)
+
     def test_recovery_override_readmits_asset(self):
         candles = self._declining_wave_candles()
         rally = []
@@ -3871,6 +3883,79 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs.get("candles_limit"), 1)
         self.assertIsNot(kwargs.get("latest_only"), True)
 
+    async def test_dead_assets_enabled_results_are_subset_of_disabled_results_for_same_snapshot(self):
+        assets = [
+            {"symbol": "BASE", "asset_type": "stocks", "data_source": "zoya"},
+            {"symbol": "DEAD", "asset_type": "stocks", "data_source": "zoya"},
+        ]
+        candles = [
+            {
+                "time": 1_000 + i * 86_400,
+                "open": 100.0 - i * 0.2,
+                "high": 101.0 - i * 0.2,
+                "low": 99.0 - i * 0.2,
+                "close": 100.0 - i * 0.2,
+                "volume": 1_000_000.0,
+            }
+            for i in range(220)
+        ]
+        snapshot = [
+            {"symbol": "BASE", "price": candles[-1]["close"], "candles": candles},
+            {"symbol": "DEAD", "price": candles[-1]["close"], "candles": candles},
+        ]
+
+        async def same_snapshot(_assets, _timeframe, _indicators, need_candle_history=True, request=None):
+            return [
+                {
+                    **item,
+                    "candles": item["candles"] if need_candle_history else item["candles"][-1:],
+                }
+                for item in snapshot
+            ]
+
+        base_request = ScreeningRequest(
+            asset_type="stocks",
+            stock_sources=["zoya"],
+            timeframe_mode="single",
+            single_timeframe="1day",
+            indicators=[],
+            dead_assets=None,
+        )
+
+        with patch.object(screener, "build_asset_universe", AsyncMock(return_value=assets)), patch.object(
+            screener,
+            "fetch_screening_data",
+            side_effect=same_snapshot,
+        ):
+            baseline = await screener.run_single(base_request)
+            baseline_symbols = {item["symbol"] for item in baseline["results"]}
+
+            for dead_type in [
+                "strong_dead_trend",
+                "slow_bleeding_trend",
+                "failed_recovery",
+                "flat_dead_asset",
+            ]:
+                filtered_request = ScreeningRequest(
+                    asset_type="stocks",
+                    stock_sources=["zoya"],
+                    timeframe_mode="single",
+                    single_timeframe="1day",
+                    indicators=[],
+                    dead_assets={
+                        "enabled": True,
+                        "dead_trend_types": [dead_type],
+                        "recovery_override": "disabled",
+                    },
+                )
+                filtered = await screener.run_single(filtered_request)
+                filtered_symbols = {item["symbol"] for item in filtered["results"]}
+
+                self.assertTrue(
+                    filtered_symbols.issubset(baseline_symbols),
+                    f"{dead_type} returned symbols outside the disabled baseline",
+                )
+
     def test_attach_post_filter_channels_builds_missing_channels(self):
         candles = [
             {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0}
@@ -4982,6 +5067,66 @@ class MarketDataAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["symbol"] for item in results], ["AAPL"])
         snapshots_mock.assert_awaited_once()
         fetch_batches_mock.assert_not_awaited()
+
+    async def test_fetch_live_data_latest_only_recovers_worker_cache_misses(self):
+        now = int(time.time())
+        cached_payloads = {
+            symbol: {
+                "payload": {
+                    "symbol": symbol,
+                    "price": 100.0,
+                    "candles": [
+                        {
+                            "time": 1,
+                            "open": 99.0,
+                            "high": 101.0,
+                            "low": 98.5,
+                            "close": 100.0,
+                            "volume": 10.0,
+                        }
+                    ],
+                    "candles_provider": "massive",
+                    "shares_outstanding": None,
+                    "float_shares": None,
+                    "next_refresh_at": now + 3600,
+                },
+                "updated_at": now,
+            }
+            for symbol in ["AAPL", "OLPX"]
+        }
+
+        with patch.object(
+            market_data,
+            "request_massive_snapshots",
+            AsyncMock(return_value=[cached_payloads["AAPL"]["payload"]]),
+        ) as snapshots_mock, patch.object(
+            market_data.store,
+            "get_cached",
+            return_value=cached_payloads,
+        ), patch.object(
+            market_data.store,
+            "register_interest",
+        ) as register_interest_mock, patch.object(
+            market_data,
+            "fetch_batches",
+            AsyncMock(return_value=[]),
+        ) as fetch_batches_mock:
+            results = await market_data.fetch_live_data(
+                ["AAPL", "OLPX"],
+                "1day",
+                candles_limit=1,
+                latest_only=True,
+            )
+
+        self.assertEqual([item["symbol"] for item in results], ["AAPL", "OLPX"])
+        snapshots_mock.assert_awaited_once_with(["AAPL", "OLPX"], "1day")
+        fetch_batches_mock.assert_awaited_once_with(
+            ["OLPX"],
+            "1day",
+            batch_size=market_data.DEFAULT_BATCH_SIZE,
+            candles_limit=1,
+        )
+        register_interest_mock.assert_not_called()
 
     async def test_fetch_live_data_uses_massive_snapshot_fast_path_for_latest_only_crypto(self):
         snapshot_payload = [
