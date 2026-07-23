@@ -892,6 +892,18 @@ class DeadAssetsTests(unittest.TestCase):
         self.assertEqual(decision["type"], "flat_dead_asset")
         self.assertEqual(decision["label"], "Excluded — Flat Dead Asset")
 
+    def test_dead_assets_atr_uses_wilder_smoothing(self):
+        candles = [
+            {"open": 0.0, "close": 0.0, "high": float(i), "low": 0.0, "volume": 1_000_000.0}
+            for i in range(1, 6)
+        ]
+
+        atr = dead_assets._atr_series(candles, period=3)
+
+        self.assertAlmostEqual(float(atr[2]), 2.0)
+        self.assertAlmostEqual(float(atr[3]), (2.0 * 2.0 + 4.0) / 3.0)
+        self.assertAlmostEqual(float(atr[4]), (((2.0 * 2.0 + 4.0) / 3.0) * 2.0 + 5.0) / 3.0)
+
     def test_recovery_override_readmits_asset(self):
         candles = self._declining_wave_candles()
         rally = []
@@ -3810,7 +3822,7 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
             await screener.fetch_screening_data(assets, "1h", [], request=request)
 
         kwargs = fetch_live_data_mock.await_args.kwargs
-        self.assertEqual(kwargs.get("candles_limit"), 200)
+        self.assertEqual(kwargs.get("candles_limit"), 500)
 
     async def test_fetch_screening_data_accounts_for_confluence_source_lengths(self):
         assets = [{"symbol": "AAPL", "asset_type": "stocks", "exchange": "NASDAQ"}]
@@ -3833,7 +3845,7 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
             await screener.fetch_screening_data(assets, "1h", [], request=request)
 
         kwargs = fetch_live_data_mock.await_args.kwargs
-        self.assertEqual(kwargs.get("candles_limit"), 233)
+        self.assertEqual(kwargs.get("candles_limit"), 234)
 
     async def test_fetch_screening_data_uses_snapshot_fast_path_for_fundamentals_only(self):
         assets = [{"symbol": "AAPL", "asset_type": "stocks", "exchange": "NASDAQ"}]
@@ -3856,16 +3868,26 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs.get("include_fundamentals"))
         self.assertTrue(kwargs.get("latest_only"))
 
-    async def test_fetch_screening_data_keeps_live_candles_for_current_volume(self):
+    async def test_fetch_screening_data_uses_completed_candles_for_current_volume(self):
         assets = [{"symbol": "AAPL", "asset_type": "stocks", "exchange": "NASDAQ"}]
         indicators_list = [SimpleNamespace(name="current_volume", config={})]
+        closed = {"time": 1_000, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100.0}
+        forming = {
+            "time": 1_060,
+            "open": 20.0,
+            "high": 21.0,
+            "low": 19.0,
+            "close": 20.5,
+            "volume": 900.0,
+            "is_closed": False,
+        }
 
         with patch.object(
             screener,
             "fetch_live_data",
-            AsyncMock(return_value=[{"symbol": "AAPL", "price": 100.0, "candles": [{"close": 100.0}]}]),
+            AsyncMock(return_value=[{"symbol": "AAPL", "price": 20.5, "candles": [closed, forming]}]),
         ) as fetch_live_data_mock:
-            await screener.fetch_screening_data(
+            data = await screener.fetch_screening_data(
                 assets,
                 "1h",
                 indicators_list,
@@ -3873,8 +3895,125 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         kwargs = fetch_live_data_mock.await_args.kwargs
-        self.assertEqual(kwargs.get("candles_limit"), 1)
+        self.assertEqual(kwargs.get("candles_limit"), 2)
         self.assertIsNot(kwargs.get("latest_only"), True)
+        self.assertEqual(data[0]["candles"], [closed])
+        self.assertEqual(data[0]["price"], 10.5)
+
+    async def test_fetch_screening_data_fetches_extra_bar_and_drops_forming_bar(self):
+        assets = [{"symbol": "BTC-USD", "asset_type": "crypto", "exchange": "global"}]
+        indicators_list = [SimpleNamespace(name="rsi", config={"length": 14})]
+        candles = [
+            {
+                "time": 1_000 + (index * 60),
+                "open": float(index),
+                "high": float(index + 1),
+                "low": float(index - 1),
+                "close": float(index) + 0.5,
+                "volume": float(index * 10),
+            }
+            for index in range(16)
+        ]
+        forming = {
+            "time": 2_000,
+            "open": 999.0,
+            "high": 1000.0,
+            "low": 998.0,
+            "close": 999.5,
+            "volume": 9999.0,
+            "is_closed": False,
+        }
+        request = SimpleNamespace(channel_respect=None, confluence=None, dead_assets=None)
+
+        with patch.object(
+            screener,
+            "fetch_live_data",
+            AsyncMock(return_value=[{"symbol": "BTC-USD", "price": 999.5, "candles": [*candles, forming]}]),
+        ) as fetch_live_data_mock:
+            data = await screener.fetch_screening_data(
+                assets,
+                "1h",
+                indicators_list,
+                request=request,
+            )
+
+        self.assertEqual(fetch_live_data_mock.await_args.kwargs["candles_limit"], 17)
+        self.assertEqual(len(data[0]["candles"]), 16)
+        self.assertEqual(data[0]["candles"][-1]["time"], candles[-1]["time"])
+        self.assertEqual(data[0]["price"], candles[-1]["close"])
+
+    async def test_dead_assets_enabled_results_are_subset_of_disabled_results_for_same_snapshot(self):
+        assets = [
+            {"symbol": "BASE", "asset_type": "stocks", "data_source": "zoya"},
+            {"symbol": "DEAD", "asset_type": "stocks", "data_source": "zoya"},
+        ]
+        candles = [
+            {
+                "time": 1_000 + i * 86_400,
+                "open": 100.0 - i * 0.2,
+                "high": 101.0 - i * 0.2,
+                "low": 99.0 - i * 0.2,
+                "close": 100.0 - i * 0.2,
+                "volume": 1_000_000.0,
+            }
+            for i in range(220)
+        ]
+        snapshot = [
+            {"symbol": "BASE", "price": candles[-1]["close"], "candles": candles},
+            {"symbol": "DEAD", "price": candles[-1]["close"], "candles": candles},
+        ]
+
+        async def same_snapshot(_assets, _timeframe, _indicators, need_candle_history=True, request=None):
+            return [
+                {
+                    **item,
+                    "candles": item["candles"] if need_candle_history else item["candles"][-1:],
+                }
+                for item in snapshot
+            ]
+
+        base_request = ScreeningRequest(
+            asset_type="stocks",
+            stock_sources=["zoya"],
+            timeframe_mode="single",
+            single_timeframe="1day",
+            indicators=[],
+            dead_assets=None,
+        )
+
+        with patch.object(screener, "build_asset_universe", AsyncMock(return_value=assets)), patch.object(
+            screener,
+            "fetch_screening_data",
+            side_effect=same_snapshot,
+        ):
+            baseline = await screener.run_single(base_request)
+            baseline_symbols = {item["symbol"] for item in baseline["results"]}
+
+            for dead_type in [
+                "strong_dead_trend",
+                "slow_bleeding_trend",
+                "failed_recovery",
+                "flat_dead_asset",
+            ]:
+                filtered_request = ScreeningRequest(
+                    asset_type="stocks",
+                    stock_sources=["zoya"],
+                    timeframe_mode="single",
+                    single_timeframe="1day",
+                    indicators=[],
+                    dead_assets={
+                        "enabled": True,
+                        "dead_trend_types": [dead_type],
+                        "recovery_override": "disabled",
+                    },
+                )
+                filtered = await screener.run_single(filtered_request)
+                filtered_symbols = {item["symbol"] for item in filtered["results"]}
+
+                self.assertTrue(
+                    filtered_symbols.issubset(baseline_symbols),
+                    f"{dead_type} returned symbols outside the disabled baseline",
+                )
 
     def test_attach_post_filter_channels_builds_missing_channels(self):
         candles = [
@@ -3985,9 +4124,12 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
             screener,
             "fetch_live_data",
             AsyncMock(return_value=live_data),
-        ):
+        ) as fetch_live_data_mock:
             detail = await screener.get_asset_detail("AAPL", "stocks", "1day", request)
 
+        self.assertEqual(fetch_live_data_mock.await_args.kwargs["candles_limit"], 200)
+        self.assertEqual(len(detail["market_data"]["recent_candles"]), 200)
+        self.assertEqual(detail["market_data"]["recent_candles"][0]["time"], candles[-200]["time"])
         self.assertIsInstance(detail["channels"]["lrc"]["middle"], list)
         self.assertIsInstance(
             detail["confluence_channels"]["fast_lrc"]["channel"]["middle"],
@@ -4995,6 +5137,66 @@ class MarketDataAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["symbol"] for item in results], ["AAPL"])
         snapshots_mock.assert_awaited_once()
         fetch_batches_mock.assert_not_awaited()
+
+    async def test_fetch_live_data_latest_only_recovers_worker_cache_misses(self):
+        now = int(time.time())
+        cached_payloads = {
+            symbol: {
+                "payload": {
+                    "symbol": symbol,
+                    "price": 100.0,
+                    "candles": [
+                        {
+                            "time": 1,
+                            "open": 99.0,
+                            "high": 101.0,
+                            "low": 98.5,
+                            "close": 100.0,
+                            "volume": 10.0,
+                        }
+                    ],
+                    "candles_provider": "massive",
+                    "shares_outstanding": None,
+                    "float_shares": None,
+                    "next_refresh_at": now + 3600,
+                },
+                "updated_at": now,
+            }
+            for symbol in ["AAPL", "OLPX"]
+        }
+
+        with patch.object(
+            market_data,
+            "request_massive_snapshots",
+            AsyncMock(return_value=[cached_payloads["AAPL"]["payload"]]),
+        ) as snapshots_mock, patch.object(
+            market_data.store,
+            "get_cached",
+            return_value=cached_payloads,
+        ), patch.object(
+            market_data.store,
+            "register_interest",
+        ) as register_interest_mock, patch.object(
+            market_data,
+            "fetch_batches",
+            AsyncMock(return_value=[]),
+        ) as fetch_batches_mock:
+            results = await market_data.fetch_live_data(
+                ["AAPL", "OLPX"],
+                "1day",
+                candles_limit=1,
+                latest_only=True,
+            )
+
+        self.assertEqual([item["symbol"] for item in results], ["AAPL", "OLPX"])
+        snapshots_mock.assert_awaited_once_with(["AAPL", "OLPX"], "1day")
+        fetch_batches_mock.assert_awaited_once_with(
+            ["OLPX"],
+            "1day",
+            batch_size=market_data.DEFAULT_BATCH_SIZE,
+            candles_limit=1,
+        )
+        register_interest_mock.assert_not_called()
 
     async def test_fetch_live_data_uses_massive_snapshot_fast_path_for_latest_only_crypto(self):
         snapshot_payload = [
