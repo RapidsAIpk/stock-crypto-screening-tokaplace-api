@@ -4908,7 +4908,11 @@ class MarketDataAsyncTests(unittest.IsolatedAsyncioTestCase):
             ],
         ]
 
-        with patch.object(market_data.integration_runtime, "is_enabled", return_value=True), patch.object(
+        with patch.object(
+            settings,
+            "STOCK_INTRADAY_SESSION_POLICY",
+            "provider_default",
+        ), patch.object(market_data.integration_runtime, "is_enabled", return_value=True), patch.object(
             market_data,
             "_polygon_api_key",
             return_value="polygon-token",
@@ -4924,6 +4928,10 @@ class MarketDataAsyncTests(unittest.IsolatedAsyncioTestCase):
             market_data.integration_runtime,
             "record_call",
         ) as record_call_mock:
+            # provider_default keeps this test focused on _download_polygon_rows'
+            # backward-pagination mechanics; the TradingView session-anchored
+            # aggregation path for "4h" is covered separately in
+            # tests/test_stock_session.py.
             payload = await market_data.request_massive_candles("AAPL", "4h", candles_limit=3)
 
         self.assertEqual([candle["time"] for candle in payload["candles"]], [1, 2, 3])

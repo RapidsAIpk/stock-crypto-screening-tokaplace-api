@@ -567,5 +567,170 @@ class FormingCandleAndEvidenceTests(unittest.TestCase):
         self.assertIn("line_value", evidence)
 
 
+class WindowOneCompletedCandleOnlyTests(unittest.TestCase):
+    """window=1 must check exactly the latest *completed* candle: never the
+    still-forming trailing bar, never any older bar. Each test derives its
+    touch/no-touch candle from the channel's own computed top line (probed
+    with neutral filler bars first) rather than a hardcoded price, so the
+    assertions hold regardless of incidental ATR drift from the substituted
+    candles' own true range.
+    """
+
+    RULE_WINDOW_1 = {
+        "area": "top_line",
+        "action": "touched",
+        "touch_type": "wick",
+        "window": 1,
+        "tolerance": 0,
+        "confirmation": False,
+    }
+
+    @staticmethod
+    def _config(rule, length=2):
+        return {
+            "length": length,
+            "wait_for_break": True,
+            "show_last_channel": True,
+            "areas": [rule],
+        }
+
+    @staticmethod
+    def _touch_candle(top):
+        # Wick pokes above the line; body stays well below it.
+        return {"open": top - 1.2, "high": top + 0.1, "low": top - 1.3, "close": top - 1.0, "volume": 100.0}
+
+    @staticmethod
+    def _no_touch_candle(top):
+        # Stays entirely below the line - generous margin, no wick contact.
+        return {"open": top - 1.2, "high": top - 0.9, "low": top - 1.3, "close": top - 1.0, "volume": 100.0}
+
+    def _build_trailing_pair(self, bar_a_fn, bar_b_fn, bar_b_closed=True):
+        """Base fixture (14 bars) + one filler bar + a controllable trailing
+        pair at absolute indexes 15 and 16. The trailing pair's exact price
+        is derived from a neutral probe run so it always sits on the real
+        (post-substitution) top line, not an assumed value.
+        """
+        base = _candles_from_bases(DOWN_BASES) + _candles_from_bases([10.0])
+        probe = base + _candles_from_bases([10.0, 10.0])
+        probe_channel = trend_channels.compute_trend_channel(probe, length=2)
+        start = probe_channel["start_index"]
+        top_a = probe_channel["top"][15 - start]
+        top_b = probe_channel["top"][16 - start]
+
+        bar_a = bar_a_fn(top_a)
+        bar_b = bar_b_fn(top_b)
+        if not bar_b_closed:
+            bar_b = dict(bar_b, is_closed=False)
+
+        return base + [bar_a, bar_b]
+
+    def test_forming_candle_touches_previous_completed_does_not_fails(self):
+        candles = self._build_trailing_pair(
+            self._no_touch_candle, self._touch_candle, bar_b_closed=False
+        )
+        passed, _ = indicators.handle_trend(
+            {"channels": {}}, candles, self._config(self.RULE_WINDOW_1)
+        )
+        self.assertFalse(passed)
+
+    def test_forming_candle_no_touch_previous_completed_touches_passes(self):
+        # Once the forming bar is dropped, the previous completed candle
+        # becomes "the latest completed candle" for window=1.
+        candles = self._build_trailing_pair(
+            self._touch_candle, self._no_touch_candle, bar_b_closed=False
+        )
+        passed, _ = indicators.handle_trend(
+            {"channels": {}}, candles, self._config(self.RULE_WINDOW_1)
+        )
+        self.assertTrue(passed)
+
+    def test_latest_completed_no_touch_candle_before_it_touches_fails(self):
+        # No forming candle at all here - both bars are completed. window=1
+        # must only look at the very last one.
+        candles = self._build_trailing_pair(
+            self._touch_candle, self._no_touch_candle, bar_b_closed=True
+        )
+        passed, _ = indicators.handle_trend(
+            {"channels": {}}, candles, self._config(self.RULE_WINDOW_1)
+        )
+        self.assertFalse(passed)
+
+    def test_latest_completed_candle_touches_passes(self):
+        candles = self._build_trailing_pair(
+            self._no_touch_candle, self._touch_candle, bar_b_closed=True
+        )
+        passed, _ = indicators.handle_trend(
+            {"channels": {}}, candles, self._config(self.RULE_WINDOW_1)
+        )
+        self.assertTrue(passed)
+
+    def test_window_2_includes_the_latest_two_completed_candles_only(self):
+        rule_window_2 = {**self.RULE_WINDOW_1, "window": 2}
+
+        # The touch sits on the second-to-last completed bar - still inside
+        # a window of 2.
+        candles_in_window = self._build_trailing_pair(
+            self._touch_candle, self._no_touch_candle, bar_b_closed=True
+        )
+        passed_in_window, _ = indicators.handle_trend(
+            {"channels": {}}, candles_in_window, self._config(rule_window_2)
+        )
+        self.assertTrue(passed_in_window)
+
+        # The only touch is three bars back (outside a window of 2) - both
+        # in-window bars stay clean, so this must fail.
+        base = _candles_from_bases(DOWN_BASES)
+        probe = base + _candles_from_bases([10.0, 10.0, 10.0])
+        probe_channel = trend_channels.compute_trend_channel(probe, length=2)
+        start = probe_channel["start_index"]
+        far_touch = self._touch_candle(probe_channel["top"][14 - start])
+        near_no_touch_1 = self._no_touch_candle(probe_channel["top"][15 - start])
+        near_no_touch_2 = self._no_touch_candle(probe_channel["top"][16 - start])
+        candles_outside_window = base + [far_touch, near_no_touch_1, near_no_touch_2]
+
+        self.assertFalse(trend_channels.compute_trend_channel(candles_outside_window, length=2)["broken"])
+        passed_outside_window, _ = indicators.handle_trend(
+            {"channels": {}}, candles_outside_window, self._config(rule_window_2)
+        )
+        self.assertFalse(passed_outside_window)
+
+    def test_missing_is_closed_field_is_treated_as_completed(self):
+        # No candle in this fixture carries an "is_closed" key at all -
+        # backward compatibility requires treating that as completed.
+        candles = _candles_from_bases(DOWN_BASES)
+        self.assertTrue(all("is_closed" not in candle for candle in candles))
+
+        passed, result = indicators.handle_trend(
+            {"channels": {}}, candles, self._config(self.RULE_WINDOW_1)
+        )
+        self.assertFalse(passed)
+        self.assertTrue(result["evidence"][0]["checked_candle_closed"])
+        self.assertEqual(result["evidence"][0]["checked_candle_index"], len(candles) - 1)
+
+    def test_empty_candle_list_returns_fail_without_exception(self):
+        passed, result = indicators.handle_trend({"channels": {}}, [], self._config(self.RULE_WINDOW_1))
+        self.assertFalse(passed)
+        self.assertIsNone(result)
+
+    def test_channel_construction_and_rule_evaluation_use_the_same_completed_candles(self):
+        candles_with_forming = self._build_trailing_pair(
+            self._no_touch_candle, self._touch_candle, bar_b_closed=False
+        )
+        closed_candles = indicators._trend_closed_candles(candles_with_forming)
+        self.assertEqual(len(closed_candles), len(candles_with_forming) - 1)
+
+        channel = trend_channels.compute_trend_channel(closed_candles, length=2)
+        # The rendered channel's array must span exactly the completed-candle
+        # array handed to it - proving construction and evaluation see an
+        # identical candle count/index space, not two different arrays.
+        self.assertEqual(channel["start_index"] + channel["length"], len(closed_candles))
+
+        passed, result = indicators.handle_trend(
+            {"channels": {}}, candles_with_forming, self._config(self.RULE_WINDOW_1)
+        )
+        self.assertEqual(result["evidence"][0]["checked_candle_index"], len(closed_candles) - 1)
+        self.assertFalse(passed)
+
+
 if __name__ == "__main__":
     unittest.main()
