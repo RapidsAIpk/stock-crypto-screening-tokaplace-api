@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 
 import numpy as np
 
@@ -26,8 +27,9 @@ from services.utils import build_indicator_sticker, format_price_value, humanize
 from services.stock_reference import asset_category_label, matches_asset_categories, matches_sectors
 
 logger = logging.getLogger(__name__)
-DETAIL_RECENT_CANDLES = 20
+DETAIL_RECENT_CANDLES = 120
 SNAPSHOT_COMPATIBLE_INDICATORS = {"float", "shares_outstanding"}
+MARKET_DATA_AUDIT_LOG = "screening_market_data_audit"
 
 
 # ---------------------------------------------------------
@@ -504,6 +506,7 @@ def requires_candle_history(request, indicators):
 async def fetch_screening_data(assets, timeframe, indicators, need_candle_history=True, request=None):
     symbols = [a["symbol"] for a in assets]
     candles_limit = required_candles_for_request(request, indicators) if need_candle_history else 1
+    fetch_candles_limit = min(500, candles_limit + 1) if need_candle_history else candles_limit
     include_fundamentals = any(
         indicator.name in {"float", "shares_outstanding"}
         for indicator in indicators
@@ -515,7 +518,7 @@ async def fetch_screening_data(assets, timeframe, indicators, need_candle_histor
         len(symbols),
         timeframe,
         len(indicators or []),
-        candles_limit,
+        fetch_candles_limit,
         include_fundamentals,
         need_candle_history,
         latest_only,
@@ -524,9 +527,11 @@ async def fetch_screening_data(assets, timeframe, indicators, need_candle_histor
         symbols,
         timeframe,
         include_fundamentals=include_fundamentals,
-        candles_limit=candles_limit,
+        candles_limit=fetch_candles_limit,
         latest_only=latest_only,
     )
+    if need_candle_history:
+        data = _completed_candle_snapshot(data, candles_limit)
     logger.info(
         "screening fetch done symbols=%s timeframe=%s returned=%s elapsed=%.2fs",
         len(symbols),
@@ -535,6 +540,162 @@ async def fetch_screening_data(assets, timeframe, indicators, need_candle_histor
         time.perf_counter() - start,
     )
     return data
+
+
+def _is_completed_candle(candle):
+    if not isinstance(candle, dict):
+        return False
+    if candle.get("is_closed") is False:
+        return False
+    if candle.get("is_complete") is False:
+        return False
+    if candle.get("complete") is False:
+        return False
+    if candle.get("closed") is False:
+        return False
+    if candle.get("is_live") is True:
+        return False
+    return True
+
+
+def _completed_candle_snapshot(data, candles_limit):
+    normalized_limit = max(1, int(candles_limit or 1))
+    normalized = []
+
+    for asset in data or []:
+        candles = [
+            dict(candle)
+            for candle in (asset.get("candles") or [])
+            if _is_completed_candle(candle)
+        ]
+        if not candles:
+            continue
+
+        candles = candles[-normalized_limit:]
+        snapshot = dict(asset)
+        snapshot["candles"] = candles
+        snapshot["price"] = candles[-1]["close"]
+        normalized.append(snapshot)
+
+    return normalized
+
+
+def _ohlcv_hash(candles):
+    rows = []
+    for candle in candles or []:
+        rows.append(
+            [
+                int(candle.get("time") or 0),
+                candle.get("open"),
+                candle.get("high"),
+                candle.get("low"),
+                candle.get("close"),
+                candle.get("volume"),
+            ]
+        )
+    encoded = json.dumps(rows, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _cache_status(asset):
+    source = str(asset.get("market_data_source") or "").strip().lower()
+    if source == "fresh_cache":
+        return "hit"
+    if source == "stale_cache":
+        return "stale_hit"
+    if source == "live_provider":
+        return "miss_live"
+    return "unknown"
+
+
+def _latest_candle_completed(candles):
+    if not candles:
+        return None
+    return _is_completed_candle(candles[-1])
+
+
+def _audit_market_data_run(run_id, stage, symbols, assets_by_symbol, final_symbols=None, final_reason_by_symbol=None):
+    final_symbols = final_symbols or set()
+    final_reason_by_symbol = final_reason_by_symbol or {}
+    logger.info(
+        "%s %s",
+        MARKET_DATA_AUDIT_LOG,
+        json.dumps(
+            {
+                "run_id": run_id,
+                "stage": stage,
+                "universe_size": len(symbols),
+                "symbols_with_candles": len(assets_by_symbol),
+                "included": len(final_symbols),
+                "missing_market_data": len([symbol for symbol in symbols if symbol not in assets_by_symbol]),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+
+    for symbol in symbols:
+        asset = assets_by_symbol.get(symbol)
+        if not asset:
+            payload = {
+                "run_id": run_id,
+                "stage": stage,
+                "symbol": symbol,
+                "universe_size": len(symbols),
+                "provider": None,
+                "cache": "miss",
+                "candle_count": 0,
+                "latest_candle_timestamp": None,
+                "latest_candle_completed": None,
+                "ohlcv_hash": None,
+                "api_timeout_or_error": "missing_market_data",
+                "final_inclusion_reason": final_reason_by_symbol.get(symbol, "excluded:no_market_data"),
+            }
+        else:
+            candles = asset.get("candles") or []
+            payload = {
+                "run_id": run_id,
+                "stage": stage,
+                "symbol": symbol,
+                "universe_size": len(symbols),
+                "provider": asset.get("candles_provider"),
+                "cache": _cache_status(asset),
+                "candle_count": len(candles),
+                "latest_candle_timestamp": candles[-1].get("time") if candles else None,
+                "latest_candle_completed": _latest_candle_completed(candles),
+                "ohlcv_hash": _ohlcv_hash(candles),
+                "api_timeout_or_error": None,
+                "final_inclusion_reason": final_reason_by_symbol.get(
+                    symbol,
+                    "included" if symbol in final_symbols else "excluded:filtered",
+                ),
+            }
+        logger.info(
+            "%s %s",
+            MARKET_DATA_AUDIT_LOG,
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str),
+        )
+
+
+def _result_reason(asset):
+    matched = asset.get("matched_indicators") or []
+    stickers = asset.get("stickers") or []
+    if matched:
+        return "included:" + "+".join(str(item) for item in matched)
+    if stickers:
+        return "included:stickers"
+    return "included:no_active_indicator_filters"
+
+
+def _exclusion_reasons(symbols, stage_symbols):
+    reasons = {}
+    previous = set(symbols)
+    for stage_name, current_symbols in stage_symbols:
+        current = set(current_symbols)
+        for symbol in previous - current:
+            reasons.setdefault(symbol, f"excluded:{stage_name}")
+        previous = current
+    return reasons
 
 
 def attach_post_filter_channels(data, request):
@@ -1059,7 +1220,7 @@ async def get_asset_detail(symbol, asset_type, timeframe, request, scan_stage="s
             "shares_outstanding": asset.get("shares_outstanding"),
             "float_shares": asset.get("float_shares"),
             "last_candle": candles[-1] if candles else None,
-            "recent_candles": candles[-DETAIL_RECENT_CANDLES:],
+            "recent_candles": candles[-candles_limit:],
             **_market_data_freshness(asset),
         },
         "channels": asset.get("channels") or {},
@@ -1073,9 +1234,11 @@ async def get_asset_detail(symbol, asset_type, timeframe, request, scan_stage="s
 
 async def run_single(request):
     started = time.perf_counter()
+    audit_run_id = uuid.uuid4().hex
 
     assets = await build_asset_universe(request)
     assets = limit_assets(assets, request=request)
+    universe_symbols = [asset["symbol"] for asset in assets]
     indicators = filter_indicators(
         request.indicators,
         "single"
@@ -1091,17 +1254,38 @@ async def run_single(request):
     )
 
     if not data:
+        _audit_market_data_run(audit_run_id, "single", universe_symbols, {})
         return {"results": []}
 
     attach_asset_metadata(data, assets)
+    fetched_by_symbol = {asset["symbol"]: dict(asset) for asset in data}
+    stage_symbols = []
     data = apply_price_range(data, getattr(request, "price_range", None))
+    stage_symbols.append(("price_range", [asset["symbol"] for asset in data]))
     data = apply_dead_assets(data, getattr(request, "dead_assets", None))
+    stage_symbols.append(("dead_assets", [asset["symbol"] for asset in data]))
 
     if indicators:
         data = apply_selected_indicators(data, indicators)
+        stage_symbols.append(("indicators", [asset["symbol"] for asset in data]))
 
     data = apply_post_filters(data, request)
+    stage_symbols.append(("post_filters", [asset["symbol"] for asset in data]))
     data = annotate_request_filter_stickers(data, request)
+    final_symbols = {asset["symbol"] for asset in data}
+    final_reason_by_symbol = _exclusion_reasons(
+        [asset["symbol"] for asset in fetched_by_symbol.values()],
+        stage_symbols,
+    )
+    final_reason_by_symbol.update({asset["symbol"]: _result_reason(asset) for asset in data})
+    _audit_market_data_run(
+        audit_run_id,
+        "single",
+        universe_symbols,
+        fetched_by_symbol,
+        final_symbols=final_symbols,
+        final_reason_by_symbol=final_reason_by_symbol,
+    )
 
     logger.info(
         "run_single completed timeframe=%s assets=%s results=%s elapsed=%.2fs",
@@ -1124,9 +1308,11 @@ async def run_single(request):
 
 async def run_gate(request, client_id=None):
     started = time.perf_counter()
+    audit_run_id = uuid.uuid4().hex
 
     assets = await build_asset_universe(request)
     assets = limit_assets(assets, request=request)
+    universe_symbols = [asset["symbol"] for asset in assets]
     indicators = filter_indicators(
         request.indicators,
         "primary"
@@ -1142,17 +1328,38 @@ async def run_gate(request, client_id=None):
     )
 
     if not data:
+        _audit_market_data_run(audit_run_id, "gate", universe_symbols, {})
         return {"results": []}
 
     attach_asset_metadata(data, assets)
+    fetched_by_symbol = {asset["symbol"]: dict(asset) for asset in data}
+    stage_symbols = []
     data = apply_price_range(data, getattr(request, "price_range", None))
+    stage_symbols.append(("price_range", [asset["symbol"] for asset in data]))
     data = apply_dead_assets(data, getattr(request, "dead_assets", None))
+    stage_symbols.append(("dead_assets", [asset["symbol"] for asset in data]))
 
     if indicators:
         data = apply_selected_indicators(data, indicators)
+        stage_symbols.append(("indicators", [asset["symbol"] for asset in data]))
 
     data = apply_post_filters(data, request)
+    stage_symbols.append(("post_filters", [asset["symbol"] for asset in data]))
     data = annotate_request_filter_stickers(data, request)
+    final_symbols = {asset["symbol"] for asset in data}
+    final_reason_by_symbol = _exclusion_reasons(
+        [asset["symbol"] for asset in fetched_by_symbol.values()],
+        stage_symbols,
+    )
+    final_reason_by_symbol.update({asset["symbol"]: _result_reason(asset) for asset in data})
+    _audit_market_data_run(
+        audit_run_id,
+        "gate",
+        universe_symbols,
+        fetched_by_symbol,
+        final_symbols=final_symbols,
+        final_reason_by_symbol=final_reason_by_symbol,
+    )
 
     passed_map = {a["symbol"]: a for a in assets}
     gate_metadata = [
@@ -1186,6 +1393,7 @@ async def run_gate(request, client_id=None):
 
 async def run_entry(request, client_id=None):
     started = time.perf_counter()
+    audit_run_id = uuid.uuid4().hex
     gate_session_id = request.gate_session_id or ""
     scope_hash = _scope_hash_from_request(request)
     metadata = _consume_gate_results(
@@ -1198,6 +1406,7 @@ async def run_entry(request, client_id=None):
         return {"results": []}
 
     try:
+        universe_symbols = [asset["symbol"] for asset in metadata]
         indicators = filter_indicators(
             request.indicators,
             "secondary"
@@ -1212,17 +1421,38 @@ async def run_entry(request, client_id=None):
         )
 
         if not data:
+            _audit_market_data_run(audit_run_id, "entry", universe_symbols, {})
             return {"results": []}
 
         attach_asset_metadata(data, metadata)
+        fetched_by_symbol = {asset["symbol"]: dict(asset) for asset in data}
+        stage_symbols = []
         data = apply_price_range(data, getattr(request, "price_range", None))
+        stage_symbols.append(("price_range", [asset["symbol"] for asset in data]))
         data = apply_dead_assets(data, getattr(request, "dead_assets", None))
+        stage_symbols.append(("dead_assets", [asset["symbol"] for asset in data]))
 
         if indicators:
             data = apply_selected_indicators(data, indicators)
+            stage_symbols.append(("indicators", [asset["symbol"] for asset in data]))
 
         data = apply_post_filters(data, request)
+        stage_symbols.append(("post_filters", [asset["symbol"] for asset in data]))
         data = annotate_request_filter_stickers(data, request)
+        final_symbols = {asset["symbol"] for asset in data}
+        final_reason_by_symbol = _exclusion_reasons(
+            [asset["symbol"] for asset in fetched_by_symbol.values()],
+            stage_symbols,
+        )
+        final_reason_by_symbol.update({asset["symbol"]: _result_reason(asset) for asset in data})
+        _audit_market_data_run(
+            audit_run_id,
+            "entry",
+            universe_symbols,
+            fetched_by_symbol,
+            final_symbols=final_symbols,
+            final_reason_by_symbol=final_reason_by_symbol,
+        )
     except Exception:
         _restore_gate_results(gate_session_id, metadata, scope_hash=scope_hash, client_id=client_id)
         raise

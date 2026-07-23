@@ -409,7 +409,26 @@ def _true_range_series(candles):
 
 
 def _atr_series(candles, period=14):
-    return compute_ema(_true_range_series(candles), period)
+    tr = _true_range_series(candles)
+    n = len(tr)
+    if n == 0:
+        return tr
+
+    atr = np.zeros(n, dtype=float)
+    if n < period:
+        running_sum = 0.0
+        for i, value in enumerate(tr):
+            running_sum += value
+            atr[i] = running_sum / (i + 1)
+        return atr
+
+    seed = float(np.mean(tr[:period]))
+    atr[:period - 1] = seed
+    atr[period - 1] = seed
+    for i in range(period, n):
+        atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+
+    return atr
 
 
 # =========================================================
