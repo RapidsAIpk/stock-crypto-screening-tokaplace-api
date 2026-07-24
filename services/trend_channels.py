@@ -54,8 +54,9 @@ def required_trend_channel_history(length=8):
     return MAX_CANDLES
 
 
-def compute_trend_channel(candles, length=8, wait_for_break=True, show_last_channel=True):
+def compute_trend_channel(candles, length=8, wait_for_break=True, show_last_channel=True, mintick=None):
     normalized_length = max(2, int(length or 8))
+    normalized_mintick = _normalize_mintick(mintick)
     confirmed_pivots = _collect_confirmed_pivots(candles, normalized_length)
 
     pivot_channel = _compute_pivot_liquidity_channel(
@@ -64,6 +65,7 @@ def compute_trend_channel(candles, length=8, wait_for_break=True, show_last_chan
         confirmed_pivots=confirmed_pivots,
         wait_for_break=bool(wait_for_break),
         show_last_channel=bool(show_last_channel),
+        mintick=normalized_mintick,
     )
     if pivot_channel is not None:
         return pivot_channel
@@ -94,6 +96,7 @@ def _compute_pivot_liquidity_channel(
     confirmed_pivots=None,
     wait_for_break=True,
     show_last_channel=True,
+    mintick=None,
 ):
     if len(candles) < max(length * 2 + 1, 5):
         return None
@@ -133,14 +136,14 @@ def _compute_pivot_liquidity_channel(
         if (
             high_just_updated
             and down_state is None
-            and (up_state is None if wait_for_break and not show_last_channel else True)
+            and (up_state is None if wait_for_break else True)
             and _slope_non_positive(
                 last_high["price"] - prev_high["price"],
                 last_high["index"] - prev_high["index"],
             )
         ):
             candidate = _build_channel_state(
-                "down", prev_high, last_high, current_index, atr
+                "down", prev_high, last_high, current_index, atr, mintick=mintick
             )
             if candidate is not None:
                 down_state = candidate
@@ -151,14 +154,14 @@ def _compute_pivot_liquidity_channel(
         if (
             low_just_updated
             and up_state is None
-            and (down_state is None if wait_for_break and not show_last_channel else True)
+            and (down_state is None if wait_for_break else True)
             and _slope_non_negative(
                 last_low["price"] - prev_low["price"],
                 last_low["index"] - prev_low["index"],
             )
         ):
             candidate = _build_channel_state(
-                "up", prev_low, last_low, current_index, atr
+                "up", prev_low, last_low, current_index, atr, mintick=mintick
             )
             if candidate is not None:
                 up_state = candidate
@@ -266,7 +269,7 @@ def _is_pivot_low(candles, index, span):
     )
 
 
-def _build_channel_state(direction, first_pivot, second_pivot, current_index, atr_series):
+def _build_channel_state(direction, first_pivot, second_pivot, current_index, atr_series, mintick=None):
     first_index = first_pivot["index"]
     second_index = second_pivot["index"]
     span = second_index - first_index
@@ -292,6 +295,7 @@ def _build_channel_state(direction, first_pivot, second_pivot, current_index, at
         "break_index": None,
         "break_direction": None,
         "liquidity_break": False,
+        "mintick": mintick,
     }
     _initialize_channel_line_endpoints(state)
     return state
@@ -317,8 +321,8 @@ def _initialize_channel_line_endpoints(channel_state):
     lines_x1 = _channel_line_values(channel_state, x1)
     lines_x2 = _channel_line_values(channel_state, x2)
     for key in LINE_KEYS:
-        channel_state[f"line_y1_{key}"] = lines_x1[key]
-        channel_state[f"line_y2_{key}"] = lines_x2[key]
+        channel_state[f"line_y1_{key}"] = _round_to_mintick(lines_x1[key], channel_state.get("mintick"))
+        channel_state[f"line_y2_{key}"] = _round_to_mintick(lines_x2[key], channel_state.get("mintick"))
 
 
 def _advance_channel_line_endpoints(channel_state, bar_index):
@@ -333,7 +337,7 @@ def _advance_channel_line_endpoints(channel_state, bar_index):
     channel_state["line_x2"] = bar_index
     lines = _channel_line_values(channel_state, bar_index)
     for key in LINE_KEYS:
-        channel_state[f"line_y2_{key}"] = lines[key]
+        channel_state[f"line_y2_{key}"] = _round_to_mintick(lines[key], channel_state.get("mintick"))
 
 
 def _line_values_from_endpoints(channel_state, x_values):
@@ -345,11 +349,15 @@ def _line_values_from_endpoints(channel_state, x_values):
     else:
         ratio = (x_arr - x1) / float(x2 - x1)
 
-    return {
+    values = {
         key: channel_state[f"line_y1_{key}"]
         + (channel_state[f"line_y2_{key}"] - channel_state[f"line_y1_{key}"]) * ratio
         for key in LINE_KEYS
     }
+    mintick = channel_state.get("mintick")
+    if mintick is not None:
+        return {key: _round_to_mintick(value, mintick) for key, value in values.items()}
+    return values
 
 
 def _channel_line_values(channel_state, x):
@@ -379,6 +387,25 @@ def _channel_line_values(channel_state, x):
         "bottom_zone_upper": bottom_zone_upper,
         "bottom_zone_lower": bottom,
     }
+
+
+def _normalize_mintick(mintick):
+    try:
+        value = float(mintick)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return value
+
+
+def _round_to_mintick(value, mintick):
+    normalized = _normalize_mintick(mintick)
+    if normalized is None:
+        return value
+    if isinstance(value, np.ndarray):
+        return np.round(value / normalized) * normalized
+    return round(float(value) / normalized) * normalized
 
 
 def _check_channel_break(channel_state, candle):
