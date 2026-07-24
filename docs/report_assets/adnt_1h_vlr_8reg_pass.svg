@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080">
+<defs>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0b1a44" flood-opacity="0.18"/></filter>
+<linearGradient id="header" x1="0" x2="1"><stop offset="0" stop-color="#eef7ff"/><stop offset="1" stop-color="#f8fff4"/></linearGradient>
+<linearGradient id="pass" x1="0" x2="1"><stop offset="0" stop-color="#e8f8ed"/><stop offset="1" stop-color="#f7fff9"/></linearGradient>
+</defs>
+<rect width="1600" height="1080" fill="#f8fbff"/>
+<rect x="0" y="0" width="1600" height="104" fill="url(#header)"/>
+<text x="70" y="70" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="800" fill="#071947">ADNT (1H) - PASS 8-Regression VLR Combo</text>
+<rect x="22" y="122" width="335" height="680" rx="18" fill="white" stroke="#174aa5" stroke-width="3" filter="url(#shadow)"/>
+<text x="88" y="182" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="800" fill="#174aa5">Filter Combo</text>
+<path d="M45 145 h42 l-16 20 v34 l-10 5 v-39z" fill="#174aa5"/>
+<line x1="45" y1="252" x2="330" y2="252" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="236" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Timeframe:</text>
+<text x="205" y="236" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">1 Hour</text>
+<line x1="45" y1="302" x2="330" y2="302" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="286" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Indicator:</text>
+<text x="205" y="286" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">VLR</text>
+<line x1="45" y1="352" x2="330" y2="352" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="336" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Source:</text>
+<text x="205" y="336" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">Auto / Close</text>
+<line x1="45" y1="402" x2="330" y2="402" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="386" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Regressions:</text>
+<text x="205" y="386" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">8</text>
+<line x1="45" y1="452" x2="330" y2="452" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="436" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Start Period:</text>
+<text x="205" y="436" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">10</text>
+<line x1="45" y1="502" x2="330" y2="502" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="486" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Period Increment:</text>
+<text x="205" y="486" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">6</text>
+<line x1="45" y1="552" x2="330" y2="552" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="536" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Deviation:</text>
+<text x="205" y="536" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">3</text>
+<line x1="45" y1="602" x2="330" y2="602" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="586" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Reversal Type:</text>
+<text x="205" y="586" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">Early</text>
+<line x1="45" y1="652" x2="330" y2="652" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="636" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Direction:</text>
+<text x="205" y="636" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">Bullish</text>
+<line x1="45" y1="702" x2="330" y2="702" stroke="#c7d3e3" stroke-width="2" stroke-dasharray="4 4"/>
+<text x="72" y="686" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Timing Window:</text>
+<text x="205" y="686" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="500" fill="#111827">Last 3 candles</text>
+<rect x="380" y="122" width="1190" height="680" rx="12" fill="white" stroke="#071947" stroke-width="3" filter="url(#shadow)"/>
+<text x="402" y="164" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="800" fill="#111827">Adient plc - 1H</text>
+<line x1="450" y1="194" x2="450" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="555" y1="194" x2="555" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="660" y1="194" x2="660" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="765" y1="194" x2="765" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="870" y1="194" x2="870" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="975" y1="194" x2="975" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="1080" y1="194" x2="1080" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="1185" y1="194" x2="1185" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="1290" y1="194" x2="1290" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="1395" y1="194" x2="1395" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="1500" y1="194" x2="1500" y2="627" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="400" y1="232" x2="1545" y2="232" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="400" y1="312" x2="1545" y2="312" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="400" y1="392" x2="1545" y2="392" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="400" y1="472" x2="1545" y2="472" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="400" y1="552" x2="1545" y2="552" stroke="#d9e1ec" stroke-width="1"/>
+<line x1="433" y1="373.0" x2="433" y2="435.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="425" y="395.0" width="16" height="18" fill="#0a9f8a"/>
+<line x1="475" y1="367.0" x2="475" y2="439.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="467" y="389.0" width="16" height="28" fill="#0a9f8a"/>
+<line x1="517" y1="409.0" x2="517" y2="471.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="509" y="431.0" width="16" height="18" fill="#ef233c"/>
+<line x1="559" y1="376.0" x2="559" y2="454.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="551" y="398.0" width="16" height="34" fill="#0a9f8a"/>
+<line x1="601" y1="414.0" x2="601" y2="502.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="593" y="436.0" width="16" height="44" fill="#ef233c"/>
+<line x1="643" y1="386.0" x2="643" y2="458.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="635" y="408.0" width="16" height="28" fill="#ef233c"/>
+<line x1="685" y1="391.0" x2="685" y2="471.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="677" y="413.0" width="16" height="36" fill="#ef233c"/>
+<line x1="727" y1="388.0" x2="727" y2="452.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="719" y="410.0" width="16" height="20" fill="#0a9f8a"/>
+<line x1="769" y1="388.0" x2="769" y2="458.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="761" y="410.0" width="16" height="26" fill="#0a9f8a"/>
+<line x1="811" y1="427.0" x2="811" y2="489.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="803" y="449.0" width="16" height="18" fill="#ef233c"/>
+<line x1="853" y1="377.0" x2="853" y2="439.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="845" y="399.0" width="16" height="18" fill="#0a9f8a"/>
+<line x1="895" y1="394.0" x2="895" y2="468.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="887" y="416.0" width="16" height="30" fill="#ef233c"/>
+<line x1="937" y1="407.0" x2="937" y2="473.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="929" y="429.0" width="16" height="22" fill="#ef233c"/>
+<line x1="979" y1="373.0" x2="979" y2="453.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="971" y="395.0" width="16" height="36" fill="#0a9f8a"/>
+<line x1="1021" y1="415.0" x2="1021" y2="477.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="1013" y="437.0" width="16" height="18" fill="#0a9f8a"/>
+<line x1="1063" y1="390.0" x2="1063" y2="454.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="1055" y="412.0" width="16" height="20" fill="#ef233c"/>
+<line x1="1105" y1="400.0" x2="1105" y2="462.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="1097" y="422.0" width="16" height="18" fill="#ef233c"/>
+<line x1="1147" y1="382.0" x2="1147" y2="450.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="1139" y="404.0" width="16" height="24" fill="#0a9f8a"/>
+<line x1="1189" y1="410.0" x2="1189" y2="488.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="1181" y="432.0" width="16" height="34" fill="#ef233c"/>
+<line x1="1231" y1="409.0" x2="1231" y2="471.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="1223" y="431.0" width="16" height="18" fill="#0a9f8a"/>
+<line x1="1273" y1="391.0" x2="1273" y2="453.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="1265" y="413.0" width="16" height="18" fill="#ef233c"/>
+<line x1="1315" y1="400.0" x2="1315" y2="462.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="1307" y="422.0" width="16" height="18" fill="#ef233c"/>
+<line x1="1357" y1="397.0" x2="1357" y2="459.0" stroke="#0a9f8a" stroke-width="3"/>
+<rect x="1349" y="419.0" width="16" height="18" fill="#0a9f8a"/>
+<line x1="1399" y1="414.0" x2="1399" y2="484.0" stroke="#ef233c" stroke-width="3"/>
+<rect x="1391" y="436.0" width="16" height="26" fill="#ef233c"/>
+<line x1="1260" y1="122" x2="1260" y2="802" stroke="#667085" stroke-width="2" stroke-dasharray="8 8"/>
+<path d="M1290 437 L1365 372 L1355 362 L1390 352 L1380 389 L1370 377 L1298 444 Z" fill="#6b21a8"/>
+<rect x="1380" y="327" width="150" height="95" rx="12" fill="#fff" stroke="#6b21a8" stroke-width="3"/>
+<text x="1397" y="366" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="800" fill="#581c87">Latest</text>
+<text x="1397" y="399" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="800" fill="#581c87">Signal Candle</text>
+<line x1="380" y1="632" x2="1570" y2="632" stroke="#071947" stroke-width="3"/>
+<text x="398" y="672" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="600" fill="#111827">VLR-WPR-OSC</text>
+<line x1="400" y1="792" x2="1544" y2="792" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 7"/>
+<polyline points="415.0,879.0 470.3,847.6 525.7,867.4 581.0,806.9 636.3,762.6 691.7,723.1 747.0,694.0 802.3,744.0 857.7,796.4 913.0,839.4 968.3,867.4 1023.7,827.8 1079.0,767.3 1134.3,730.1 1189.7,701.0 1245.0,705.5" fill="none" stroke="#ef233c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="415.0,879.0 470.3,847.6 525.7,867.4 581.0,806.9 636.3,762.6 691.7,723.1 747.0,694.0 802.3,744.0 857.7,796.4 913.0,839.4 968.3,867.4 1023.7,827.8 1079.0,767.3 1134.3,730.1 1189.7,701.0 1245.0,738.2" fill="none" stroke="#0a9f3e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="415.0,879.0 470.3,847.6 525.7,867.4 581.0,806.9 636.3,762.6 691.7,723.1 747.0,694.0 802.3,744.0 857.7,796.4 913.0,839.4 968.3,867.4 1023.7,827.8 1079.0,767.3 1134.3,730.1 1189.7,701.0 1245.0,774.1" fill="none" stroke="#1455ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="415.0,879.0 470.3,847.6 525.7,867.4 581.0,806.9 636.3,762.6 691.7,723.1 747.0,694.0 802.3,744.0 857.7,796.4 913.0,839.4 968.3,867.4 1023.7,827.8 1079.0,767.3 1134.3,730.1 1189.7,701.0 1245.0,821.2" fill="none" stroke="#d824d8" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="415.0,879.0 470.3,847.6 525.7,867.4 581.0,806.9 636.3,762.6 691.7,723.1 747.0,694.0 802.3,744.0 857.7,796.4 913.0,839.4 968.3,867.4 1023.7,827.8 1079.0,767.3 1134.3,730.1 1189.7,701.0 1245.0,827.4" fill="none" stroke="#d4b600" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="1365" y="670" width="92" height="35" rx="4" fill="#ef233c"/>
+<text x="1375" y="695" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="white">0.6712</text>
+<rect x="1365" y="708" width="92" height="35" rx="4" fill="#0a9f3e"/>
+<text x="1375" y="733" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="white">0.3898</text>
+<rect x="1365" y="746" width="92" height="35" rx="4" fill="#1455ff"/>
+<text x="1375" y="771" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="white">0.0817</text>
+<rect x="1365" y="784" width="92" height="35" rx="4" fill="#d824d8"/>
+<text x="1375" y="809" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="white">-0.3231</text>
+<rect x="1365" y="822" width="92" height="35" rx="4" fill="#d4b600"/>
+<text x="1375" y="847" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="white">-0.3769</text>
+<rect x="1365" y="860" width="92" height="35" rx="4" fill="#475569"/>
+<text x="1375" y="885" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="white">0.0050</text>
+<rect x="1480" y="670" width="92" height="35" rx="4" fill="#7c3aed"/>
+<text x="1490" y="695" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="white">0.0044</text>
+<rect x="1480" y="708" width="92" height="35" rx="4" fill="#00a6c8"/>
+<text x="1490" y="733" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="white">-0.2645</text>
+<rect x="1300" y="702" width="235" height="180" rx="14" fill="#fff" stroke="#6b21a8" stroke-width="3"/>
+<text x="1330" y="744" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="800" fill="#581c87">Latest Values</text>
+<text x="1340" y="782" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="#ef233c">Red: 0.6712</text>
+<text x="1340" y="812" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="#0a9f3e">Green: 0.3898</text>
+<text x="1340" y="842" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="#1455ff">Blue: 0.0817</text>
+<text x="1340" y="872" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="#d824d8">Magenta: -0.3231</text>
+<text x="1340" y="902" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="800" fill="#d4b600">Yellow: -0.3769</text>
+<rect x="22" y="832" width="370" height="120" rx="14" fill="white" stroke="#078b32" stroke-width="3" filter="url(#shadow)"/>
+<circle cx="60" cy="870" r="22" fill="#078b32"/>
+<text x="51" y="879" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="800" fill="white">1</text>
+<text x="106" y="872" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">This was the tightest multi-line</text>
+<text x="106" y="902" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">TradingView comparison.</text>
+<rect x="416" y="832" width="370" height="120" rx="14" fill="white" stroke="#078b32" stroke-width="3" filter="url(#shadow)"/>
+<circle cx="454" cy="870" r="22" fill="#078b32"/>
+<text x="445" y="879" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="800" fill="white">2</text>
+<text x="500" y="872" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">Backend and TradingView values were</text>
+<text x="500" y="902" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">nearly identical.</text>
+<rect x="810" y="832" width="370" height="120" rx="14" fill="white" stroke="#174aa5" stroke-width="3" filter="url(#shadow)"/>
+<circle cx="848" cy="870" r="22" fill="#174aa5"/>
+<text x="839" y="879" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="800" fill="white">3</text>
+<text x="894" y="872" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">The early bullish rule remained</text>
+<text x="894" y="902" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">valid with 8 regressions.</text>
+<rect x="1204" y="832" width="370" height="120" rx="14" fill="white" stroke="#e76f00" stroke-width="3" filter="url(#shadow)"/>
+<circle cx="1242" cy="870" r="22" fill="#e76f00"/>
+<text x="1233" y="879" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="800" fill="white">4</text>
+<text x="1288" y="872" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">The setup passed without extra</text>
+<text x="1288" y="902" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#111827">confirmations.</text>
+<rect x="22" y="970" width="1110" height="88" rx="16" fill="url(#pass)" stroke="#08752c" stroke-width="3" filter="url(#shadow)"/>
+<circle cx="78" cy="1014" r="34" fill="#078b32"/>
+<path d="M58 1016 l15 16 l30 -38" fill="none" stroke="white" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="135" y="1022" font-family="Arial, Helvetica, sans-serif" font-size="40" font-weight="800" fill="#078b32">Result: PASS - Early Bullish Reversal Watch</text>
+<rect x="1160" y="970" width="410" height="88" rx="16" fill="white" stroke="#174aa5" stroke-width="3" filter="url(#shadow)"/>
+<text x="1192" y="1008" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="800" fill="#174aa5">Client Verdict</text>
+<text x="1192" y="1040" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#111827">Backend and chart evidence agree.</text>
+</svg>
