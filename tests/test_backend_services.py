@@ -1191,6 +1191,20 @@ class IndicatorMathTests(unittest.TestCase):
         # longest_period = 12 + (3-1)*12 = 36; needed = 36 + 5 + 2
         self.assertEqual(screener.required_candles_for_indicators([indicator]), 43)
 
+    def test_required_candles_for_wavetrend_uses_stable_warmup_floor(self):
+        indicator = SimpleNamespace(
+            name="wavetrend",
+            config={
+                "channel_length": 10,
+                "average_length": 21,
+                "signal_length": 4,
+                "window": 1,
+            },
+        )
+        # The formula minimum is only 26 candles, but WaveTrend's EMA chain
+        # needs deeper history to avoid warm-up-only false positives.
+        self.assertEqual(screener.required_candles_for_indicators([indicator]), 120)
+
     def test_build_regression_sticker_includes_line_wording(self):
         sticker = regression_channels.build_regression_sticker(
             "LRC",

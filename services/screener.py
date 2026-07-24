@@ -374,7 +374,13 @@ def required_candles_for_indicators(indicators):
             channel_length = _safe_int(config.get("channel_length"), 10, minimum=1)
             average_length = _safe_int(config.get("average_length"), 21, minimum=1)
             signal_length = _safe_int(config.get("signal_length"), 4, minimum=1)
-            needed = max(channel_length, average_length + signal_length) + window + confirmation_window
+            # WaveTrend's EMA chain is highly warm-up sensitive. The bare
+            # formula minimum can create false passes that disappear when the
+            # details endpoint evaluates with its deeper history window.
+            needed = max(
+                120,
+                max(channel_length, average_length + signal_length) + window + confirmation_window,
+            )
         elif name == "adx":
             length = _safe_int(config.get("length"), 11, minimum=1)
             max_candles_since = 0
