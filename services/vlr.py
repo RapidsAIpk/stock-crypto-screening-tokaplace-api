@@ -469,6 +469,7 @@ def build_vlr_sticker(computed, candles, config, matched_tags):
     candles = _closed_candles(candles)
     r_series_list = computed["r"]
     n = len(candles)
+    window = _resolve_window(config)
 
     values_text = " / ".join(
         f"{LINE_NAMES[i] if i < len(LINE_NAMES) else f'R{i+1}'} {format_decimal(_v(series, n - 1) or 0.0, 2, signed=True)}"
@@ -480,8 +481,8 @@ def build_vlr_sticker(computed, candles, config, matched_tags):
     return build_indicator_sticker(
         "VLR Precision",
         condition_text,
-        {"window": 1, "confirmation": False},
+        {"window": window, "confirmation": False},
         length=config.get("start_period", DEFAULT_START_PERIOD),
-        window=1,
+        window=window,
         decision=None,
     )

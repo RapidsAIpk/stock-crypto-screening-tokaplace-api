@@ -3232,6 +3232,7 @@ class VlrTests(unittest.TestCase):
         passed, sticker = indicators.handle_vlr(asset, candles, config)
         self.assertTrue(passed)
         self.assertIn("VLR Precision", sticker)
+        self.assertIn("Last 41 Candles", sticker)
 
 
 class CandlestickPatternTests(unittest.TestCase):
