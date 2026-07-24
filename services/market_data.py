@@ -13,7 +13,9 @@ from core.config import settings
 from services.market_data_store import store
 from services.integration_runtime import integration_runtime
 from services.stock_session import (
+    REGULAR_SESSION_CLOSE,
     SESSION_POLICY_TRADINGVIEW_REGULAR,
+    US_EASTERN,
     aggregate_session_anchored_candles,
     apply_stock_session_policy,
     expected_session_policy_for_symbol,
@@ -733,10 +735,32 @@ def _payload_candles_are_session_anchored(payload, target_minutes):
     return True
 
 
+def _stock_daily_payload_is_within_completed_history(payload):
+    candles = payload.get("candles") or [] if isinstance(payload, dict) else []
+    if not candles:
+        return False
+
+    latest_time = candles[-1].get("time")
+    if latest_time is None:
+        return False
+
+    latest_date = datetime.fromtimestamp(
+        int(latest_time),
+        tz=timezone.utc,
+    ).astimezone(US_EASTERN).date()
+    return latest_date <= _latest_completed_stock_daily_reference_date()
+
+
 def is_payload_compatible_for_fetch(payload, symbol, timeframe):
     if not is_payload_for_symbol_provider(payload, symbol):
         return False
     if not is_payload_session_compatible(payload, symbol, timeframe):
+        return False
+    if (
+        not is_crypto_symbol(symbol)
+        and parse_timeframe_spec(timeframe) == (1, "d")
+        and not _stock_daily_payload_is_within_completed_history(payload)
+    ):
         return False
     plan = _session_anchor_plan_for_symbol(symbol, timeframe)
     if plan is not None:
@@ -1822,11 +1846,46 @@ def _grouped_daily_candle_from_polygon_row(row):
     return None
 
 
+def _previous_weekday(candidate):
+    current = candidate
+    while current.weekday() >= 5:
+        current = current - timedelta(days=1)
+    return current
+
+
+def _latest_completed_stock_daily_reference_date(reference_dt=None):
+    """Return the newest stock daily grouped date safe to treat as complete.
+
+    Massive/Polygon grouped-daily can expose live/pre-market values before
+    the regular session has closed. For TradingView regular-session daily
+    parity, avoid requesting today's grouped row until the US cash session is
+    over; otherwise a live quote can masquerade as yesterday's completed bar.
+    """
+    current_utc = reference_dt or datetime.now(timezone.utc)
+    if current_utc.tzinfo is None:
+        current_utc = current_utc.replace(tzinfo=timezone.utc)
+    current_et = current_utc.astimezone(US_EASTERN)
+    current_date = current_et.date()
+
+    if current_et.weekday() >= 5:
+        return _previous_weekday(current_date - timedelta(days=1))
+
+    session_close_et = current_et.replace(
+        hour=REGULAR_SESSION_CLOSE.hour,
+        minute=REGULAR_SESSION_CLOSE.minute,
+        second=0,
+        microsecond=0,
+    )
+    if current_et < session_close_et:
+        return _previous_weekday(current_date - timedelta(days=1))
+    return current_date
+
+
 def _grouped_daily_candidate_dates(candles_limit, reference_date=None):
     normalized_limit = normalize_candles_limit(candles_limit)
     return _grouped_daily_candidate_dates_with_calendar(
         normalized_limit,
-        reference_date=reference_date,
+        reference_date=reference_date or _latest_completed_stock_daily_reference_date(),
         skip_weekends=True,
         padding_days=max(
             POLYGON_GROUPED_DAILY_LOOKBACK_PADDING_DAYS,

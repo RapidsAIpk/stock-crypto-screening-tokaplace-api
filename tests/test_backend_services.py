@@ -6,7 +6,7 @@ import time
 import unittest
 import warnings
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -6042,6 +6042,47 @@ class MarketDataAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["symbol"] for item in results], symbols)
         grouped_mock.assert_awaited_once_with(symbols, "1day", 101)
         candles_mock.assert_not_awaited()
+
+    def test_stock_grouped_daily_candidate_dates_skip_current_premarket_session(self):
+        premarket = datetime(2026, 7, 24, 6, 47, 41, tzinfo=timezone.utc)
+        after_close = datetime(2026, 7, 24, 21, 0, 0, tzinfo=timezone.utc)
+
+        self.assertEqual(
+            market_data._latest_completed_stock_daily_reference_date(premarket),
+            date(2026, 7, 23),
+        )
+        self.assertEqual(
+            market_data._latest_completed_stock_daily_reference_date(after_close),
+            date(2026, 7, 24),
+        )
+
+    def test_current_session_stock_daily_cache_is_incompatible(self):
+        payload = {
+            "symbol": "THRM",
+            "price": 45.61,
+            "candles": [
+                {"time": 1784836800, "open": 37.2, "high": 45.96, "low": 37.14, "close": 45.61, "volume": 1},
+            ],
+            "candles_provider": "massive",
+        }
+
+        with patch.object(
+            market_data,
+            "_latest_completed_stock_daily_reference_date",
+            return_value=date(2026, 7, 22),
+        ):
+            self.assertFalse(
+                market_data.is_payload_compatible_for_fetch(payload, "THRM", "1day")
+            )
+
+        with patch.object(
+            market_data,
+            "_latest_completed_stock_daily_reference_date",
+            return_value=date(2026, 7, 23),
+        ):
+            self.assertTrue(
+                market_data.is_payload_compatible_for_fetch(payload, "THRM", "1day")
+            )
 
     async def test_request_massive_grouped_daily_candles_builds_multi_day_crypto_payloads(self):
         grouped_days = [

@@ -353,6 +353,24 @@ def _trend_closed_candles(candles):
     return candles
 
 
+def _trend_mintick(asset, config):
+    for key in ("mintick", "tick_size", "price_tick_size"):
+        raw_value = config.get(key)
+        if raw_value is not None:
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+
+    symbol = str((asset or {}).get("symbol") or "").strip().upper()
+    asset_type = str((asset or {}).get("asset_type") or "").strip().lower()
+    if asset_type == "stocks" or (symbol and not symbol.endswith("-USD")):
+        return 0.01
+    return None
+
+
 def handle_trend(asset, candles, config):
     wait_for_break = config.get("wait_for_break")
     show_last_channel = config.get("show_last_channel")
@@ -363,6 +381,7 @@ def handle_trend(asset, candles, config):
         length=config.get("length", 8),
         wait_for_break=True if wait_for_break is None else bool(wait_for_break),
         show_last_channel=True if show_last_channel is None else bool(show_last_channel),
+        mintick=_trend_mintick(asset, config),
     )
 
     if not tc:

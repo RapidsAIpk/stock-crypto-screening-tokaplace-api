@@ -177,6 +177,21 @@ class ChannelConstructionTests(unittest.TestCase):
         self.assertAlmostEqual(next_bar_value, 11.977142857142859)
         self.assertAlmostEqual(five_bars_later_value, 11.73714285714286)
 
+    def test_mintick_rounds_projected_extended_values_at_each_bar(self):
+        bases = DOWN_BASES + [10.0, 9.7, 9.4, 9.1, 8.8]
+        candles = _candles_from_bases(bases)
+        channel = trend_channels.compute_trend_channel(candles, length=2, mintick=0.01)
+
+        start_index = channel["start_index"]
+
+        def value_at(series, bar_index):
+            return float(channel[series][bar_index - start_index])
+
+        self.assertAlmostEqual(value_at("top", 9), 12.04)
+        self.assertAlmostEqual(value_at("middle", 9), 8.18)
+        self.assertAlmostEqual(value_at("top", 14), 11.74)
+        self.assertAlmostEqual(value_at("middle", 14), 7.88)
+
     def test_no_fallback_channel_without_confirmed_pivots(self):
         candles = [
             {
@@ -217,7 +232,7 @@ class WaitForBreakAndShowLastChannelTests(unittest.TestCase):
             candles.extend(extra)
         return candles
 
-    def test_show_last_channel_true_returns_newest_channel_even_with_wait_for_break(self):
+    def test_wait_for_break_true_blocks_opposite_channel_even_with_show_last_channel(self):
         channel = trend_channels._compute_pivot_liquidity_channel(
             self._candles(),
             2,
@@ -225,10 +240,11 @@ class WaitForBreakAndShowLastChannelTests(unittest.TestCase):
             wait_for_break=True,
             show_last_channel=True,
         )
-        # With show_last_channel=True, ChartPrime can still leave multiple
-        # channel objects visible. The screener's single selected channel
-        # follows the newest visible channel, not the older active one.
-        self.assertEqual(channel["direction"], "down")
+        # Pine's `show` option controls whether the previous visible line is
+        # blanked when a new channel forms. It does not bypass the `wait`
+        # condition, so the opposite channel is blocked until the active one
+        # breaks.
+        self.assertEqual(channel["direction"], "up")
 
     def test_wait_for_break_false_allows_opposite_channel_while_active(self):
         channel = trend_channels._compute_pivot_liquidity_channel(
@@ -350,6 +366,25 @@ class LineAreaActionTests(unittest.TestCase):
         )
         self.assertTrue(
             trend_channels.evaluate_line_action(candle_exact, 110.0, rule_null)
+        )
+
+
+class TrendMintickSelectionTests(unittest.TestCase):
+    def test_stock_assets_default_to_cent_mintick(self):
+        self.assertEqual(
+            indicators._trend_mintick({"symbol": "LXRX", "asset_type": "stocks"}, {}),
+            0.01,
+        )
+
+    def test_crypto_assets_do_not_get_stock_mintick_by_default(self):
+        self.assertIsNone(
+            indicators._trend_mintick({"symbol": "BTC-USD", "asset_type": "crypto"}, {})
+        )
+
+    def test_config_mintick_overrides_asset_default(self):
+        self.assertEqual(
+            indicators._trend_mintick({"symbol": "LXRX", "asset_type": "stocks"}, {"mintick": 0.001}),
+            0.001,
         )
 
 
