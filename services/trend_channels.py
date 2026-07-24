@@ -133,7 +133,7 @@ def _compute_pivot_liquidity_channel(
         if (
             high_just_updated
             and down_state is None
-            and (up_state is None if wait_for_break else True)
+            and (up_state is None if wait_for_break and not show_last_channel else True)
             and _slope_non_positive(
                 last_high["price"] - prev_high["price"],
                 last_high["index"] - prev_high["index"],
@@ -151,7 +151,7 @@ def _compute_pivot_liquidity_channel(
         if (
             low_just_updated
             and up_state is None
-            and (down_state is None if wait_for_break else True)
+            and (down_state is None if wait_for_break and not show_last_channel else True)
             and _slope_non_negative(
                 last_low["price"] - prev_low["price"],
                 last_low["index"] - prev_low["index"],
@@ -188,11 +188,20 @@ def _compute_pivot_liquidity_channel(
                 last_channel = dict(up_state)
                 up_state = None
 
-    channel_state = down_state or up_state or (last_channel if show_last_channel else None)
+    channel_state = _select_latest_channel_state(down_state, up_state, last_channel, show_last_channel)
     if channel_state is None:
         return None
 
     return _build_rendered_channel(channel_state, len(candles) - 1)
+
+
+def _select_latest_channel_state(down_state, up_state, last_channel, show_last_channel):
+    candidates = [state for state in (down_state, up_state) if state is not None]
+    if show_last_channel and last_channel is not None:
+        candidates.append(last_channel)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda state: state.get("created_at", -1))
 
 
 def _collect_confirmed_pivots(candles, pivot_span):
@@ -313,11 +322,18 @@ def _initialize_channel_line_endpoints(channel_state):
 
 
 def _advance_channel_line_endpoints(channel_state, bar_index):
-    """Mirror Pine's per-bar extrapolation when extend=false (y2 += dydx, x2 = bar_index)."""
-    dydx = channel_state["slope"]
+    """Project every channel endpoint to the current bar.
+
+    TradingView displays the active channel as a straight extension from the
+    two confirmed pivot anchors. When a pivot confirms, the current bar can be
+    several bars after the second pivot; adding one slope step while jumping
+    x2 to that bar leaves the rendered/evaluated line lagged by
+    (length - 1) bars.
+    """
     channel_state["line_x2"] = bar_index
+    lines = _channel_line_values(channel_state, bar_index)
     for key in LINE_KEYS:
-        channel_state[f"line_y2_{key}"] = channel_state[f"line_y2_{key}"] + dydx
+        channel_state[f"line_y2_{key}"] = lines[key]
 
 
 def _line_values_from_endpoints(channel_state, x_values):
@@ -535,16 +551,30 @@ def _candle_index_eligible_for_signal(tc, candle_index):
     return int(candle_index) <= last_signal_index
 
 
+def is_area_rule_disabled(rule):
+    if not isinstance(rule, dict):
+        return True
+
+    area = str(rule.get("area") or "").strip().lower()
+    action = str(rule.get("action") or "").strip().lower()
+    return area == "disabled" or action == "disabled"
+
+
 def evaluate_trend_channel_rules(candles, tc, config, evidence=None):
 
     selected_areas = config.get("areas", [])
+    active_areas = [
+        area_rule
+        for area_rule in (selected_areas or [])
+        if not is_area_rule_disabled(area_rule)
+    ]
 
-    if not selected_areas:
-        return False
+    if not active_areas:
+        return bool(selected_areas)
 
     all_passed = True
 
-    for area_rule in selected_areas:
+    for area_rule in active_areas:
 
         if not evaluate_single_area(
             candles,
@@ -865,9 +895,8 @@ def _build_area_evidence(candles, tc, rule, result):
             info["zone_low"] = reference_candidate["zone_low"]
             info["zone_high"] = reference_candidate["zone_high"]
         if area in _LINE_AREA_SERIES_KEY or area in _ZONE_AREA_KEYS:
-            default_pct = 0.1 if action == "on_line" else 0.0
             raw_tolerance = rule.get("tolerance")
-            info["tolerance_pct"] = default_pct if raw_tolerance is None else float(raw_tolerance)
+            info["tolerance_pct"] = 0.0 if raw_tolerance is None else float(raw_tolerance)
 
     return info
 
@@ -904,7 +933,7 @@ def evaluate_line_action(candle, line_value, rule, direction=None):
         return candle["close"] < lower_tol
 
     if action == "on_line":
-        on_line_lower, on_line_upper = _line_tolerance_bounds(line_value, rule, default_pct=0.1)
+        on_line_lower, on_line_upper = _line_tolerance_bounds(line_value, rule)
         return on_line_lower <= candle["close"] <= on_line_upper
 
     if action == "breach":

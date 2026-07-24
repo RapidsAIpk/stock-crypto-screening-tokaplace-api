@@ -2316,13 +2316,13 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertEqual(channel["line_x1"], 2)
         self.assertEqual(channel["line_x2"], 13)
 
-        # Pine extend=false extrapolates line endpoints each bar from anchors at
-        # the actual pivot bar, not from a closed-form pivot intercept series.
+        # TradingView-parity geometry projects the visible/evaluated channel
+        # directly from the two confirmed pivot anchors at each candle index.
         self.assertAlmostEqual(float(channel["top"][0]), 12.457142857142857)
-        self.assertAlmostEqual(float(channel["top"][-1]), 11.857142857142856)
+        self.assertAlmostEqual(float(channel["top"][-1]), 11.797142857142859)
         self.assertAlmostEqual(float(channel["bottom"][0]), 4.742857142857143)
-        self.assertAlmostEqual(float(channel["bottom"][-1]), 4.142857142857146)
-        self.assertAlmostEqual(float(channel["middle"][-1]), 7.999999999999999)
+        self.assertAlmostEqual(float(channel["bottom"][-1]), 4.0828571428571445)
+        self.assertAlmostEqual(float(channel["middle"][-1]), 7.940000000000001)
 
     def test_compute_trend_channel_freezes_broken_channel_line_endpoints(self):
         bases = self._chartprime_fixture_bases() + [13.0, 12.5, 12.0, 11.5, 11.0, 10.5]
@@ -2340,12 +2340,12 @@ class IndicatorMathTests(unittest.TestCase):
         break_regression_index = channel["break_index"] - channel["start_index"]
         bottom_at_break = float(channel["bottom"][break_regression_index])
 
-        # Frozen segment still extrapolates beyond the break bar, but from the
-        # break-time endpoints rather than continuing active per-bar updates.
+        # The endpoint freezes at the break bar for break eligibility, while
+        # the rendered segment remains the same straight pivot projection.
         self.assertNotAlmostEqual(float(channel["bottom"][-1]), bottom_at_break)
 
         closed_form_bottom_at_latest = bottom_at_break + (latest_index - 14) * (-0.06)
-        self.assertNotAlmostEqual(float(channel["bottom"][-1]), closed_form_bottom_at_latest)
+        self.assertAlmostEqual(float(channel["bottom"][-1]), closed_form_bottom_at_latest)
 
     def test_evaluate_single_area_rejects_post_break_extrapolated_touch(self):
         bases = self._chartprime_fixture_bases() + [13.0]

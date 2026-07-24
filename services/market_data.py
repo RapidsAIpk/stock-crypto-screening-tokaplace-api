@@ -2667,22 +2667,38 @@ async def fetch_batches(
         if not subset:
             return []
 
-        tasks = []
-        for symbol in subset:
-            async def run_symbol(target_symbol=symbol):
-                async with symbol_semaphore:
-                    fetcher = resolve_candle_fetcher_for_symbol(target_symbol)
-                    return await fetcher(
-                        target_symbol,
-                        timeframe,
-                        normalized_limit,
-                    )
+        async def fetch_one(target_symbol):
+            async with symbol_semaphore:
+                fetcher = resolve_candle_fetcher_for_symbol(target_symbol)
+                result = await fetcher(
+                    target_symbol,
+                    timeframe,
+                    normalized_limit,
+                )
+                return target_symbol, result
 
-            tasks.append(run_symbol())
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        completed = 0
+        total = len(subset)
         items = []
-        for symbol, result in zip(subset, results):
+        tasks = [asyncio.create_task(fetch_one(symbol)) for symbol in subset]
+
+        try:
+            from services.scan_progress import emit_scan_progress
+        except ImportError:
+            emit_scan_progress = None
+
+        for task in asyncio.as_completed(tasks):
+            symbol, result = await task
+            completed += 1
+            if emit_scan_progress is not None:
+                await emit_scan_progress(
+                    "fetching_market_data",
+                    f"Fetched {symbol}",
+                    symbol=symbol,
+                    current=completed,
+                    total=total,
+                    detail=timeframe,
+                )
             if isinstance(result, Exception):
                 logger.warning(
                     "fetch_batches symbol fetch failed symbol=%s timeframe=%s: %s",

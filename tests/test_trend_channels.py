@@ -168,13 +168,14 @@ class ChannelConstructionTests(unittest.TestCase):
         five_bars_later_value = value_at(14)
 
         # Each bar's top must be strictly declining (down channel, negative
-        # slope) and monotonic bar-over-bar - i.e. no double-advance, no
-        # skipped first step, no horizontal channel shift.
+        # slope) and monotonic bar-over-bar. The creation bar is several bars
+        # after the second pivot, so the rendered/evaluated line must be the
+        # direct pivot projection at that bar, not a one-step-lagged endpoint.
         self.assertLess(next_bar_value, creation_bar_value)
         self.assertLess(five_bars_later_value, next_bar_value)
-        self.assertAlmostEqual(creation_bar_value, 12.063392857142855)
-        self.assertAlmostEqual(next_bar_value, 12.007142857142856)
-        self.assertAlmostEqual(five_bars_later_value, 11.782142857142855)
+        self.assertAlmostEqual(creation_bar_value, 12.03714285714286)
+        self.assertAlmostEqual(next_bar_value, 11.977142857142859)
+        self.assertAlmostEqual(five_bars_later_value, 11.73714285714286)
 
     def test_no_fallback_channel_without_confirmed_pivots(self):
         candles = [
@@ -216,7 +217,7 @@ class WaitForBreakAndShowLastChannelTests(unittest.TestCase):
             candles.extend(extra)
         return candles
 
-    def test_wait_for_break_true_blocks_opposite_channel_while_active(self):
+    def test_show_last_channel_true_returns_newest_channel_even_with_wait_for_break(self):
         channel = trend_channels._compute_pivot_liquidity_channel(
             self._candles(),
             2,
@@ -224,9 +225,10 @@ class WaitForBreakAndShowLastChannelTests(unittest.TestCase):
             wait_for_break=True,
             show_last_channel=True,
         )
-        # Down pivots confirm while the up channel is still active and
-        # unbroken; wait_for_break=True must block the new down channel.
-        self.assertEqual(channel["direction"], "up")
+        # With show_last_channel=True, ChartPrime can still leave multiple
+        # channel objects visible. The screener's single selected channel
+        # follows the newest visible channel, not the older active one.
+        self.assertEqual(channel["direction"], "down")
 
     def test_wait_for_break_false_allows_opposite_channel_while_active(self):
         channel = trend_channels._compute_pivot_liquidity_channel(
@@ -240,10 +242,10 @@ class WaitForBreakAndShowLastChannelTests(unittest.TestCase):
         # rendered channel always prefers the newer/active down state.
         self.assertEqual(channel["direction"], "down")
 
-    def test_show_last_channel_true_retains_prior_channel_after_break(self):
+    def test_show_last_channel_true_retains_newest_channel_after_break(self):
         # A break bar far above both synthetic bands breaks the (newer) down
-        # channel; with show_last_channel=True the still-active up channel
-        # (never cleared) surfaces once down drops out.
+        # channel; with show_last_channel=True the broken newer channel is
+        # still the selected rendered channel, bounded by its break index.
         break_candle = {"open": 5.0, "high": 5.5, "low": 4.8, "close": 5.2, "volume": 100.0}
         channel = trend_channels._compute_pivot_liquidity_channel(
             self._candles(19, extra=[break_candle]),
@@ -252,8 +254,9 @@ class WaitForBreakAndShowLastChannelTests(unittest.TestCase):
             wait_for_break=False,
             show_last_channel=True,
         )
-        self.assertEqual(channel["direction"], "up")
-        self.assertFalse(channel["broken"])
+        self.assertEqual(channel["direction"], "down")
+        self.assertTrue(channel["broken"])
+        self.assertEqual(channel["break_index"], 19)
 
     def test_show_last_channel_false_clears_opposite_channel_after_break(self):
         break_candle = {"open": 5.0, "high": 5.5, "low": 4.8, "close": 5.2, "volume": 100.0}
@@ -334,13 +337,19 @@ class LineAreaActionTests(unittest.TestCase):
             trend_channels.evaluate_line_action(self.NO_TOUCH_CANDLE, 110.0, rule, "up")
         )
 
-    def test_line_tolerance_zero_is_preserved_not_replaced_by_default(self):
-        # on_line's default tolerance is 0.1%; an explicit tolerance=0 must
-        # stay exactly zero, not fall back to the default via `0 or default`.
+    def test_on_line_null_tolerance_is_zero_not_implicit_default(self):
+        rule_null = {"action": "on_line"}
         rule_explicit_zero = {"action": "on_line", "tolerance": 0}
         candle_just_outside = {"open": 110.02, "high": 110.3, "low": 109.9, "close": 110.02}
+        candle_exact = {"open": 109.9, "high": 110.1, "low": 109.8, "close": 110.0}
+        self.assertFalse(
+            trend_channels.evaluate_line_action(candle_just_outside, 110.0, rule_null)
+        )
         self.assertFalse(
             trend_channels.evaluate_line_action(candle_just_outside, 110.0, rule_explicit_zero)
+        )
+        self.assertTrue(
+            trend_channels.evaluate_line_action(candle_exact, 110.0, rule_null)
         )
 
 
@@ -451,6 +460,42 @@ class WindowAndConfirmationTests(unittest.TestCase):
         )
         self.assertTrue(
             trend_channels.evaluate_trend_channel_rules([touch], channel, {"areas": [rule_top, rule_top]})
+        )
+
+    def test_disabled_area_or_action_rules_are_skipped(self):
+        touch = self.TOUCH_CANDLE
+        channel = self._channel(1)
+        failing_rule = {
+            "area": "bottom_line",
+            "action": "touched",
+            "touch_type": "wick",
+            "window": 1,
+            "tolerance": 0,
+            "confirmation": False,
+        }
+        disabled_by_area = {"area": "disabled", "action": "touched", "window": 1, "confirmation": False}
+        disabled_by_action = {"area": "top_line", "action": "disabled", "window": 1, "confirmation": False}
+
+        self.assertTrue(
+            trend_channels.evaluate_trend_channel_rules(
+                [touch],
+                channel,
+                {"areas": [disabled_by_area]},
+            )
+        )
+        self.assertTrue(
+            trend_channels.evaluate_trend_channel_rules(
+                [touch],
+                channel,
+                {"areas": [disabled_by_action]},
+            )
+        )
+        self.assertFalse(
+            trend_channels.evaluate_trend_channel_rules(
+                [touch],
+                channel,
+                {"areas": [failing_rule, disabled_by_area]},
+            )
         )
 
     def test_confirmation_enabled_requires_matching_pattern(self):

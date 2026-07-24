@@ -28,7 +28,8 @@ from services.rsi import (
 
 from services.trend_channels import (
     compute_trend_channel,
-    evaluate_trend_channel_rules
+    evaluate_trend_channel_rules,
+    is_area_rule_disabled,
 )
 
 from services.linear_regression_candles import (
@@ -89,6 +90,9 @@ def extract_price_arrays(candles):
 
 
 def _trend_area_condition(area_rule):
+    if is_area_rule_disabled(area_rule):
+        return "Disabled"
+
     area = humanize_token(area_rule.get("area"))
     action = str(area_rule.get("action") or "").strip().lower()
     touch_type = area_rule.get("touch_type")
@@ -122,6 +126,8 @@ def _trend_sticker_config(area_rules):
 
     for area_rule in area_rules or []:
         if not isinstance(area_rule, dict):
+            continue
+        if is_area_rule_disabled(area_rule):
             continue
 
         sticker_config["window"] = max(
@@ -193,7 +199,11 @@ def _trend_rule_bias(area_rule):
 
 
 def _trend_decision(area_rules):
-    biases = [_trend_rule_bias(area_rule) for area_rule in area_rules or [] if isinstance(area_rule, dict)]
+    biases = [
+        _trend_rule_bias(area_rule)
+        for area_rule in area_rules or []
+        if isinstance(area_rule, dict) and not is_area_rule_disabled(area_rule)
+    ]
     bullish = sum(1 for bias in biases if bias == "bullish")
     bearish = sum(1 for bias in biases if bias == "bearish")
 
@@ -372,8 +382,16 @@ def handle_trend(asset, candles, config):
     asset["channels"]["trend"] = tc
 
     area_rules = config.get("areas", []) or []
-    area_labels = [_trend_area_condition(area_rule) for area_rule in area_rules]
-    condition = " + ".join(area_labels) if area_labels else "Area Match"
+    active_area_rules = [
+        area_rule
+        for area_rule in area_rules
+        if isinstance(area_rule, dict) and not is_area_rule_disabled(area_rule)
+    ]
+    area_labels = [_trend_area_condition(area_rule) for area_rule in active_area_rules]
+    if not area_labels and area_rules:
+        condition = "Area rules disabled"
+    else:
+        condition = " + ".join(area_labels) if area_labels else "Area Match"
     sticker_config = _trend_sticker_config(area_rules)
     sticker = build_indicator_sticker(
         "Trend Channel",
@@ -1119,8 +1137,17 @@ def apply_indicators(data, selected_indicators):
         return []
 
     filtered = []
+    total = len(data)
+    processed = 0
+
+    try:
+        from services.scan_progress import schedule_scan_progress
+    except ImportError:
+        schedule_scan_progress = None
 
     for asset in data:
+        symbol = asset.get("symbol")
+        processed += 1
 
         candles = asset.get("candles")
 
@@ -1158,6 +1185,15 @@ def apply_indicators(data, selected_indicators):
             if sticker:
                 stickers.append(sticker)
                 matched_indicators.append(indicator_name)
+
+        if schedule_scan_progress is not None and symbol:
+            schedule_scan_progress(
+                "indicators",
+                f"Evaluated {symbol}",
+                symbol=symbol,
+                current=processed,
+                total=total,
+            )
 
         if passed_all:
             asset["stickers"] = stickers

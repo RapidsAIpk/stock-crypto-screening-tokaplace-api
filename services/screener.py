@@ -20,9 +20,10 @@ from services.confluence import (
     normalize_confluence_type,
 )
 from services.market_data import fetch_live_data
+from services.scan_progress import emit_scan_progress
 from services.gate_session_store import store as gate_session_store
 from services.regression_channels import compute_lrc_channel, compute_dw_regression_channel
-from services.trend_channels import compute_trend_channel, required_trend_channel_history
+from services.trend_channels import compute_trend_channel, is_area_rule_disabled, required_trend_channel_history
 from services.utils import build_indicator_sticker, format_price_value, humanize_token
 from services.stock_reference import asset_category_label, matches_asset_categories, matches_sectors
 
@@ -30,6 +31,81 @@ logger = logging.getLogger(__name__)
 DETAIL_RECENT_CANDLES = 120
 SNAPSHOT_COMPATIBLE_INDICATORS = {"float", "shares_outstanding"}
 MARKET_DATA_AUDIT_LOG = "screening_market_data_audit"
+
+STAGE_LABELS = {
+    "building_universe": "Building asset universe",
+    "fetching_market_data": "Fetching market data",
+    "price_range": "Applying price range filter",
+    "dead_assets": "Filtering dead assets",
+    "indicators": "Evaluating indicators",
+    "channel_respect": "Checking channel respect",
+    "confluence": "Evaluating confluence",
+    "post_filters": "Applying post filters",
+}
+
+
+async def _progress_stage(stage: str, message: str | None = None, **kwargs):
+    await emit_scan_progress(
+        stage,
+        message or STAGE_LABELS.get(stage, stage.replace("_", " ").title()),
+        **kwargs,
+    )
+
+
+async def _run_filter_pipeline(data, request, indicators, scan_stage_label: str):
+    stage_symbols = []
+
+    await _progress_stage("price_range", current=0, total=len(data))
+    data = apply_price_range(data, getattr(request, "price_range", None))
+    stage_symbols.append(("price_range", [asset["symbol"] for asset in data]))
+    await _progress_stage(
+        "price_range",
+        f"Price range filter: {len(data)} symbols remaining",
+        current=len(data),
+        total=len(data),
+    )
+
+    await _progress_stage("dead_assets", current=0, total=len(data))
+    data = apply_dead_assets(data, getattr(request, "dead_assets", None))
+    stage_symbols.append(("dead_assets", [asset["symbol"] for asset in data]))
+    await _progress_stage(
+        "dead_assets",
+        f"Dead assets filter: {len(data)} symbols remaining",
+        current=len(data),
+        total=len(data),
+    )
+
+    if indicators:
+        await _progress_stage(
+            "indicators",
+            f"Evaluating indicators ({scan_stage_label})",
+            current=0,
+            total=len(data),
+        )
+        data = apply_selected_indicators(data, indicators)
+        stage_symbols.append(("indicators", [asset["symbol"] for asset in data]))
+        await _progress_stage(
+            "indicators",
+            f"Indicators complete: {len(data)} symbols matched",
+            current=len(data),
+            total=len(data),
+        )
+
+    if request.channel_respect:
+        await _progress_stage("channel_respect", current=0, total=len(data))
+    if request.confluence:
+        await _progress_stage("confluence", current=0, total=len(data))
+
+    await _progress_stage("post_filters", current=0, total=len(data))
+    data = apply_post_filters(data, request)
+    stage_symbols.append(("post_filters", [asset["symbol"] for asset in data]))
+    await _progress_stage(
+        "post_filters",
+        f"Post filters complete: {len(data)} symbols remaining",
+        current=len(data),
+        total=len(data),
+    )
+    return data, stage_symbols
 
 
 # ---------------------------------------------------------
@@ -341,6 +417,8 @@ def _trend_area_window(config):
     for area in areas:
         if not isinstance(area, dict):
             continue
+        if is_area_rule_disabled(area):
+            continue
         area_window = _safe_int(area.get("window"), 1, minimum=1)
         window = max(window, area_window)
 
@@ -513,6 +591,13 @@ async def fetch_screening_data(assets, timeframe, indicators, need_candle_histor
     )
     latest_only = not need_candle_history
     start = time.perf_counter()
+    await _progress_stage(
+        "fetching_market_data",
+        f"Fetching market data for {len(symbols)} symbols ({timeframe})",
+        current=0,
+        total=len(symbols),
+        detail=timeframe,
+    )
     logger.info(
         "screening fetch start symbols=%s timeframe=%s indicators=%s candles_limit=%s include_fundamentals=%s need_candle_history=%s latest_only=%s",
         len(symbols),
@@ -532,6 +617,13 @@ async def fetch_screening_data(assets, timeframe, indicators, need_candle_histor
     )
     if need_candle_history:
         data = _completed_candle_snapshot(data, candles_limit)
+    await _progress_stage(
+        "fetching_market_data",
+        f"Market data ready for {len(data)} symbols",
+        current=len(data),
+        total=len(symbols),
+        detail=timeframe,
+    )
     logger.info(
         "screening fetch done symbols=%s timeframe=%s returned=%s elapsed=%.2fs",
         len(symbols),
@@ -1236,9 +1328,16 @@ async def run_single(request):
     started = time.perf_counter()
     audit_run_id = uuid.uuid4().hex
 
+    await _progress_stage("building_universe")
     assets = await build_asset_universe(request)
     assets = limit_assets(assets, request=request)
     universe_symbols = [asset["symbol"] for asset in assets]
+    await _progress_stage(
+        "building_universe",
+        f"Universe ready: {len(assets)} symbols",
+        current=len(assets),
+        total=len(assets),
+    )
     indicators = filter_indicators(
         request.indicators,
         "single"
@@ -1259,18 +1358,7 @@ async def run_single(request):
 
     attach_asset_metadata(data, assets)
     fetched_by_symbol = {asset["symbol"]: dict(asset) for asset in data}
-    stage_symbols = []
-    data = apply_price_range(data, getattr(request, "price_range", None))
-    stage_symbols.append(("price_range", [asset["symbol"] for asset in data]))
-    data = apply_dead_assets(data, getattr(request, "dead_assets", None))
-    stage_symbols.append(("dead_assets", [asset["symbol"] for asset in data]))
-
-    if indicators:
-        data = apply_selected_indicators(data, indicators)
-        stage_symbols.append(("indicators", [asset["symbol"] for asset in data]))
-
-    data = apply_post_filters(data, request)
-    stage_symbols.append(("post_filters", [asset["symbol"] for asset in data]))
+    data, stage_symbols = await _run_filter_pipeline(data, request, indicators, "single")
     data = annotate_request_filter_stickers(data, request)
     final_symbols = {asset["symbol"] for asset in data}
     final_reason_by_symbol = _exclusion_reasons(
@@ -1310,9 +1398,17 @@ async def run_gate(request, client_id=None):
     started = time.perf_counter()
     audit_run_id = uuid.uuid4().hex
 
+    await _progress_stage("building_universe", detail="gate")
     assets = await build_asset_universe(request)
     assets = limit_assets(assets, request=request)
     universe_symbols = [asset["symbol"] for asset in assets]
+    await _progress_stage(
+        "building_universe",
+        f"Gate universe ready: {len(assets)} symbols",
+        current=len(assets),
+        total=len(assets),
+        detail="gate",
+    )
     indicators = filter_indicators(
         request.indicators,
         "primary"
@@ -1333,18 +1429,7 @@ async def run_gate(request, client_id=None):
 
     attach_asset_metadata(data, assets)
     fetched_by_symbol = {asset["symbol"]: dict(asset) for asset in data}
-    stage_symbols = []
-    data = apply_price_range(data, getattr(request, "price_range", None))
-    stage_symbols.append(("price_range", [asset["symbol"] for asset in data]))
-    data = apply_dead_assets(data, getattr(request, "dead_assets", None))
-    stage_symbols.append(("dead_assets", [asset["symbol"] for asset in data]))
-
-    if indicators:
-        data = apply_selected_indicators(data, indicators)
-        stage_symbols.append(("indicators", [asset["symbol"] for asset in data]))
-
-    data = apply_post_filters(data, request)
-    stage_symbols.append(("post_filters", [asset["symbol"] for asset in data]))
+    data, stage_symbols = await _run_filter_pipeline(data, request, indicators, "gate")
     data = annotate_request_filter_stickers(data, request)
     final_symbols = {asset["symbol"] for asset in data}
     final_reason_by_symbol = _exclusion_reasons(
@@ -1407,6 +1492,13 @@ async def run_entry(request, client_id=None):
 
     try:
         universe_symbols = [asset["symbol"] for asset in metadata]
+        await _progress_stage(
+            "building_universe",
+            f"Entry candidates loaded: {len(metadata)} symbols",
+            current=len(metadata),
+            total=len(metadata),
+            detail="entry",
+        )
         indicators = filter_indicators(
             request.indicators,
             "secondary"
@@ -1426,18 +1518,7 @@ async def run_entry(request, client_id=None):
 
         attach_asset_metadata(data, metadata)
         fetched_by_symbol = {asset["symbol"]: dict(asset) for asset in data}
-        stage_symbols = []
-        data = apply_price_range(data, getattr(request, "price_range", None))
-        stage_symbols.append(("price_range", [asset["symbol"] for asset in data]))
-        data = apply_dead_assets(data, getattr(request, "dead_assets", None))
-        stage_symbols.append(("dead_assets", [asset["symbol"] for asset in data]))
-
-        if indicators:
-            data = apply_selected_indicators(data, indicators)
-            stage_symbols.append(("indicators", [asset["symbol"] for asset in data]))
-
-        data = apply_post_filters(data, request)
-        stage_symbols.append(("post_filters", [asset["symbol"] for asset in data]))
+        data, stage_symbols = await _run_filter_pipeline(data, request, indicators, "entry")
         data = annotate_request_filter_stickers(data, request)
         final_symbols = {asset["symbol"] for asset in data}
         final_reason_by_symbol = _exclusion_reasons(

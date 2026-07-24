@@ -2,7 +2,7 @@
 import logging
 import time
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from models.filters import ScreeningRequest
 from models.results import (
@@ -17,6 +17,7 @@ from services.integration_runtime import integration_runtime
 from services.market_data import active_candle_provider, active_crypto_candle_provider
 from services.asset_router import list_crypto_exchanges
 from services.stock_reference import list_stock_filter_options
+from services.scan_progress import broadcaster as scan_progress_broadcaster, scan_progress_scope
 from core.config import settings
 
 router = APIRouter()
@@ -56,6 +57,30 @@ def _require_supported_indicators(request: ScreeningRequest):
         )
 
 
+def _scan_id_from_request(http_request: Request) -> str | None:
+    scan_id = (http_request.headers.get("X-Scan-Id") or "").strip()
+    return scan_id or None
+
+
+@router.websocket("/ws/progress")
+async def scan_progress_ws(websocket: WebSocket, scan_id: str = Query(...)):
+    normalized_scan_id = scan_id.strip()
+    if not normalized_scan_id:
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+    await scan_progress_broadcaster.subscribe(normalized_scan_id, websocket)
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await scan_progress_broadcaster.unsubscribe(normalized_scan_id, websocket)
+
+
 def _require_admin(http_request: Request):
     expected = (settings.ADMIN_API_TOKEN or "").strip()
 
@@ -73,7 +98,7 @@ def _require_admin(http_request: Request):
 # SINGLE TIMEFRAME
 # --------------------------------------------
 @router.post("/run", response_model=ScreeningResponse)
-async def run_screening(request: ScreeningRequest):
+async def run_screening(request: ScreeningRequest, http_request: Request):
     started = time.perf_counter()
 
     if request.timeframe_mode != "single":
@@ -83,7 +108,8 @@ async def run_screening(request: ScreeningRequest):
         )
     _require_supported_indicators(request)
 
-    response = await run_single(request)
+    async with scan_progress_scope(_scan_id_from_request(http_request)):
+        response = await run_single(request)
     logger.info(
         "API /screen/run timeframe=%s results=%s elapsed=%.2fs",
         request.single_timeframe,
@@ -301,7 +327,8 @@ async def run_gate_screening(request: ScreeningRequest, http_request: Request):
         )
     _require_supported_indicators(request)
 
-    response = await run_gate(request, client_id=_client_identity(http_request))
+    async with scan_progress_scope(_scan_id_from_request(http_request)):
+        response = await run_gate(request, client_id=_client_identity(http_request))
     logger.info(
         "API /screen/run-gate timeframe=%s results=%s elapsed=%.2fs",
         request.gate_timeframe,
@@ -331,7 +358,8 @@ async def run_entry_screening(request: ScreeningRequest, http_request: Request):
         )
     _require_supported_indicators(request)
 
-    response = await run_entry(request, client_id=_client_identity(http_request))
+    async with scan_progress_scope(_scan_id_from_request(http_request)):
+        response = await run_entry(request, client_id=_client_identity(http_request))
     logger.info(
         "API /screen/run-entry timeframe=%s results=%s elapsed=%.2fs",
         request.entry_timeframe,
