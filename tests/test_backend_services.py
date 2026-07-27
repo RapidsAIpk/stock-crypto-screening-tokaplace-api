@@ -44,6 +44,7 @@ from services import (  # noqa: E402
     regression_channels,
     trend_channels,
     wavetrend,
+    ema,
 )
 from services.gate_session_store import store as gate_session_store  # noqa: E402
 from services.market_data_worker import MarketDataWorker, WORKER_TIMEFRAMES  # noqa: E402
@@ -954,6 +955,141 @@ class DeadAssetsTests(unittest.TestCase):
 
 
 class IndicatorMathTests(unittest.TestCase):
+    def test_ema_wave_matches_lazybear_reference_formula(self):
+        candles = []
+        for index in range(80):
+            close = 100.0 + np.sin(index / 3.0) * 4.0 + index * 0.3
+            candles.append({
+                "open": close - 0.4,
+                "high": close + 1.2,
+                "low": close - 1.0,
+                "close": close,
+            })
+
+        computed = ema.compute_ema_wave(
+            candles,
+            wave_a_length=5,
+            wave_b_length=25,
+            wave_c_length=50,
+            wave_sma_length=4,
+            cutoff=10,
+        )
+        src = np.array([(c["high"] + c["low"] + c["close"]) / 3.0 for c in candles], dtype=float)
+
+        def ref_ema(values, length):
+            output = np.full(len(values), np.nan)
+            multiplier = 2.0 / (length + 1.0)
+            output[0] = values[0]
+            for idx in range(1, len(values)):
+                output[idx] = (values[idx] - output[idx - 1]) * multiplier + output[idx - 1]
+            return output
+
+        def ref_sma(values, length):
+            output = np.full(len(values), np.nan)
+            for idx in range(length - 1, len(values)):
+                window = values[idx - length + 1:idx + 1]
+                if np.all(np.isfinite(window)):
+                    output[idx] = float(np.mean(window))
+            return output
+
+        expected_a = ref_sma(src - ref_ema(src, 5), 4)
+        expected_b = ref_sma(src - ref_ema(src, 25), 4)
+        expected_c = ref_sma(src - ref_ema(src, 50), 4)
+        expected_c_spike = np.zeros(len(src), dtype=bool)
+        expected_b_spike = np.zeros(len(src), dtype=bool)
+        c_mask = np.isfinite(expected_c) & np.isfinite(expected_b) & (expected_b != 0)
+        b_mask = np.isfinite(expected_b) & np.isfinite(expected_a) & (expected_a != 0)
+        expected_c_spike[c_mask] = expected_c[c_mask] / expected_b[c_mask] > 10
+        expected_b_spike[b_mask] = expected_b[b_mask] / expected_a[b_mask] > 10
+
+        np.testing.assert_allclose(computed["wave_a"], expected_a, equal_nan=True)
+        np.testing.assert_allclose(computed["wave_b"], expected_b, equal_nan=True)
+        np.testing.assert_allclose(computed["wave_c"], expected_c, equal_nan=True)
+        np.testing.assert_array_equal(computed["wave_c_spike"], expected_c_spike)
+        np.testing.assert_array_equal(computed["wave_b_spike"], expected_b_spike)
+
+    def test_ema_wave_rules_are_dynamic_and_configurable(self):
+        candles = []
+        for index in range(90):
+            close = 25.0 + index * 0.15 + np.cos(index / 5.0)
+            candles.append({
+                "open": close - 0.2,
+                "high": close + 0.8,
+                "low": close - 0.7,
+                "close": close,
+            })
+
+        config = {
+            "wave": "wave_c",
+            "wave_a_length": 3,
+            "wave_b_length": 8,
+            "wave_c_length": 13,
+            "wave_sma_length": 2,
+        }
+
+        self.assertTrue(ema.evaluate_ema_wave_rules(candles, {
+            **config,
+            "rule": "above",
+            "threshold": -999,
+        }))
+        self.assertFalse(ema.evaluate_ema_wave_rules(candles, {
+            **config,
+            "rule": "below",
+            "threshold": -999,
+        }))
+
+    def test_ema_wave_indicator_registry_uses_lazybear_path(self):
+        candles = []
+        for index in range(70):
+            close = 50.0 + index * 0.2
+            candles.append({
+                "open": close - 0.1,
+                "high": close + 0.5,
+                "low": close - 0.4,
+                "close": close,
+            })
+
+        passed, sticker = indicators.INDICATOR_REGISTRY["ema_wave"](
+            {"symbol": "TEST"},
+            candles,
+            {
+                "rule": "above",
+                "wave": "wave_a",
+                "threshold": -100,
+                "wave_a_length": 5,
+                "wave_b_length": 25,
+                "wave_c_length": 50,
+                "wave_sma_length": 4,
+            },
+        )
+
+        self.assertTrue(passed)
+        self.assertIsNotNone(sticker)
+
+    def test_ema_indicator_defaults_to_lazybear_wave_path(self):
+        candles = []
+        for index in range(70):
+            close = 50.0 + index * 0.2
+            candles.append({
+                "open": close - 0.1,
+                "high": close + 0.5,
+                "low": close - 0.4,
+                "close": close,
+            })
+
+        passed, sticker = indicators.INDICATOR_REGISTRY["ema"](
+            {"symbol": "TEST"},
+            candles,
+            {
+                "rule": "above",
+                "wave": "wave_a",
+                "threshold": -100,
+            },
+        )
+
+        self.assertTrue(passed)
+        self.assertIsNotNone(sticker)
+
     def test_confirm_if_needed_without_type_does_not_fail(self):
         candles = [{"open": 1.0, "close": 1.1, "high": 1.2, "low": 0.9}]
         self.assertTrue(
@@ -1334,6 +1470,87 @@ class IndicatorMathTests(unittest.TestCase):
             macd.evaluate_macd_rules(macd_data, {"rule": "bullish_cross"})
         )
 
+    def test_macd_uses_chris_moody_sma_signal_formula(self):
+        candles = []
+        for index in range(80):
+            close = 100.0 + index * 0.4 + np.sin(index / 4.0) * 3.0
+            candles.append({
+                "open": close - 0.5,
+                "high": close + 1.0,
+                "low": close - 1.2,
+                "close": close,
+            })
+
+        computed = macd.compute_macd(candles, fast=12, slow=26, signal=9)
+        closes = np.array([c["close"] for c in candles], dtype=float)
+
+        def ref_ema(values, length):
+            output = np.full(len(values), np.nan)
+            output[0] = values[0]
+            multiplier = 2.0 / (length + 1.0)
+            for idx in range(1, len(values)):
+                output[idx] = (values[idx] - output[idx - 1]) * multiplier + output[idx - 1]
+            return output
+
+        def ref_sma(values, length):
+            output = np.full(len(values), np.nan)
+            for idx in range(length - 1, len(values)):
+                window = values[idx - length + 1:idx + 1]
+                if np.all(np.isfinite(window)):
+                    output[idx] = float(np.mean(window))
+            return output
+
+        expected_macd = ref_ema(closes, 12) - ref_ema(closes, 26)
+        expected_signal = ref_sma(expected_macd, 9)
+        expected_hist = expected_macd - expected_signal
+
+        np.testing.assert_allclose(computed["macd"], expected_macd, equal_nan=True)
+        np.testing.assert_allclose(computed["signal"], expected_signal, equal_nan=True)
+        np.testing.assert_allclose(computed["hist"], expected_hist, equal_nan=True)
+
+    def test_macd_signal_is_not_ema_signal_line(self):
+        candles = []
+        for index in range(70):
+            close = 40.0 + np.cos(index / 3.0) * 2.0 + index * 0.1
+            candles.append({
+                "open": close,
+                "high": close + 0.6,
+                "low": close - 0.4,
+                "close": close,
+            })
+
+        computed = macd.compute_macd(candles, fast=5, slow=13, signal=4)
+        macd_line = computed["macd"]
+        ema_signal = np.full(len(macd_line), np.nan)
+        ema_signal[0] = macd_line[0]
+        multiplier = 2.0 / (4 + 1.0)
+        for idx in range(1, len(macd_line)):
+            ema_signal[idx] = (macd_line[idx] - ema_signal[idx - 1]) * multiplier + ema_signal[idx - 1]
+
+        self.assertGreater(
+            np.nanmax(np.abs(computed["signal"] - ema_signal)),
+            1e-6,
+        )
+
+    def test_macd_source_and_signal_rules_are_configurable(self):
+        candles = []
+        for index in range(60):
+            close = 20.0 + index * 0.25
+            candles.append({
+                "open": close - 1.0,
+                "high": close + 2.0 + np.sin(index / 4.0),
+                "low": close - 0.5,
+                "close": close,
+            })
+
+        close_macd = macd.compute_macd(candles, fast=3, slow=8, signal=3, source="close")
+        high_macd = macd.compute_macd(candles, fast=3, slow=8, signal=3, source="high")
+
+        self.assertFalse(np.allclose(close_macd["macd"], high_macd["macd"], equal_nan=True))
+        latest = np.flatnonzero(np.isfinite(high_macd["macd"]) & np.isfinite(high_macd["signal"]))[-1]
+        expected_rule = "above_signal" if high_macd["macd"][latest] >= high_macd["signal"][latest] else "below_signal"
+        self.assertTrue(macd.evaluate_macd_rules(high_macd, {"rule": expected_rule}))
+
     def test_rsi_window_matches_within_recent_candles(self):
         rsi_series = [55.0, 48.0, 33.0, 28.0]
         candles = [
@@ -1548,6 +1765,7 @@ class IndicatorMathTests(unittest.TestCase):
             "wt2": [0.0, 0.0],
         }
         config = {
+            "mode": "custom",
             "window": 1,
             "zone": "oversold",
             "direction": "rising",
@@ -1567,6 +1785,7 @@ class IndicatorMathTests(unittest.TestCase):
             "wt2": [0.0, 0.0],
         }
         config = {
+            "mode": "custom",
             "window": 1,
             "zone": "oversold",
             "direction": "rising",
@@ -1586,6 +1805,7 @@ class IndicatorMathTests(unittest.TestCase):
             {"open": 9.8, "close": 10.6, "high": 10.7, "low": 9.7},
         ]
         config = {
+            "mode": "custom",
             "window": 1,
             "zone": "oversold",
             "direction": "rising",
@@ -1608,11 +1828,275 @@ class IndicatorMathTests(unittest.TestCase):
             {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
         ]
         config = {
+            "mode": "custom",
             "window": 1,
             "zone": None,
             "direction": "crossed_up",
             "confirmation": False,
         }
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
+
+    def test_wavetrend_frontend_request_defaults_to_lazybear_cross_rules(self):
+        wt = {
+            "wt1": [-55.0, -54.0],
+            "wt2": [-54.5, -54.5],
+        }
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "channel_length": 10,
+            "average_length": 21,
+            "signal_length": 4,
+            "threshold": 35,
+            "zone": "oversold",
+            "direction": "turning_up",
+            "tolerance_pct": 0,
+            "window": 1,
+            "confirmation": False,
+        }
+
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
+        sticker = wavetrend.build_wavetrend_sticker(wt, config)
+        self.assertIn("WaveTrend Cross LazyBear", sticker)
+        self.assertIn("Bullish Cross", sticker)
+
+    def test_wavetrend_lazybear_cross_mode_accepts_any_cross(self):
+        wt = {
+            "wt1": [-10.0, 5.0],
+            "wt2": [0.0, 0.0],
+        }
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "lazybear_cross",
+            "window": 1,
+        }
+
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
+        sticker = wavetrend.build_wavetrend_sticker(wt, config)
+        self.assertIn("WaveTrend Cross LazyBear", sticker)
+        self.assertIn("Bullish Cross", sticker)
+
+    def test_wavetrend_lazybear_oversold_cross_uses_level_two_by_default(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "zone": "oversold",
+            "signal": "cross_up",
+        }
+        matching = {
+            "wt1": [-56.0, -54.0],
+            "wt2": [-55.0, -55.0],
+        }
+        not_oversold = {
+            "wt1": [-50.0, -48.0],
+            "wt2": [-49.0, -49.0],
+        }
+
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(matching, candles, config))
+        self.assertFalse(wavetrend.evaluate_wavetrend_rules(not_oversold, candles, config))
+
+    def test_wavetrend_lazybear_level_one_can_be_requested(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "lazybear",
+            "window": 1,
+            "zone": "oversold_level_1",
+            "signal": "cross_up",
+        }
+        level_two_only = {
+            "wt1": [-56.0, -54.0],
+            "wt2": [-55.0, -55.0],
+        }
+        level_one = {
+            "wt1": [-63.0, -61.0],
+            "wt2": [-62.0, -62.0],
+        }
+
+        self.assertFalse(wavetrend.evaluate_wavetrend_rules(level_two_only, candles, config))
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(level_one, candles, config))
+
+    def test_wavetrend_lazybear_signal_any_allows_oversold_watch_without_cross(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "zone": "oversold",
+            "signal": "any",
+        }
+        oversold_without_cross = {
+            "wt1": [-58.0, -58.7],
+            "wt2": [-58.2, -58.5],
+        }
+
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(oversold_without_cross, candles, config))
+
+    def test_wavetrend_lazybear_cross_zone_uses_plotted_cross_value(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "zone": "oversold",
+            "signal": "cross_up",
+        }
+        recovered_above_zone_with_oversold_cross_marker = {
+            "wt1": [-61.0, -51.2],
+            "wt2": [-58.0, -60.0],
+        }
+
+        self.assertTrue(
+            wavetrend.evaluate_wavetrend_rules(
+                recovered_above_zone_with_oversold_cross_marker,
+                candles,
+                config,
+            )
+        )
+
+    def test_wavetrend_lazybear_condition_cross_up_can_ignore_zone(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "condition": "cross_up",
+        }
+        wt = {
+            "wt1": [-10.0, 5.0],
+            "wt2": [0.0, 0.0],
+        }
+
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
+
+    def test_wavetrend_lazybear_condition_oversold_watch_uses_wt1(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "condition": "oversold_watch",
+        }
+        wt = {
+            "wt1": [-58.0, -58.7],
+            "wt2": [-40.0, -40.0],
+        }
+
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
+
+    def test_wavetrend_lazybear_condition_turning_up_from_oversold_uses_slope(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "condition": "turning_up_from_oversold",
+        }
+        wt = {
+            "wt1": [-58.0, -60.0, -57.0],
+            "wt2": [-40.0, -40.0, -40.0],
+        }
+
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
+
+    def test_wavetrend_lazybear_condition_overbought_cross_down(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "condition": "overbought_cross_down",
+        }
+        wt = {
+            "wt1": [61.0, 51.0],
+            "wt2": [58.0, 55.0],
+        }
+
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
+
+    def test_wavetrend_lazybear_custom_conditions_array_is_and_by_default(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "conditions": [
+                {"type": "cross", "direction": "up"},
+                {"type": "zone", "line": "wt2", "zone": "oversold"},
+            ],
+        }
+        wt = {
+            "wt1": [-61.0, -51.2],
+            "wt2": [-58.0, -60.0],
+        }
+
+        self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
+
+    def test_wavetrend_lazybear_custom_conditions_array_rejects_missing_cross(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "conditions": [
+                {"type": "cross", "direction": "up"},
+                {"type": "zone", "line": "wt2", "zone": "oversold"},
+            ],
+        }
+        wt = {
+            "wt1": [-82.81, -82.81],
+            "wt2": [-73.46, -73.46],
+        }
+
+        self.assertFalse(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
+
+    def test_wavetrend_lazybear_custom_conditions_array_supports_or_logic(self):
+        candles = [
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+            {"open": 1.0, "close": 1.0, "high": 1.1, "low": 0.9},
+        ]
+        config = {
+            "mode": "wt_cross_lb",
+            "window": 1,
+            "condition_logic": "any",
+            "conditions": [
+                {"type": "cross", "direction": "up"},
+                {"type": "zone", "line": "wt1", "zone": "oversold"},
+            ],
+        }
+        wt = {
+            "wt1": [-82.81, -82.81],
+            "wt2": [-73.46, -73.46],
+        }
+
         self.assertTrue(wavetrend.evaluate_wavetrend_rules(wt, candles, config))
 
     def test_linreg_candle_window_counts_from_signal_start_until_now(self):
@@ -3105,6 +3589,26 @@ class VlrTests(unittest.TestCase):
         )
         self.assertFalse(passed_wrong_type)
 
+    def test_vlr_timing_candles_uses_exact_recent_candle_count(self):
+        red = [0.20, 0.40, 0.80, 0.90, 0.85, 0.84, 0.83, 0.82]
+        computed = self._fake_computed([red])
+        candles = self._fake_candles(len(red))
+
+        passed, _ = vlr.evaluate_vlr_rules(
+            computed,
+            candles,
+            {"reversal_type": "exact", "direction": "bullish", "timing_candles": 3},
+        )
+        wider_passed, wider_tags = vlr.evaluate_vlr_rules(
+            computed,
+            candles,
+            {"reversal_type": "exact", "direction": "bullish", "timing_candles": 4},
+        )
+
+        self.assertFalse(passed)
+        self.assertTrue(wider_passed)
+        self.assertIn("Exact Bullish Reversal Watch", wider_tags)
+
     def test_exact_and_early_bearish_reversal(self):
         red = [-0.5, -0.7, -0.85, -0.90, -0.90, -0.90, -0.80]
         computed = self._fake_computed([red])
@@ -3183,6 +3687,189 @@ class VlrTests(unittest.TestCase):
         self.assertTrue(vlr._sequence_matches(r_series_list, "red_first", "bullish", n, 9))
         self.assertFalse(vlr._sequence_matches(r_series_list, "blue_first", "bullish", n, 9))
 
+    def test_vlr_dynamic_line_order_condition_accepts_clean_bullish_structure(self):
+        computed = self._fake_computed([
+            [0.10, 0.20, 0.90],
+            [0.05, 0.10, 0.40],
+            [0.00, 0.05, -0.20],
+        ])
+        candles = self._fake_candles(3)
+        config = {
+            "timing_candles": 0,
+            "conditions": [
+                {"type": "line_order", "direction": "bullish", "lines": ["red", "green", "blue"]},
+            ],
+        }
+
+        passed, tags = vlr.evaluate_vlr_rules(computed, candles, config)
+
+        self.assertTrue(passed)
+        self.assertIn("Line Order Match", tags)
+
+    def test_vlr_dynamic_line_order_condition_rejects_mixed_structure(self):
+        computed = self._fake_computed([
+            [0.10, 0.20, -0.8937],
+            [0.05, 0.10, -0.3840],
+            [0.00, 0.05, 0.4668],
+        ])
+        candles = self._fake_candles(3)
+        config = {
+            "timing_candles": 0,
+            "conditions": [
+                {"type": "line_order", "direction": "bullish", "lines": ["red", "green", "blue"]},
+            ],
+        }
+
+        passed, tags = vlr.evaluate_vlr_rules(computed, candles, config)
+
+        self.assertFalse(passed)
+        self.assertEqual(tags, [])
+
+    def test_vlr_dynamic_conditions_support_or_logic(self):
+        computed = self._fake_computed([
+            [0.10, 0.20, -0.8937],
+            [0.05, 0.10, -0.3840],
+            [0.00, 0.05, 0.4668],
+        ])
+        candles = self._fake_candles(3)
+        config = {
+            "timing_candles": 0,
+            "condition_logic": "any",
+            "conditions": [
+                {"type": "line_order", "direction": "bullish"},
+                {"type": "zone", "line": "blue", "zone": "positive"},
+            ],
+        }
+
+        passed, tags = vlr.evaluate_vlr_rules(computed, candles, config)
+
+        self.assertTrue(passed)
+        self.assertIn("Line Zone Match", tags)
+
+    def test_vlr_dynamic_conditions_accept_group_object(self):
+        computed = self._fake_computed([
+            [0.10, 0.20, -0.8937],
+            [0.05, 0.10, -0.3840],
+            [0.00, 0.05, 0.4668],
+        ])
+        candles = self._fake_candles(3)
+        config = {
+            "timing_candles": 0,
+            "vlr_conditions": {
+                "operator": "all",
+                "rules": [
+                    {"type": "zone", "line": "red", "zone": "negative_extreme"},
+                    {"type": "compare", "line": "blue", "operator": ">", "value": 0},
+                ],
+            },
+        }
+
+        passed, tags = vlr.evaluate_vlr_rules(computed, candles, config)
+
+        self.assertTrue(passed)
+        self.assertIn("Line Zone Match", tags)
+        self.assertIn("Line Comparison Match", tags)
+
+    def test_vlr_dynamic_conditions_support_nested_groups(self):
+        computed = self._fake_computed([
+            [0.10, 0.20, -0.8937],
+            [0.05, 0.10, -0.3840],
+            [0.00, 0.05, 0.4668],
+        ])
+        candles = self._fake_candles(3)
+        config = {
+            "timing_candles": 0,
+            "conditions": {
+                "operator": "any",
+                "rules": [
+                    {
+                        "operator": "all",
+                        "rules": [
+                            {"type": "zone", "line": "red", "zone": "positive_extreme"},
+                            {"type": "zone", "line": "green", "zone": "positive_extreme"},
+                        ],
+                    },
+                    {
+                        "operator": "all",
+                        "rules": [
+                            {"type": "zone", "line": "red", "zone": "negative_extreme"},
+                            {"type": "compare", "line": "blue", "operator": ">", "value": 0},
+                        ],
+                    },
+                ],
+            },
+        }
+
+        passed, tags = vlr.evaluate_vlr_rules(computed, candles, config)
+
+        self.assertTrue(passed)
+        self.assertIn("Line Zone Match", tags)
+        self.assertIn("Line Comparison Match", tags)
+
+    def test_vlr_legacy_request_still_uses_reversal_fallback(self):
+        computed = self._fake_computed([
+            [0.10, 0.20, -0.8937],
+            [0.05, 0.10, -0.3840],
+            [0.00, 0.05, 0.4668],
+        ])
+        candles = self._fake_candles(3)
+        config = {"reversal_type": "both", "direction": "both", "timing_candles": 3}
+
+        passed, tags = vlr.evaluate_vlr_rules(computed, candles, config)
+
+        self.assertFalse(passed)
+        self.assertEqual(tags, [])
+
+    def test_vlr_condition_preset_extreme_watch_accepts_confirmed_positive_extreme(self):
+        computed = self._fake_computed([
+            [0.10, 0.20, 0.8539],
+            [0.05, 0.10, 0.9745],
+            [0.00, 0.05, 0.9036],
+        ])
+        candles = self._fake_candles(3)
+        config = {
+            "timing_candles": 0,
+            "condition_preset": "extreme_watch",
+        }
+
+        passed, tags = vlr.evaluate_vlr_rules(computed, candles, config)
+
+        self.assertTrue(passed)
+        self.assertIn("Line Zone Match", tags)
+
+    def test_vlr_condition_preset_extreme_watch_rejects_mixed_acic_structure(self):
+        computed = self._fake_computed([
+            [0.10, 0.20, -0.8612],
+            [0.05, 0.10, -0.2105],
+            [0.00, 0.05, 0.5427],
+        ])
+        candles = self._fake_candles(3)
+        config = {
+            "timing_candles": 0,
+            "condition_preset": "extreme_watch",
+        }
+
+        passed, tags = vlr.evaluate_vlr_rules(computed, candles, config)
+
+        self.assertFalse(passed)
+        self.assertEqual(tags, [])
+
+    def test_vlr_dynamic_reversal_condition_preserves_existing_reversal_logic(self):
+        red = [0.5, 0.7, 0.85, 0.90, 0.90, 0.90, 0.80]
+        computed = self._fake_computed([red])
+        candles = self._fake_candles(len(red))
+        config = {
+            "timing_candles": 5,
+            "conditions": [
+                {"type": "reversal", "reversal_type": "exact", "direction": "bullish"},
+            ],
+        }
+
+        passed, tags = vlr.evaluate_vlr_rules(computed, candles, config)
+
+        self.assertTrue(passed)
+        self.assertIn("Exact Bullish Reversal Watch", tags)
+
     def test_volume_confirmation_reuses_relative_volume_ratio(self):
         n = 15
         candles = []
@@ -3232,7 +3919,7 @@ class VlrTests(unittest.TestCase):
         passed, sticker = indicators.handle_vlr(asset, candles, config)
         self.assertTrue(passed)
         self.assertIn("VLR Precision", sticker)
-        self.assertIn("Last 41 Candles", sticker)
+        self.assertIn("Last 40 Candles", sticker)
 
 
 class CandlestickPatternTests(unittest.TestCase):

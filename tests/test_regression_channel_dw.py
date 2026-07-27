@@ -180,14 +180,48 @@ class DWRegressionChannelTests(unittest.TestCase):
         self.assertEqual(channel["length"], 4)
         self.assertEqual(len(channel["middle"]), 4)
 
-    def test_lrc_output_remains_unchanged(self):
+    def test_lrc_output_keeps_existing_contract_with_dynamic_metadata(self):
         candles = [_candle(close) for close in (100, 101, 102, 103)]
 
         channel = regression_channels.compute_lrc_channel(candles, length=4, upper_dev=2.0, lower_dev=2.0)
 
         self.assertIsNotNone(channel)
-        self.assertEqual(set(channel.keys()), {"middle", "upper", "lower", "r", "length"})
+        self.assertTrue({"middle", "upper", "lower", "r", "length"}.issubset(set(channel.keys())))
         self.assertEqual(channel["length"], 4)
+
+    def test_lrc_uses_lonesomeblue_single_latest_channel(self):
+        candles = [_candle(close) for close in (100, 102, 104, 106)]
+
+        channel = regression_channels.compute_lrc_channel(candles, length=4, upper_dev=2.0, lower_dev=2.0)
+
+        self.assertIsNotNone(channel)
+        self.assertAlmostEqual(float(channel["slope"]), 2.0)
+        self.assertAlmostEqual(float(channel["intercept"]), 100.0)
+        self.assertAlmostEqual(float(channel["end"]), 106.0)
+        self.assertTrue(np.allclose(channel["middle"], np.array([100.0, 102.0, 104.0, 106.0])))
+
+    def test_lrc_source_and_asymmetric_deviation_are_configurable(self):
+        candles = [
+            _candle(100, high=110, low=95),
+            _candle(101, high=112, low=95),
+            _candle(102, high=114, low=95),
+            _candle(103, high=116, low=95),
+        ]
+
+        channel = regression_channels.compute_lrc_channel(
+            candles,
+            length=4,
+            source="high",
+            upper_dev=3.0,
+            lower_dev=1.0,
+        )
+
+        self.assertIsNotNone(channel)
+        self.assertEqual(channel["source"], "high")
+        self.assertGreater(
+            float(channel["upper"][-1] - channel["middle"][-1]),
+            float(channel["middle"][-1] - channel["lower"][-1]),
+        )
 
 
 if __name__ == "__main__":

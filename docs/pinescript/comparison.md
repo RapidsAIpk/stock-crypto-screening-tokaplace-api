@@ -19,7 +19,9 @@ This document compares each Pine Script reference in `docs/pinescript/` against 
 | Pine doc | Pine script | Backend file(s) | Indicator key | Parity |
 |----------|-------------|-------------------|---------------|--------|
 | `wavetrend.md` | WaveTrend [LazyBear] | `backend/services/wavetrend.py` | `wavetrend` | **High** |
-| `linear_regression_channel.md` | Linear Regression Channel [jwammo12] | `backend/services/regression_channels.py` (`compute_lrc_channel`) | `lrc` | **High** |
+| `ema_wave.md` | EMA Wave Indicator [LazyBear] | `backend/services/ema.py` (`compute_ema_wave`) | `ema_wave` | **High** |
+| `macd_chris_moody.md` | CM_Ult_MacD_MTF [ChrisMoody] | `backend/services/macd.py` (`compute_macd`) | `macd` | **High** |
+| `linear_regression_channel.md` | Linear Regression Channel [LonesomeTheBlue] | `backend/services/regression_channels.py` (`compute_lrc_channel`) | `lrc` | **High** |
 | `regression_channel.md` | Regression Channel [DW] | `backend/services/regression_channels.py` (`compute_dw_regression_channel`) | `regression` | **High** |
 | `linear_regression_candle.md` | Humble LinReg Candles | `backend/services/linear_regression_candles.py` | `linreg_candles` | **High** |
 | `trend_channel.md` | Trend Channels With Liquidity Breaks [ChartPrime] | `backend/services/trend_channels.py` | `trend` | **High** (geometry) / **Partial** (liquidity label) |
@@ -39,6 +41,7 @@ Validation oracle: `backend/production_screener_validation/reference/custom_engi
 | Indicator | Remaining difference | Workaround |
 |-----------|-------------------|------------|
 | WaveTrend | Single `threshold`; Pine has 60 and 53 | Set `threshold: 53` for secondary level |
+| LRC | TradingView visual `Extend Lines` projects the latest channel to the right | Backend returns the current fitted channel over the latest `length` bars; compare values on candle bars, not future projection |
 | DW Regression | Interval resets on UTC day, not Pine `newbar(res)` | Use `window_type: continuous` for closest match |
 | DW Regression | Non-close `src` on TV | Backend uses close only |
 | Trend Channel | Liquidity label algorithm differs | Break detection is price-only in both |
@@ -67,7 +70,7 @@ Validation oracle: `backend/production_screener_validation/reference/custom_engi
 | Path | Role |
 |------|------|
 | `docs/pinescript/wavetrend.md` | LazyBear WaveTrend Pine source |
-| `docs/pinescript/linear_regression_channel.md` | jwammo12 LRC Pine source |
+| `docs/pinescript/linear_regression_channel.md` | LonesomeTheBlue LRC Pine source |
 | `docs/pinescript/regression_channel.md` | Donovan Wall Regression Channel Pine source |
 | `docs/pinescript/linear_regression_candle.md` | Humble LinReg Candles Pine source |
 | `docs/pinescript/trend_channel.md` | ChartPrime trend channel Pine source |

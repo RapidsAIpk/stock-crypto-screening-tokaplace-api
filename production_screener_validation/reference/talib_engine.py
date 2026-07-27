@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from services.macd import compute_macd
 
 try:
     import talib
@@ -29,13 +30,18 @@ def calculate(name: str, candles: list[dict[str, Any]], config: dict[str, Any]) 
         down, up = talib.AROON(high, low, timeperiod=int(config["length"]))
         return {"aroon_down": down, "aroon_up": up, "aroon_oscillator": up - down}
     if name == "macd":
-        macd, signal, hist = talib.MACD(
-            close,
-            fastperiod=int(config["fast"]),
-            slowperiod=int(config["slow"]),
-            signalperiod=int(config["signal"]),
+        calculated = compute_macd(
+            candles,
+            fast=int(config["fast"]),
+            slow=int(config["slow"]),
+            signal=int(config["signal"]),
+            source=config.get("source", "close"),
         )
-        return {"macd": macd, "signal": signal, "histogram": hist}
+        return {
+            "macd": calculated["macd"],
+            "signal": calculated["signal"],
+            "histogram": calculated["hist"],
+        }
     if name == "ema":
         return {"ema": talib.EMA(close, timeperiod=int(config["length"]))}
     if name == "sma":

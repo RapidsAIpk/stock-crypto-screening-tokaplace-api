@@ -90,6 +90,7 @@ IndicatorName = Literal[
     "adx",
     "vlr",
     "ema",
+    "ema_wave",
     "sma",
     "macd",
     "volume",
@@ -212,6 +213,12 @@ class ConfluenceSource(BaseModel):
     upper_dev: Optional[float] = None
 
     lower_dev: Optional[float] = None
+
+    deviation: Optional[float] = None
+
+    devlen: Optional[float] = None
+
+    source: Optional[str] = None
 
     window_type: Optional[Literal["continuous", "interval"]] = None
 
