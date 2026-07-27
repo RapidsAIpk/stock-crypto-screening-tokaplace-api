@@ -9,7 +9,7 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 INDICATORS = {
-    "rsi", "stochrsi", "wavetrend", "aroon", "adx", "ema", "sma",
+    "rsi", "stochrsi", "wavetrend", "aroon", "adx", "ema", "ema_wave", "sma",
     "macd", "volume", "relative_volume", "current_volume", "float",
     "shares_outstanding", "volatility", "lrc", "regression", "trend",
     "linreg_candles",
@@ -24,6 +24,7 @@ REQUIRED_CONFIG = {
     "aroon": {"length", "level", "direction", "window", "tolerance_pct", "confirmation"},
     "macd": {"fast", "slow", "signal", "rule", "tolerance_pct"},
     "ema": {"length", "rule", "tolerance_pct"},
+    "ema_wave": {"wave_a_length", "wave_b_length", "wave_c_length", "wave_sma_length", "cutoff", "rule", "source", "tolerance_pct"},
     "sma": {"length", "rule", "tolerance_pct"},
     "stochrsi": {"length", "rule", "tolerance_pct"},
     "adx": {"length", "rule", "threshold", "tolerance_pct"},
@@ -44,8 +45,9 @@ ALLOWED_RULES = {
     "rsi.direction": {None, "rising", "falling", "turning_up", "turning_down"},
     "aroon.level": {"above_50", "between_50_0", "near_0", "between_0_-50", "below_-50"},
     "aroon.direction": {None, "rising", "falling", "turning_up", "turning_down"},
-    "macd.rule": {"bullish_cross", "bearish_cross", "above_zero", "below_zero"},
+    "macd.rule": {"bullish_cross", "bearish_cross", "above_zero", "below_zero", "above_signal", "below_signal", "macd_above_signal", "macd_below_signal", "histogram_above_zero", "histogram_below_zero"},
     "ema.rule": {"above", "below", "touch"},
+    "ema_wave.rule": {"any_spike", "both_spikes", "wave_b_spike", "wave_c_spike", "above", "below", "crossed_up", "crossed_down"},
     "sma.rule": {"above", "below", "touch"},
     "stochrsi.rule": {"oversold", "overbought", "bullish_cross", "bearish_cross"},
     "adx.rule": {"above", "below", "rising", "falling"},

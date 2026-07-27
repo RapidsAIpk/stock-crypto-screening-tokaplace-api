@@ -259,12 +259,16 @@ def _stochrsi_decision(rule):
 # =========================================================
 
 def handle_lrc(asset, candles, config):
+    deviation = config.get("deviation", config.get("devlen"))
+    upper_dev = config.get("upper_dev", deviation if deviation is not None else 2.0)
+    lower_dev = config.get("lower_dev", deviation if deviation is not None else 2.0)
 
     channel = compute_lrc_channel(
         candles,
         length=config.get("length", 100),
-        upper_dev=config.get("upper_dev", 2.0),
-        lower_dev=config.get("lower_dev", 2.0),
+        upper_dev=upper_dev,
+        lower_dev=lower_dev,
+        source=config.get("source", "close"),
     )
 
     if not channel:
@@ -541,6 +545,17 @@ def handle_ema(asset, candles, config):
     return True, build_ema_sticker(candles, config)
 
 
+def handle_ema_wave(asset, candles, config):
+
+    wave_config = dict(config or {})
+    wave_config.setdefault("mode", "ema_wave")
+
+    if not evaluate_ema_rules(candles, wave_config):
+        return False, None
+
+    return True, build_ema_sticker(candles, wave_config)
+
+
 def handle_macd(asset, candles, config):
 
     macd_data = compute_macd(
@@ -548,6 +563,7 @@ def handle_macd(asset, candles, config):
         fast=int(config.get("fast", 12) or 12),
         slow=int(config.get("slow", 26) or 26),
         signal=int(config.get("signal", 9) or 9),
+        source=config.get("source", "close"),
     )
 
     if not evaluate_macd_rules(macd_data, config):
@@ -721,6 +737,7 @@ INDICATOR_REGISTRY = {
     "adx": handle_trendy_adx,
     "vlr": handle_vlr,
     "ema": handle_ema,
+    "ema_wave": handle_ema_wave,
     "macd": handle_macd,
     "volume": handle_volume,
     "relative_volume": handle_relative_volume,
@@ -824,7 +841,7 @@ def _handle_macd_snapshot(asset, snapshot, config):
     macd_data = {
         "macd": np.array([point["macd"] for point in points], dtype=float),
         "signal": np.array([point["signal"] for point in points], dtype=float),
-        "hist": np.array([point.get("hist", 0.0) for point in points], dtype=float),
+        "hist": np.array([point.get("hist", point.get("histogram", 0.0)) for point in points], dtype=float),
     }
 
     if len(macd_data["macd"]) < 2 and config.get("rule") in {"bullish_cross", "bearish_cross"}:

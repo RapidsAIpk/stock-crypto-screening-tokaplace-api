@@ -327,6 +327,9 @@ def _confluence_sources_from_config(config):
                 "width_coeff": _config_value(source, "width_coeff"),
                 "upper_dev": _config_value(source, "upper_dev"),
                 "lower_dev": _config_value(source, "lower_dev"),
+                "deviation": _config_value(source, "deviation"),
+                "devlen": _config_value(source, "devlen"),
+                "source": _config_value(source, "source"),
                 "window_type": _config_value(source, "window_type"),
                 "interval_step": _config_value(source, "interval_step"),
                 "wait_for_break": _config_value(source, "wait_for_break"),
@@ -351,6 +354,9 @@ def _confluence_sources_from_config(config):
                 "width_coeff": None,
                 "upper_dev": None,
                 "lower_dev": None,
+                "deviation": None,
+                "devlen": None,
+                "source": None,
                 "window_type": None,
                 "interval_step": None,
                 "wait_for_break": None,
@@ -365,11 +371,13 @@ def _compute_channel_for_source(candles, source):
     channel_type = source["channel_type"]
 
     if channel_type == "lrc":
+        deviation = source.get("deviation", source.get("devlen"))
         return compute_lrc_channel(
             candles,
             length=_safe_int(source.get("length"), 100, minimum=2),
-            upper_dev=float(source.get("upper_dev") if source.get("upper_dev") is not None else 2.0),
-            lower_dev=float(source.get("lower_dev") if source.get("lower_dev") is not None else 2.0),
+            upper_dev=float(source.get("upper_dev") if source.get("upper_dev") is not None else (deviation if deviation is not None else 2.0)),
+            lower_dev=float(source.get("lower_dev") if source.get("lower_dev") is not None else (deviation if deviation is not None else 2.0)),
+            source=source.get("source") or "close",
         )
 
     if channel_type == "regression":
@@ -498,8 +506,22 @@ def required_candles_for_indicators(indicators):
             lr_length = _safe_int(config.get("lr_length"), 11, minimum=1)
             signal_smoothing = _safe_int(config.get("signal_smoothing"), 11, minimum=1)
             needed = lr_length + signal_smoothing + window + confirmation_window
-        elif name == "ema":
-            needed = _safe_int(config.get("length"), 9, minimum=1) + 1
+        elif name in {"ema", "ema_wave"}:
+            mode = str(config.get("mode", config.get("type", "")) or "").strip().lower()
+            is_wave = name == "ema_wave" or not (
+                mode in {"price", "simple", "simple_ema", "ema_price", "moving_average"}
+                or config.get("simple_ema") is True
+            )
+            if is_wave:
+                longest_wave = max(
+                    _safe_int(config.get("wave_a_length", config.get("alength")), 5, minimum=1),
+                    _safe_int(config.get("wave_b_length", config.get("blength")), 25, minimum=1),
+                    _safe_int(config.get("wave_c_length", config.get("clength")), 50, minimum=1),
+                )
+                smoothing = _safe_int(config.get("wave_sma_length", config.get("lengthMA", config.get("length_ma"))), 4, minimum=1)
+                needed = longest_wave + smoothing + 1
+            else:
+                needed = _safe_int(config.get("length"), 9, minimum=1) + 1
         elif name == "macd":
             fast = _safe_int(config.get("fast"), 12, minimum=1)
             slow = _safe_int(config.get("slow"), 26, minimum=1)

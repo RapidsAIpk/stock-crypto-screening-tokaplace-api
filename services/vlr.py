@@ -33,6 +33,67 @@ DEFAULT_PERIOD_INCREMENT = 12
 MAX_REGRESSIONS = 10  # matches the source script's input maxval
 
 LINE_NAMES = ["Red", "Green", "Blue"]
+LINE_KEYS = {
+    "red": 0,
+    "r1": 0,
+    "fast": 0,
+    "green": 1,
+    "r2": 1,
+    "middle": 1,
+    "blue": 2,
+    "r3": 2,
+    "slow": 2,
+}
+CONDITION_PRESETS = {
+    "bullish_extreme": {
+        "logic": "all",
+        "conditions": [
+            {"type": "zone", "line": "red", "zone": "positive_extreme"},
+            {"type": "zone", "line": "green", "zone": "positive_extreme"},
+            {"type": "zone", "line": "blue", "zone": "positive"},
+        ],
+    },
+    "bearish_extreme": {
+        "logic": "all",
+        "conditions": [
+            {"type": "zone", "line": "red", "zone": "negative_extreme"},
+            {"type": "zone", "line": "green", "zone": "negative_extreme"},
+            {"type": "zone", "line": "blue", "zone": "negative"},
+        ],
+    },
+    "extreme_watch": {
+        "logic": "any",
+        "conditions": [
+            {"type": "preset", "name": "bullish_extreme"},
+            {"type": "preset", "name": "bearish_extreme"},
+        ],
+    },
+    "bullish_order": {
+        "logic": "all",
+        "conditions": [
+            {"type": "line_order", "direction": "bullish", "lines": ["red", "green", "blue"]},
+        ],
+    },
+    "bearish_order": {
+        "logic": "all",
+        "conditions": [
+            {"type": "line_order", "direction": "bearish", "lines": ["red", "green", "blue"]},
+        ],
+    },
+    "order_watch": {
+        "logic": "any",
+        "conditions": [
+            {"type": "preset", "name": "bullish_order"},
+            {"type": "preset", "name": "bearish_order"},
+        ],
+    },
+    "legacy_reversal": {
+        "logic": "all",
+        "conditions": [
+            {"type": "reversal", "reversal_type": "both", "direction": "both"},
+        ],
+    },
+}
 
 BULLISH_PAIR_IDS = ["red_below_green", "red_below_blue", "green_below_blue", "red_below_both"]
 BEARISH_PAIR_IDS = ["red_above_green", "red_above_blue", "green_above_blue", "red_above_both"]
@@ -173,10 +234,10 @@ def _resolve_window(config, key="timing_candles", default=1):
     if value is None:
         return default
     try:
-        candles_ago = int(value)
+        window = int(value)
     except (TypeError, ValueError):
         return default
-    return max(1, candles_ago + 1)
+    return max(1, window)
 
 
 def _event_within_window(n, window, predicate):
@@ -185,6 +246,118 @@ def _event_within_window(n, window, predicate):
         if predicate(idx):
             return True
     return False
+
+
+def _configured_conditions(config):
+    conditions = config.get("vlr_conditions")
+    if conditions is None:
+        conditions = config.get("conditions")
+    if isinstance(conditions, dict):
+        return conditions
+    if not isinstance(conditions, list):
+        preset_conditions, _ = _conditions_from_preset(config)
+        return preset_conditions
+    return [condition for condition in conditions if isinstance(condition, dict)]
+
+
+def _condition_logic(config):
+    _, preset_logic = _conditions_from_preset(config)
+    if preset_logic and not (config.get("condition_logic") or config.get("logic")):
+        return preset_logic
+    logic = str(config.get("condition_logic") or config.get("logic") or "all").strip().lower()
+    return "any" if logic in {"any", "or"} else "all"
+
+
+def _condition_operator(condition, default="all"):
+    logic = str(
+        condition.get("operator")
+        or condition.get("condition_logic")
+        or condition.get("logic")
+        or condition.get("mode")
+        or default
+    ).strip().lower()
+    if logic in {"any", "or"}:
+        return "any"
+    if logic in {"not", "none"}:
+        return "not"
+    return "all"
+
+
+def _condition_rules(condition):
+    rules = condition.get("rules")
+    if rules is None:
+        rules = condition.get("conditions")
+    if rules is None:
+        rules = condition.get("clauses")
+    if isinstance(rules, dict):
+        return [rules]
+    if isinstance(rules, list):
+        return [rule for rule in rules if isinstance(rule, dict)]
+    return []
+
+
+def _is_condition_group(condition):
+    if not isinstance(condition, dict):
+        return False
+    if str(condition.get("type") or condition.get("kind") or condition.get("id") or "").strip():
+        return False
+    return bool(_condition_rules(condition))
+
+
+def _extend_unique(target, source):
+    for tag in source:
+        if tag not in target:
+            target.append(tag)
+
+
+def _conditions_from_preset(config):
+    preset_name = str(
+        config.get("condition_preset")
+        or config.get("vlr_preset")
+        or config.get("setup")
+        or config.get("strategy")
+        or ""
+    ).strip().lower()
+    preset = CONDITION_PRESETS.get(preset_name)
+    if not preset:
+        return [], None
+    return list(preset["conditions"]), preset.get("logic", "all")
+
+
+def _line_index(line):
+    if isinstance(line, int):
+        return line
+    text = str(line or "red").strip().lower()
+    if text.startswith("r") and text[1:].isdigit():
+        return int(text[1:]) - 1
+    return LINE_KEYS.get(text)
+
+
+def _line_series(r_series_list, line):
+    idx = _line_index(line)
+    if idx is None or idx < 0 or idx >= len(r_series_list):
+        return None
+    return r_series_list[idx]
+
+
+def _line_value(r_series_list, line, idx):
+    series = _line_series(r_series_list, line)
+    if series is None:
+        return None
+    return _v(series, idx)
+
+
+def _clause_window(config, clause, default_window):
+    if "window" in clause:
+        try:
+            return max(1, int(clause.get("window")))
+        except (TypeError, ValueError):
+            return default_window
+    if "candles_since" in clause:
+        return _resolve_window(clause, key="candles_since", default=default_window)
+    if "timing_candles" in clause:
+        return _resolve_window(clause, key="timing_candles", default=default_window)
+    return default_window
 
 
 # =========================================================
@@ -241,6 +414,268 @@ def _evaluate_reversal(red_r, reversal_type, direction, n, window, matched_tags)
         matched = True
 
     return matched
+
+
+def _reversal_matches_at(red_r, reversal_type, direction, idx, matched_tags=None):
+    check_bullish = direction in ("bullish", "both")
+    check_bearish = direction in ("bearish", "both")
+    check_exact = reversal_type in ("exact", "both")
+    check_early = reversal_type in ("early", "both")
+
+    if check_bullish and check_exact and _exact_bullish_reversal(red_r, idx):
+        if matched_tags is not None:
+            matched_tags.append("Exact Bullish Reversal Watch")
+        return True
+    if check_bullish and check_early and _early_bullish_reversal(red_r, idx):
+        if matched_tags is not None:
+            matched_tags.append("Early Bullish Reversal Watch")
+        return True
+    if check_bearish and check_exact and _exact_bearish_reversal(red_r, idx):
+        if matched_tags is not None:
+            matched_tags.append("Exact Bearish Reversal Watch")
+        return True
+    if check_bearish and check_early and _early_bearish_reversal(red_r, idx):
+        if matched_tags is not None:
+            matched_tags.append("Early Bearish Reversal Watch")
+        return True
+
+    return False
+
+
+def _line_order_matches(r_series_list, idx, clause):
+    direction = str(clause.get("direction") or "").strip().lower()
+    if direction == "bullish":
+        lines = clause.get("lines") or ["red", "green", "blue"]
+        operator = str(clause.get("operator") or "above").strip().lower()
+    elif direction == "bearish":
+        lines = clause.get("lines") or ["red", "green", "blue"]
+        operator = str(clause.get("operator") or "below").strip().lower()
+    else:
+        lines = clause.get("lines") or ["red", "green", "blue"]
+        operator = str(clause.get("operator") or clause.get("op") or "above").strip().lower()
+
+    values = [_line_value(r_series_list, line, idx) for line in lines]
+    if len(values) < 2 or any(value is None for value in values):
+        return False
+
+    tolerance = max(0.0, float(clause.get("tolerance") or clause.get("tolerance_pct") or 0))
+    pairs = zip(values, values[1:])
+    if operator in {"above", "gt", ">", "descending"}:
+        return all(left > right - tolerance for left, right in pairs)
+    if operator in {"below", "lt", "<", "ascending"}:
+        return all(left < right + tolerance for left, right in pairs)
+    return False
+
+
+def _compare_right_value(r_series_list, idx, clause):
+    if "value" in clause:
+        try:
+            return float(clause.get("value"))
+        except (TypeError, ValueError):
+            return None
+    return _line_value(r_series_list, clause.get("right") or "green", idx)
+
+
+def _compare_matches(r_series_list, idx, clause):
+    left = _line_value(r_series_list, clause.get("left") or clause.get("line") or "red", idx)
+    right = _compare_right_value(r_series_list, idx, clause)
+    if left is None or right is None:
+        return False
+
+    operator = str(clause.get("operator") or clause.get("op") or "above").strip().lower()
+    tolerance = max(0.0, float(clause.get("tolerance") or clause.get("tolerance_pct") or 0))
+    if operator in {"above", "gt", ">"}:
+        return left > right - tolerance
+    if operator in {"below", "lt", "<"}:
+        return left < right + tolerance
+    if operator in {"gte", ">=", "above_or_equal"}:
+        return left >= right - tolerance
+    if operator in {"lte", "<=", "below_or_equal"}:
+        return left <= right + tolerance
+    if operator in {"near", "equal", "eq"}:
+        return abs(left - right) <= tolerance
+    return False
+
+
+def _zone_matches(r_series_list, idx, clause):
+    value = _line_value(r_series_list, clause.get("line") or "red", idx)
+    if value is None:
+        return False
+
+    zone = str(clause.get("zone") or "").strip().lower()
+    tolerance = max(0.0, float(clause.get("tolerance") or clause.get("tolerance_pct") or 0))
+    exact_level = float(clause.get("exact_level", 0.80) or 0.80)
+    early_level = float(clause.get("early_level", 0.70) or 0.70)
+
+    if zone in {"bullish_exact", "positive_extreme", "downtrend_extreme"}:
+        return value >= exact_level - tolerance
+    if zone in {"bullish_early", "positive_early"}:
+        return early_level - tolerance <= value < exact_level + tolerance
+    if zone in {"bearish_exact", "negative_extreme", "uptrend_extreme"}:
+        return value <= -exact_level + tolerance
+    if zone in {"bearish_early", "negative_early"}:
+        return -exact_level - tolerance < value <= -early_level + tolerance
+    if zone in {"positive", "above_zero"}:
+        return value > 0 - tolerance
+    if zone in {"negative", "below_zero"}:
+        return value < 0 + tolerance
+    if zone in {"neutral", "near_zero"}:
+        return abs(value) <= tolerance
+    return False
+
+
+def _direction_matches(r_series_list, idx, clause):
+    series = _line_series(r_series_list, clause.get("line") or "red")
+    if series is None:
+        return False
+    direction = str(clause.get("direction") or "").strip().lower()
+    return series_direction_matches(series, idx, direction)
+
+
+def _cross_matches(r_series_list, idx, clause):
+    pair_id = clause.get("pair_id")
+    if pair_id:
+        return _crossing_pair_matches(r_series_list, str(pair_id), idx)
+
+    left = _line_series(r_series_list, clause.get("left") or "red")
+    right_line = clause.get("right")
+    if "value" in clause:
+        try:
+            right = np.full(len(left), float(clause.get("value"))) if left is not None else None
+        except (TypeError, ValueError):
+            return False
+    else:
+        right = _line_series(r_series_list, right_line or "green")
+    if left is None or right is None:
+        return False
+
+    direction = str(clause.get("direction") or "any").strip().lower()
+    if direction in {"below", "down", "bearish", "crossed_below"}:
+        return _crossed_below(left, right, idx)
+    if direction in {"above", "up", "bullish", "crossed_above"}:
+        return _crossed_above(left, right, idx)
+    return _crossed_below(left, right, idx) or _crossed_above(left, right, idx)
+
+
+def _vlr_clause_matches_at(r_series_list, idx, clause, matched_tags=None):
+    clause_type = str(clause.get("type") or clause.get("kind") or clause.get("id") or "").strip().lower()
+
+    if clause_type == "preset":
+        preset_name = str(clause.get("name") or clause.get("preset") or "").strip().lower()
+        preset = CONDITION_PRESETS.get(preset_name)
+        if not preset:
+            matched = False
+        else:
+            preset_matches = [
+                _vlr_clause_matches_at(r_series_list, idx, preset_clause, matched_tags)
+                for preset_clause in preset["conditions"]
+            ]
+            matched = any(preset_matches) if preset.get("logic") == "any" else all(preset_matches)
+    elif clause_type == "reversal":
+        reversal_type = str(clause.get("reversal_type") or "both").strip().lower()
+        direction = str(clause.get("direction") or "both").strip().lower()
+        matched = _reversal_matches_at(r_series_list[0], reversal_type, direction, idx, matched_tags)
+    elif clause_type in {"line_order", "order", "alignment"}:
+        matched = _line_order_matches(r_series_list, idx, clause)
+        if matched and matched_tags is not None:
+            matched_tags.append("Line Order Match")
+    elif clause_type in {"compare", "comparison"}:
+        matched = _compare_matches(r_series_list, idx, clause)
+        if matched and matched_tags is not None:
+            matched_tags.append("Line Comparison Match")
+    elif clause_type in {"zone", "level", "range"}:
+        matched = _zone_matches(r_series_list, idx, clause)
+        if matched and matched_tags is not None:
+            matched_tags.append("Line Zone Match")
+    elif clause_type in {"direction", "slope", "momentum"}:
+        matched = _direction_matches(r_series_list, idx, clause)
+        if matched and matched_tags is not None:
+            matched_tags.append("Line Direction Match")
+    elif clause_type in {"cross", "crossover"}:
+        matched = _cross_matches(r_series_list, idx, clause)
+        if matched and matched_tags is not None:
+            matched_tags.append("Line Cross Match")
+    else:
+        matched = False
+
+    return matched
+
+
+def _vlr_clause_matches_within_window(r_series_list, n, default_window, config, clause, matched_tags):
+    window = _clause_window(config, clause, default_window)
+    start = max(1, n - window)
+    for idx in range(start, n):
+        local_tags = []
+        if _vlr_clause_matches_at(r_series_list, idx, clause, local_tags):
+            for tag in local_tags:
+                if tag not in matched_tags:
+                    matched_tags.append(tag)
+            return True
+    return False
+
+
+def _vlr_condition_matches(r_series_list, n, default_window, config, condition, matched_tags):
+    if not isinstance(condition, dict):
+        return False
+
+    if _is_condition_group(condition):
+        rules = _condition_rules(condition)
+        operator = _condition_operator(condition, default=_condition_logic(config))
+        group_window = _clause_window(config, condition, default_window)
+
+        if operator == "not":
+            local_tags = []
+            matched = any(
+                _vlr_condition_matches(r_series_list, n, group_window, config, rule, local_tags)
+                for rule in rules
+            )
+            return not matched
+
+        if operator == "any":
+            for rule in rules:
+                local_tags = []
+                if _vlr_condition_matches(r_series_list, n, group_window, config, rule, local_tags):
+                    _extend_unique(matched_tags, local_tags)
+                    return True
+            return False
+
+        collected_tags = []
+        for rule in rules:
+            local_tags = []
+            if not _vlr_condition_matches(r_series_list, n, group_window, config, rule, local_tags):
+                return False
+            _extend_unique(collected_tags, local_tags)
+        _extend_unique(matched_tags, collected_tags)
+        return True
+
+    return _vlr_clause_matches_within_window(r_series_list, n, default_window, config, condition, matched_tags)
+
+
+def _evaluate_dynamic_vlr_conditions(r_series_list, candles, config, n, window, matched_tags):
+    conditions = _configured_conditions(config)
+    if not conditions:
+        return None
+
+    if isinstance(conditions, dict):
+        return _vlr_condition_matches(r_series_list, n, window, config, conditions, matched_tags)
+
+    logic = _condition_logic(config)
+    if logic == "any":
+        for condition in conditions:
+            local_tags = []
+            if _vlr_condition_matches(r_series_list, n, window, config, condition, local_tags):
+                _extend_unique(matched_tags, local_tags)
+                return True
+        return False
+
+    collected_tags = []
+    for condition in conditions:
+        local_tags = []
+        if not _vlr_condition_matches(r_series_list, n, window, config, condition, local_tags):
+            return False
+        _extend_unique(collected_tags, local_tags)
+    _extend_unique(matched_tags, collected_tags)
+    return True
 
 
 # =========================================================
@@ -443,7 +878,11 @@ def evaluate_vlr_rules(computed, candles, config):
 
     matched_tags = []
 
-    if not _evaluate_reversal(r_series_list[0], reversal_type, direction, n, window, matched_tags):
+    dynamic_result = _evaluate_dynamic_vlr_conditions(r_series_list, candles, config, n, window, matched_tags)
+    if dynamic_result is None:
+        if not _evaluate_reversal(r_series_list[0], reversal_type, direction, n, window, matched_tags):
+            return False, []
+    elif not dynamic_result:
         return False, []
 
     if config.get("crossing_confirmation"):

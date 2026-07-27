@@ -1,4 +1,4 @@
-# Linear Regression Channel [jwammo12] — TradingView checklist
+# Linear Regression Channel [LonesomeTheBlue] — TradingView checklist
 
 Compare production pass lists below against your TradingView charts.
 

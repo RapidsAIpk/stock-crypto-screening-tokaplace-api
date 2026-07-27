@@ -160,31 +160,72 @@ def pine_linreg_slope_intercept(window: np.ndarray) -> tuple[float, float]:
     return float(slope), float(intercept)
 
 
-def jwammo12_channel(closes: np.ndarray, length: int, deviation_mult: float) -> dict[str, np.ndarray]:
-    closes = as_float_array(closes)
-    middle = np.full(len(closes), NAN, dtype=float)
-    upper = np.full(len(closes), NAN, dtype=float)
-    lower = np.full(len(closes), NAN, dtype=float)
+def lonesomeblue_linreg_channel(
+    values: np.ndarray,
+    length: int,
+    upper_dev: float = 2.0,
+    lower_dev: float = 2.0,
+) -> dict[str, np.ndarray | float]:
+    """LonesomeTheBlue Linear Regression Channel `get_channel()` port.
 
-    lrc = rolling_linreg(closes, length, offset=0)
-    lrc1 = rolling_linreg(closes, length, offset=1)
+    The TradingView script refits one static channel over the latest `length`
+    bars. Its deviation loop intentionally compares `src[x]` to
+    `slope * (len - x) + intercept`; keep that off-by-one expression literal
+    for parity instead of replacing it with a corrected residual formula.
+    """
+    values = as_float_array(values)
+    length = int(length)
+    if length <= 0 or len(values) < length:
+        empty = np.array([], dtype=float)
+        return {
+            "middle": empty,
+            "upper": empty,
+            "lower": empty,
+            "deviation": NAN,
+            "slope": NAN,
+            "intercept": NAN,
+            "end": NAN,
+        }
 
-    for index in range(length - 1, len(closes)):
-        if not np.isfinite(lrc[index]) or not np.isfinite(lrc1[index]):
-            continue
-        lr_slope = float(lrc[index] - lrc1[index])
-        lr_intercept = float(lrc[index] - lr_slope * (length - 1))
-        deviation_sum = 0.0
-        for offset in range(length):
-            source_value = closes[index - offset]
-            fitted = lr_slope * (length - 1 - offset) + lr_intercept
-            deviation_sum += (source_value - fitted) ** 2
-        deviation = math.sqrt(deviation_sum / length)
-        middle[index] = lrc[index]
-        upper[index] = lrc[index] + deviation * deviation_mult
-        lower[index] = lrc[index] - deviation * deviation_mult
+    window = values[-length:]
+    if np.any(~np.isfinite(window)):
+        empty = np.array([], dtype=float)
+        return {
+            "middle": empty,
+            "upper": empty,
+            "lower": empty,
+            "deviation": NAN,
+            "slope": NAN,
+            "intercept": NAN,
+            "end": NAN,
+        }
 
-    return {"middle": middle, "upper": upper, "lower": lower}
+    x = np.arange(length, dtype=float)
+    slope, _poly_intercept = np.polyfit(x, window, 1)
+    mid = float(np.sum(window) / length)
+    intercept = mid - slope * math.floor(length / 2) + ((1 - (length % 2)) / 2.0) * slope
+    end = intercept + slope * (length - 1)
+
+    deviation_sum = 0.0
+    current_first = window[::-1]
+    for offset, source_value in enumerate(current_first):
+        fitted = slope * (length - offset) + intercept
+        deviation_sum += (float(source_value) - fitted) ** 2
+    deviation = math.sqrt(deviation_sum / length)
+
+    middle = intercept + slope * x
+    upper = middle + deviation * float(upper_dev)
+    lower = middle - deviation * float(lower_dev)
+
+    return {
+        "middle": middle,
+        "upper": upper,
+        "lower": lower,
+        "deviation": deviation,
+        "slope": float(slope),
+        "intercept": float(intercept),
+        "end": float(end),
+    }
 
 
 def _dw_filtered_std(
