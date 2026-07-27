@@ -6,6 +6,7 @@ import numpy as np
 
 from .confirmation_oracle import confirmation_matches
 from .custom_engine import (
+    ema_wave,
     linear_regression_candles,
     lrc,
     regression_channel,
@@ -104,16 +105,36 @@ def evaluate_standard(name: str, candles: list[dict[str, Any]], config: dict[str
         return _evidence(name, passed, index, dates, {key: finite_at(value, index or 0) for key, value in output.items()})
     if name == "macd":
         macd, signal = output["macd"], output["signal"]
-        index = last_finite_index(signal)
-        if index is None or index < 1:
+        rule = str(config.get("rule") or "").strip().lower()
+        if rule in {"above_zero", "below_zero", "histogram_above_zero", "histogram_below_zero"}:
+            series = output["histogram"] if rule.startswith("histogram") else macd
+            index = last_finite_index(series)
+            if index is None:
+                raise InsufficientReferenceData("MACD has no finite output")
+            value = float(series[index])
+            amount = abs(value) * tolerance / 100.0
+            passed = value >= -amount if rule in {"above_zero", "histogram_above_zero"} else value <= amount
+            return _evidence(name, passed, index, dates, {
+                "macd": finite_at(macd, index),
+                "signal": finite_at(signal, index),
+                "histogram": finite_at(output["histogram"], index),
+            })
+
+        pair_indexes = np.flatnonzero(np.isfinite(macd) & np.isfinite(signal))
+        if pair_indexes.size < 2:
             raise InsufficientReferenceData("MACD requires current and previous finite values")
-        m1, m2, s1, s2 = map(float, (macd[index - 1], macd[index], signal[index - 1], signal[index]))
-        delta = tolerance / 100.0; rule = config.get("rule")
+        previous = int(pair_indexes[-2])
+        index = int(pair_indexes[-1])
+        m1, m2, s1, s2 = map(float, (macd[previous], macd[index], signal[previous], signal[index]))
+        previous_amount = max(abs(m1), abs(s1)) * tolerance / 100.0
+        current_amount = max(abs(m2), abs(s2)) * tolerance / 100.0
         passed = {
-            "bullish_cross": m1 <= s1 + delta and m2 >= s2 - delta,
-            "bearish_cross": m1 >= s1 - delta and m2 <= s2 + delta,
-            "above_zero": m2 >= -delta,
-            "below_zero": m2 <= delta,
+            "bullish_cross": m1 <= s1 + previous_amount and m2 >= s2 - current_amount,
+            "bearish_cross": m1 >= s1 - previous_amount and m2 <= s2 + current_amount,
+            "above_signal": m2 >= s2 - current_amount,
+            "macd_above_signal": m2 >= s2 - current_amount,
+            "below_signal": m2 <= s2 + current_amount,
+            "macd_below_signal": m2 <= s2 + current_amount,
         }.get(rule)
         if passed is None: raise ValueError(f"unknown MACD rule '{rule}'")
         return _evidence(name, passed, index, dates, {"previous_macd": m1, "macd": m2, "previous_signal": s1, "signal": s2, "histogram": float(output["histogram"][index])})
@@ -166,6 +187,50 @@ def evaluate_custom(name: str, candles: list[dict[str, Any]], metadata: dict[str
             return zone_ok and direction_ok
         passed, index = _window_match(candles, wt1, config, predicate)
         return _evidence(name, passed, index, dates, {"wt1": finite_at(wt1, index or 0), "wt2": finite_at(wt2, index or 0)})
+    if name == "ema_wave":
+        values = ema_wave(candles, config)
+        wave_a, wave_b, wave_c = values["wave_a"], values["wave_b"], values["wave_c"]
+        finite = np.isfinite(wave_a) & np.isfinite(wave_b) & np.isfinite(wave_c)
+        indexes = np.flatnonzero(finite)
+        if not indexes.size:
+            raise InsufficientReferenceData("EMA Wave has no finite output")
+        rule = str(config.get("rule", "any_spike") or "any_spike").strip().lower()
+        wave_name = str(config.get("wave", "wave_c") or "wave_c").strip().lower()
+        threshold = float(config.get("threshold", 0) or 0)
+        wave_map = {
+            "a": wave_a, "wa": wave_a, "wavea": wave_a, "wave_a": wave_a,
+            "b": wave_b, "wb": wave_b, "waveb": wave_b, "wave_b": wave_b,
+            "c": wave_c, "wc": wave_c, "wavec": wave_c, "wave_c": wave_c,
+        }
+        series = wave_map.get(wave_name, wave_c)
+        def predicate(index: int) -> bool:
+            if rule == "any_spike":
+                return bool(values["wave_b_spike"][index] or values["wave_c_spike"][index])
+            if rule == "both_spikes":
+                return bool(values["wave_b_spike"][index] and values["wave_c_spike"][index])
+            if rule == "wave_b_spike":
+                return bool(values["wave_b_spike"][index])
+            if rule == "wave_c_spike":
+                return bool(values["wave_c_spike"][index])
+            amount = abs(threshold) * tolerance / 100.0
+            current = float(series[index])
+            if rule == "above":
+                return current >= threshold - amount
+            if rule == "below":
+                return current <= threshold + amount
+            if rule == "crossed_up":
+                return index > 0 and np.isfinite(series[index - 1]) and float(series[index - 1]) <= threshold + amount and current >= threshold - amount
+            if rule == "crossed_down":
+                return index > 0 and np.isfinite(series[index - 1]) and float(series[index - 1]) >= threshold - amount and current <= threshold + amount
+            raise ValueError(f"unknown EMA Wave rule '{rule}'")
+        passed, index = _window_match(candles, series, config, predicate)
+        return _evidence(name, passed, index, dates, {
+            "wave_a": finite_at(wave_a, index or 0),
+            "wave_b": finite_at(wave_b, index or 0),
+            "wave_c": finite_at(wave_c, index or 0),
+            "wave_b_spike": bool(values["wave_b_spike"][index]) if index is not None else False,
+            "wave_c_spike": bool(values["wave_c_spike"][index]) if index is not None else False,
+        })
     if name == "linreg_candles":
         eval_candles = candles[:-1] if candles and candles[-1].get("is_closed") is False else candles
         if not eval_candles:

@@ -1,9 +1,14 @@
 # services/regression_channels.py
+
+# =========================================================
+# LINEAR REGRESSION CHANNEL (LRC)
+# =========================================================
+
 from datetime import datetime, timezone
 
 import numpy as np
 
-from services.pine_math import dw_channel_series, jwammo12_channel
+from services.pine_math import dw_channel_series, lonesomeblue_linreg_channel
 from services.utils import detect_touch, confirm_if_needed, humanize_token
 
 
@@ -42,22 +47,28 @@ def compute_lrc_channel(
     length=100,
     upper_dev=2.0,
     lower_dev=2.0,
+    source="close",
 ):
     if len(candles) < length:
         return None
 
-    closes = np.array([c["close"] for c in candles], dtype=float)
-    channel = jwammo12_channel(closes, length, upper_dev)
+    values = _source_series(candles, source)
+    channel = lonesomeblue_linreg_channel(
+        values,
+        length,
+        upper_dev=float(upper_dev),
+        lower_dev=float(lower_dev),
+    )
 
-    middle = channel["middle"][-length:]
-    upper = channel["upper"][-length:]
-    lower = channel["lower"][-length:]
+    middle = channel["middle"]
+    upper = channel["upper"]
+    lower = channel["lower"]
 
     if not np.any(np.isfinite(middle)):
         return None
 
     try:
-        r = np.corrcoef(np.arange(length), closes[-length:])[0, 1]
+        r = np.corrcoef(np.arange(length), values[-length:])[0, 1]
     except Exception:
         r = None
 
@@ -67,7 +78,40 @@ def compute_lrc_channel(
         "lower": lower,
         "r": r,
         "length": length,
+        "source": str(source or "close").strip().lower(),
+        "slope": channel.get("slope"),
+        "deviation": channel.get("deviation"),
+        "intercept": channel.get("intercept"),
+        "end": channel.get("end"),
     }
+
+
+def _source_series(candles, source):
+    normalized = str(source or "close").strip().lower()
+    values = np.zeros(len(candles), dtype=float)
+
+    for index, candle in enumerate(candles):
+        open_ = float(candle["open"])
+        high = float(candle["high"])
+        low = float(candle["low"])
+        close = float(candle["close"])
+
+        if normalized == "open":
+            values[index] = open_
+        elif normalized == "high":
+            values[index] = high
+        elif normalized == "low":
+            values[index] = low
+        elif normalized == "hl2":
+            values[index] = (high + low) / 2.0
+        elif normalized == "hlc3":
+            values[index] = (high + low + close) / 3.0
+        elif normalized == "ohlc4":
+            values[index] = (open_ + high + low + close) / 4.0
+        else:
+            values[index] = close
+
+    return values
 
 
 # =========================================================

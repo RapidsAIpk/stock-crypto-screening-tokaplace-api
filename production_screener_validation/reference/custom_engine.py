@@ -8,7 +8,7 @@ import talib
 from .talib_engine import arrays
 from services.pine_math import (
     dw_channel_series,
-    jwammo12_channel,
+    lonesomeblue_linreg_channel,
     pine_daily_volatility,
     pine_ema,
     pine_range_volatility,
@@ -16,6 +16,7 @@ from services.pine_math import (
     pine_sma,
     rolling_linreg,
 )
+from services.ema import compute_ema_wave
 
 
 def _rolling_regression(values: np.ndarray, length: int) -> np.ndarray:
@@ -41,6 +42,28 @@ def wavetrend(candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str
     return {"wt1": wt1, "wt2": wt2}
 
 
+def ema_wave(candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, np.ndarray]:
+    computed = compute_ema_wave(
+        candles,
+        wave_a_length=config.get("wave_a_length", config.get("alength", 5)),
+        wave_b_length=config.get("wave_b_length", config.get("blength", 25)),
+        wave_c_length=config.get("wave_c_length", config.get("clength", 50)),
+        wave_sma_length=config.get("wave_sma_length", config.get("lengthMA", config.get("length_ma", 4))),
+        cutoff=config.get("cutoff", 10),
+        source=config.get("source", "hlc3"),
+    )
+    if computed is None:
+        empty = np.array([], dtype=float)
+        return {
+            "wave_a": empty,
+            "wave_b": empty,
+            "wave_c": empty,
+            "wave_b_spike": np.array([], dtype=bool),
+            "wave_c_spike": np.array([], dtype=bool),
+        }
+    return computed
+
+
 def linear_regression_candles(candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, np.ndarray]:
     values = arrays(candles)
     lr_length = int(config["lr_length"])
@@ -62,16 +85,34 @@ def linear_regression_candles(candles: list[dict[str, Any]], config: dict[str, A
 
 
 def lrc(candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, np.ndarray | float]:
-    close = arrays(candles)["close"]
+    values = arrays(candles)
+    source_name = str(config.get("source", "close") or "close").strip().lower()
+    if source_name == "open":
+        source = values["open"]
+    elif source_name == "high":
+        source = values["high"]
+    elif source_name == "low":
+        source = values["low"]
+    elif source_name == "hl2":
+        source = (values["high"] + values["low"]) / 2.0
+    elif source_name == "hlc3":
+        source = (values["high"] + values["low"] + values["close"]) / 3.0
+    elif source_name == "ohlc4":
+        source = (values["open"] + values["high"] + values["low"] + values["close"]) / 4.0
+    else:
+        source = values["close"]
     length = int(config["length"])
-    if len(close) < length:
+    if len(source) < length:
         return {"middle": np.array([]), "upper": np.array([]), "lower": np.array([]), "r": np.nan}
-    channel = jwammo12_channel(close, length, float(config.get("upper_dev", 2.0)))
-    middle = channel["middle"][-length:]
-    upper = channel["upper"][-length:]
-    lower = channel["lower"][-length:]
+    deviation = config.get("deviation", config.get("devlen"))
+    upper_dev = float(config.get("upper_dev", deviation if deviation is not None else 2.0))
+    lower_dev = float(config.get("lower_dev", deviation if deviation is not None else 2.0))
+    channel = lonesomeblue_linreg_channel(source, length, upper_dev, lower_dev)
+    middle = channel["middle"]
+    upper = channel["upper"]
+    lower = channel["lower"]
     try:
-        r = float(np.corrcoef(np.arange(length), close[-length:])[0, 1])
+        r = float(np.corrcoef(np.arange(length), source[-length:])[0, 1])
     except Exception:
         r = np.nan
     return {

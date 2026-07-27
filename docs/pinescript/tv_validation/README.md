@@ -11,7 +11,7 @@ Workflow:
 ## Checklists
 
 - [Humble LinReg Candles](./linreg_candles_minimal.md)
-- [Linear Regression Channel [jwammo12]](./lrc_minimal.md)
+- [Linear Regression Channel [LonesomeTheBlue]](./lrc_minimal.md)
 - [Regression Channel [DW]](./regression_minimal.md)
 - [RelVol (stocks)](./relative_volume_minimal.md)
 - [Trend Channels With Liquidity Breaks [ChartPrime]](./trend_minimal.md)

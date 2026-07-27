@@ -10,7 +10,7 @@ Date: 2026-07-15
 
 | File | Purpose |
 |------|---------|
-| `backend/services/pine_math.py` | Shared Pine primitives: EMA, SMA, RMA, LWMA, ALMA, VWMA, rolling `linreg`, jwammo12 LRC bands, Donovan Wall filtered regression, RelVol ratio, range/daily volatility |
+| `backend/services/pine_math.py` | Shared Pine primitives: EMA, SMA, RMA, LWMA, ALMA, VWMA, rolling `linreg`, LonesomeTheBlue LRC channel, Donovan Wall filtered regression, RelVol ratio, range/daily volatility |
 
 ---
 
@@ -30,15 +30,15 @@ Date: 2026-07-15
 
 ---
 
-### 2. Linear Regression Channel [jwammo12]
+### 2. Linear Regression Channel [LonesomeTheBlue]
 
 **Files:** `backend/services/regression_channels.py`, `backend/production_screener_validation/reference/custom_engine.py`
 
 | Change | Before | After |
 |--------|--------|-------|
-| Middle line | Full-window `polyfit` series | Rolling `linreg(close, len, 0)` |
-| Bands | Parallel channel from residual `std` | Point-anchored `lrc ± deviation` using linreg slope from offset-1 diff |
-| Deviation | Population std of polyfit residuals | RMS over window using jwammo12 formula |
+| Middle line | Rolling per-bar regression curve | Single latest-window line from the Pine `get_channel()` formula |
+| Bands | Symmetric bands from one backend multiplier | Configurable `devlen`/`deviation` plus optional separate upper/lower multipliers |
+| Deviation | Guessed legacy residual formula | RMS loop reproduced from LonesomeTheBlue Pine source |
 
 ---
 
@@ -145,7 +145,7 @@ Date: 2026-07-15
 | Indicator | Parity vs TradingView |
 |-----------|----------------------|
 | WaveTrend | **High** |
-| LRC (jwammo12) | **High** |
+| LRC (LonesomeTheBlue) | **High** |
 | DW Regression | **High** (SMA default; other `filter_type` values supported) |
 | LinReg Candles | **High** (screener rules remain backend-specific layer) |
 | Trend Channel | **High** (core geometry); liquidity label partial |

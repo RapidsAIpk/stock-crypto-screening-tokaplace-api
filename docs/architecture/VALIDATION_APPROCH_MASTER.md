@@ -97,7 +97,7 @@ Frozen market data (saved once)
 |-----------|-------------------|---------------------------|
 | WaveTrend | LazyBear | Strong |
 | LinReg Candles | Humble LinReg Candles | Strong |
-| Linear Regression Channel | jwammo12 | Strong |
+| Linear Regression Channel | LonesomeTheBlue | Strong |
 | Regression Channel [DW] | Donovan Wall | Strong |
 | Trend Channels | ChartPrime | Strong (channel shape); liquidity label partial |
 | Relative Volume | RelVol (stocks) | Strong |
@@ -143,7 +143,7 @@ flowchart LR
 |------|------------------|-------------|
 | **WaveTrend** | Alert levels used 35 instead of TradingView’s 60 | Default zone now ±60; values match TV (e.g. WT1 44.70, WT2 37.35 on AMD Jun 30) |
 | **LinReg Candles** | Only close price regressed; wrong smoothing length | Full OHLC regression; signal length 11; values match TV candle body |
-| **Linear Regression Channel** | Wrong band math | Matches jwammo12 rolling regression bands |
+| **Linear Regression Channel** | Wrong channel formula and static multiplier handling | Matches LonesomeTheBlue latest-window regression channel |
 | **DW Regression Channel** | Simple straight-line fit instead of Donovan Wall method | Filtered regression channel (SMA default) |
 | **Trend channels** | Slope check too simplistic | Matches ChartPrime pivot channel logic |
 | **Relative volume** | 20-bar average instead of TV’s 10 | Same formula as `volume / average of prior 10 bars` |

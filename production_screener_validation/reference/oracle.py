@@ -87,7 +87,16 @@ class ReferenceOracle:
     def _channel_respect(candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
         from .custom_engine import lrc, regression_channel, trend_channel
         channel_type = config["channel_type"]
-        defaults = {"length": int(config.get("length", 100)), "upper_dev": float(config.get("upper_dev", 2)), "lower_dev": float(config.get("lower_dev", 2)), "width_coeff": float(config.get("width_coeff", 1)), "window_type": "continuous", "interval_step": 1}
+        deviation = config.get("deviation", config.get("devlen"))
+        defaults = {
+            "length": int(config.get("length", 100)),
+            "source": config.get("source", "close"),
+            "upper_dev": float(config.get("upper_dev", deviation if deviation is not None else 2)),
+            "lower_dev": float(config.get("lower_dev", deviation if deviation is not None else 2)),
+            "width_coeff": float(config.get("width_coeff", 1)),
+            "window_type": "continuous",
+            "interval_step": 1,
+        }
         channel = lrc(candles, defaults) if channel_type == "lrc" else regression_channel(candles, defaults) if channel_type == "regression" else trend_channel(candles, {"length": defaults["length"]})
         key = config.get("line", "middle"); key = {"middle": "middle_line", "upper": "top_line", "lower": "bottom_line"}.get(key, key) if channel_type == "trend" else key
         line = channel.get(key)
@@ -107,7 +116,16 @@ class ReferenceOracle:
         if len(sources) != 2: raise ValueError("confluence requires exactly two explicit sources")
         values = []
         for source in sources:
-            channel_config = {"length": int(source.get("length", 100)), "upper_dev": float(source.get("upper_dev", 2)), "lower_dev": float(source.get("lower_dev", 2)), "width_coeff": float(source.get("width_coeff", 1)), "window_type": source.get("window_type", "continuous"), "interval_step": int(source.get("interval_step", 1))}
+            deviation = source.get("deviation", source.get("devlen"))
+            channel_config = {
+                "length": int(source.get("length", 100)),
+                "source": source.get("source", "close"),
+                "upper_dev": float(source.get("upper_dev", deviation if deviation is not None else 2)),
+                "lower_dev": float(source.get("lower_dev", deviation if deviation is not None else 2)),
+                "width_coeff": float(source.get("width_coeff", 1)),
+                "window_type": source.get("window_type", "continuous"),
+                "interval_step": int(source.get("interval_step", 1)),
+            }
             from .custom_engine import lrc, regression_channel, trend_channel
             channel = lrc(candles, channel_config) if source["channel_type"] == "lrc" else regression_channel(candles, channel_config) if source["channel_type"] == "regression" else trend_channel(candles, channel_config)
             key = source.get("selection", "middle"); key = {"top_zone": "top_line", "bottom_zone": "bottom_line"}.get(key, key)
