@@ -11,6 +11,7 @@ from services.utils import build_indicator_sticker, format_decimal
 
 def compute_macd(candles, fast=12, slow=26, signal=9, source="close"):
 
+    candles = _completed_candles(candles)
     values = _source_series(candles, source)
     fast = int(fast)
     slow = int(slow)
@@ -113,10 +114,10 @@ def evaluate_macd_rules(macd_data, config):
     current_amount = max(abs(m2), abs(s2)) * tolerance / 100.0
 
     if rule == "bullish_cross":
-        return m1 <= (s1 + previous_amount) and m2 >= (s2 - current_amount)
+        return m1 <= (s1 + previous_amount) and m2 > (s2 - current_amount)
 
     if rule == "bearish_cross":
-        return m1 >= (s1 - previous_amount) and m2 <= (s2 + current_amount)
+        return m1 >= (s1 - previous_amount) and m2 < (s2 + current_amount)
 
     if rule in {"macd_above_signal", "above_signal"}:
         return m2 >= s2 - current_amount
@@ -207,6 +208,27 @@ def _source_series(candles, source):
             values[index] = close
 
     return values
+
+
+def _completed_candles(candles):
+    candles = list(candles or [])
+    if not candles:
+        return candles
+
+    latest = candles[-1]
+    if not isinstance(latest, dict):
+        return candles
+
+    if (
+        latest.get("is_closed") is False
+        or latest.get("is_complete") is False
+        or latest.get("complete") is False
+        or latest.get("closed") is False
+        or latest.get("is_live") is True
+    ):
+        return candles[:-1]
+
+    return candles
 
 
 def _compare_histogram(histogram, greater, above_zero):

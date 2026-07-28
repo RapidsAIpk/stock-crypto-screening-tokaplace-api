@@ -65,7 +65,14 @@ from services.vlr import (
 
 from services.ema import evaluate_ema_rules, build_ema_sticker, build_moving_average_sticker, price_matches_ema_rule
 from services.macd import compute_macd, evaluate_macd_rules, build_macd_sticker
-from services.volume import evaluate_volume_spike, build_volume_sticker
+from services.volume import (
+    evaluate_volume_spike,
+    build_volume_sticker,
+    volume_spike_config_warnings,
+    volume_spike_signal_warnings,
+    volume_spike_debug_trace,
+    VolumeSpikeConfigError,
+)
 from services.utils import (
     build_indicator_sticker,
     format_compact_number,
@@ -536,11 +543,59 @@ def handle_macd(asset, candles, config):
 
 
 def handle_volume(asset, candles, config):
+    warnings = volume_spike_config_warnings(config) + volume_spike_signal_warnings(candles, config)
+    if warnings:
+        asset.setdefault("warnings", []).extend(warnings)
 
-    if not evaluate_volume_spike(candles, config):
-        return False, None
+    try:
+        if not evaluate_volume_spike(candles, config):
+            if warnings or config.get("debug") or config.get("trace"):
+                evidence = None
+                if config.get("debug") or config.get("trace"):
+                    evidence = volume_spike_debug_trace(
+                        candles,
+                        config,
+                        symbol=asset.get("symbol"),
+                        timeframe=asset.get("timeframe") or config.get("timeframe"),
+                    )
+                return False, {
+                    "sticker": None,
+                    "evidence": evidence or {},
+                    "warnings": warnings,
+                }
+            return False, None
 
-    return True, build_volume_sticker(candles, config)
+        sticker = build_volume_sticker(candles, config)
+        evidence = None
+        if config.get("debug") or config.get("trace"):
+            evidence = volume_spike_debug_trace(
+                candles,
+                config,
+                symbol=asset.get("symbol"),
+                timeframe=asset.get("timeframe") or config.get("timeframe"),
+            )
+        if evidence or warnings:
+            return True, {
+                "sticker": sticker,
+                "evidence": evidence or {},
+                "warnings": warnings,
+            }
+        return True, sticker
+    except VolumeSpikeConfigError as exc:
+        logger.warning(
+            "Volume Spikes config error symbol=%s error=%s config=%s",
+            asset.get("symbol"),
+            exc,
+            config,
+        )
+        return False, {
+            "sticker": None,
+            "evidence": {
+                "config_error": str(exc),
+                "requested_config": dict(config or {}),
+            },
+            "warnings": warnings,
+        }
 
 
 def handle_relative_volume(asset, candles, config):
@@ -722,6 +777,13 @@ def _snapshot_series(snapshot, name):
         return series
 
     return [series]
+
+
+def _snapshot_config_bool(config, key, default):
+    value = config.get(key, default)
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", "off"}
+    return bool(value)
 
 
 def _safe_percent_returns(closes):
@@ -907,23 +969,94 @@ def _handle_stochrsi_snapshot(asset, snapshot, config):
 
 
 def _handle_volume_snapshot(asset, snapshot, config):
-    volumes = np.array(_snapshot_series(snapshot, "volume"), dtype=float)
-    length = int(config.get("length", 20) or 20)
-    multiplier = float(config.get("multiplier", 2) or 2)
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
+    try:
+        volumes = _snapshot_series(snapshot, "volume")
+        opens = _snapshot_series(snapshot, "open")
+        highs = _snapshot_series(snapshot, "high")
+        lows = _snapshot_series(snapshot, "low")
+        closes = _snapshot_series(snapshot, "close")
+        times = _snapshot_series(snapshot, "time")
 
-    if len(volumes) < length + 1:
-        return False, None
+        if not volumes:
+            return False, None
 
-    avg_volume = np.mean(volumes[-length-1:-1])
-    last_volume = volumes[-1]
+        full_ohlc = all(len(series) == len(volumes) for series in (opens, highs, lows, closes))
+        volume_only_allowed = not (
+            _snapshot_config_bool(config, "only_valid_hl", True)
+            or _snapshot_config_bool(config, "only_hammers_shooters", True)
+            or _snapshot_config_bool(config, "only_same_color", False)
+        )
+        if not full_ohlc and not volume_only_allowed:
+            return False, None
 
-    adjusted_multiplier = max(0.0, multiplier * (1 - tolerance_pct / 100.0))
-    if not last_volume > avg_volume * adjusted_multiplier:
-        return False, None
+        if not full_ohlc:
+            opens = highs = lows = closes = [0.0] * len(volumes)
 
-    candle_like = [{"volume": float(volume)} for volume in volumes.tolist()]
-    return True, build_volume_sticker(candle_like, config)
+        candle_like = []
+        for index, volume in enumerate(volumes):
+            candle = {
+                "open": float(opens[index]),
+                "high": float(highs[index]),
+                "low": float(lows[index]),
+                "close": float(closes[index]),
+                "volume": float(volume),
+            }
+            if len(times) == len(volumes):
+                candle["time"] = times[index]
+            candle_like.append(candle)
+
+        warnings = volume_spike_config_warnings(config) + volume_spike_signal_warnings(candle_like, config)
+        if warnings:
+            asset.setdefault("warnings", []).extend(warnings)
+
+        if not evaluate_volume_spike(candle_like, config):
+            if warnings or config.get("debug") or config.get("trace"):
+                evidence = None
+                if config.get("debug") or config.get("trace"):
+                    evidence = volume_spike_debug_trace(
+                        candle_like,
+                        config,
+                        symbol=asset.get("symbol"),
+                        timeframe=asset.get("timeframe") or config.get("timeframe"),
+                    )
+                return False, {
+                    "sticker": None,
+                    "evidence": evidence or {},
+                    "warnings": warnings,
+                }
+            return False, None
+
+        sticker = build_volume_sticker(candle_like, config)
+        evidence = None
+        if config.get("debug") or config.get("trace"):
+            evidence = volume_spike_debug_trace(
+                candle_like,
+                config,
+                symbol=asset.get("symbol"),
+                timeframe=asset.get("timeframe") or config.get("timeframe"),
+            )
+        if evidence or warnings:
+            return True, {
+                "sticker": sticker,
+                "evidence": evidence or {},
+                "warnings": warnings,
+            }
+        return True, sticker
+    except VolumeSpikeConfigError as exc:
+        logger.warning(
+            "Volume Spikes snapshot config error symbol=%s error=%s config=%s",
+            asset.get("symbol"),
+            exc,
+            config,
+        )
+        return False, {
+            "sticker": None,
+            "evidence": {
+                "config_error": str(exc),
+                "requested_config": dict(config or {}),
+            },
+            "warnings": warnings,
+        }
 
 
 def _handle_relative_volume_snapshot(asset, snapshot, config):
@@ -1122,8 +1255,8 @@ def _compile_selected_indicators(selected_indicators, registry):
 def _normalize_handler_result(result):
     """Handlers may return a sticker string or {sticker, evidence}."""
     if isinstance(result, dict):
-        return result.get("sticker"), result.get("evidence")
-    return result, None
+        return result.get("sticker"), result.get("evidence"), result.get("warnings") or []
+    return result, None, []
 
 
 def apply_indicators(data, selected_indicators):
@@ -1158,7 +1291,9 @@ def apply_indicators(data, selected_indicators):
                     candles,
                     config
                 )
-                sticker, _evidence = _normalize_handler_result(result)
+                sticker, _evidence, warnings = _normalize_handler_result(result)
+                if warnings:
+                    asset.setdefault("warnings", []).extend(warnings)
             except Exception:
                 logger.exception(
                     "Indicator evaluation failed, skipping symbol symbol=%s indicator=%s",
@@ -1202,7 +1337,7 @@ def evaluate_indicator_details(asset, selected_indicators, timeframe_scope=None)
 
     for indicator_name, handler, config in compiled_indicators:
         passed, result = handler(asset, candles, config)
-        sticker, evidence = _normalize_handler_result(result)
+        sticker, evidence, warnings = _normalize_handler_result(result)
         detail = {
             "name": indicator_name,
             "timeframe_scope": timeframe_scope,
@@ -1212,6 +1347,8 @@ def evaluate_indicator_details(asset, selected_indicators, timeframe_scope=None)
         }
         if evidence:
             detail["evidence"] = evidence
+        if warnings:
+            detail["warnings"] = warnings
         details.append(detail)
 
     return details
@@ -1237,7 +1374,10 @@ def apply_indicator_snapshots(data, selected_indicators):
         passed_all = True
 
         for indicator_name, handler, config in compiled_indicators:
-            passed, sticker = handler(asset, snapshot, config)
+            passed, result = handler(asset, snapshot, config)
+            sticker, _evidence, warnings = _normalize_handler_result(result)
+            if warnings:
+                asset.setdefault("warnings", []).extend(warnings)
 
             if not passed:
                 passed_all = False
