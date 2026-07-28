@@ -37,6 +37,7 @@ from services import (  # noqa: E402
     vlr,
     rsi,
     macd,
+    volume,
     utils,
     aroon_oscillator,
     linear_regression_candles,
@@ -1341,6 +1342,37 @@ class IndicatorMathTests(unittest.TestCase):
         # needs deeper history to avoid warm-up-only false positives.
         self.assertEqual(screener.required_candles_for_indicators([indicator]), 120)
 
+    def test_required_candles_for_macd_uses_stable_warmup_floor(self):
+        indicator = SimpleNamespace(
+            name="macd",
+            config={"fast": 12, "slow": 26, "signal": 9},
+        )
+        # The formula minimum is only 37 candles, but the recursive EMA legs need
+        # deeper history to keep latest-cross timing aligned with TradingView.
+        self.assertEqual(screener.required_candles_for_indicators([indicator]), 200)
+
+        raised = SimpleNamespace(
+            name="macd",
+            config={"fast": 12, "slow": 26, "signal": 9, "min_history": 260},
+        )
+        self.assertEqual(screener.required_candles_for_indicators([raised]), 260)
+
+        lowered = SimpleNamespace(
+            name="macd",
+            config={"fast": 12, "slow": 26, "signal": 9, "min_history": 50},
+        )
+        self.assertEqual(screener.required_candles_for_indicators([lowered]), 200)
+
+    def test_required_candles_for_volume_uses_tfo_sma_length_default(self):
+        default = SimpleNamespace(name="volume", config={})
+        self.assertEqual(screener.required_candles_for_indicators([default]), 102)
+
+        configured = SimpleNamespace(name="volume", config={"vol_ma": 55})
+        self.assertEqual(screener.required_candles_for_indicators([configured]), 57)
+
+        configured_window = SimpleNamespace(name="volume", config={"vol_ma": 55, "window": 4})
+        self.assertEqual(screener.required_candles_for_indicators([configured_window]), 60)
+
     def test_build_regression_sticker_includes_line_wording(self):
         sticker = regression_channels.build_regression_sticker(
             "LRC",
@@ -1470,6 +1502,41 @@ class IndicatorMathTests(unittest.TestCase):
             macd.evaluate_macd_rules(macd_data, {"rule": "bullish_cross"})
         )
 
+    def test_macd_bullish_cross_requires_latest_completed_fresh_cross(self):
+        macd_data = {
+            "macd": np.array([-0.02, 0.03, 0.05], dtype=float),
+            "signal": np.array([0.01, 0.02, 0.04], dtype=float),
+            "hist": np.array([-0.03, 0.01, 0.01], dtype=float),
+        }
+
+        self.assertFalse(macd.evaluate_macd_rules(macd_data, {"rule": "bullish_cross"}))
+        self.assertTrue(macd.evaluate_macd_rules(macd_data, {"rule": "above_signal"}))
+
+    def test_macd_compute_ignores_explicit_incomplete_latest_candle_for_crosses(self):
+        closed_candles = []
+        for index, close in enumerate([10.0, 9.7, 9.4, 9.1, 8.9, 8.7, 8.6, 8.65, 8.8, 9.05, 9.3, 9.55]):
+            closed_candles.append({
+                "open": close,
+                "high": close + 0.2,
+                "low": close - 0.2,
+                "close": close,
+                "is_closed": True,
+            })
+        with_live_candle = closed_candles + [{
+            "open": 9.55,
+            "high": 12.0,
+            "low": 9.4,
+            "close": 12.0,
+            "is_closed": False,
+        }]
+
+        closed_only = macd.compute_macd(closed_candles, fast=3, slow=6, signal=3)
+        trimmed = macd.compute_macd(with_live_candle, fast=3, slow=6, signal=3)
+
+        self.assertEqual(len(trimmed["macd"]), len(closed_only["macd"]))
+        np.testing.assert_allclose(trimmed["macd"], closed_only["macd"], equal_nan=True)
+        np.testing.assert_allclose(trimmed["signal"], closed_only["signal"], equal_nan=True)
+
     def test_macd_uses_chris_moody_sma_signal_formula(self):
         candles = []
         for index in range(80):
@@ -1550,6 +1617,386 @@ class IndicatorMathTests(unittest.TestCase):
         latest = np.flatnonzero(np.isfinite(high_macd["macd"]) & np.isfinite(high_macd["signal"]))[-1]
         expected_rule = "above_signal" if high_macd["macd"][latest] >= high_macd["signal"][latest] else "below_signal"
         self.assertTrue(macd.evaluate_macd_rules(high_macd, {"rule": expected_rule}))
+
+    def test_volume_spike_matches_tfo_bullish_confirmed_previous_candle(self):
+        candles = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+        config = {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}
+
+        result = volume.compute_volume_spikes(candles, config)
+
+        self.assertFalse(volume.evaluate_volume_spike(candles[:-1], config))
+        self.assertTrue(volume.evaluate_volume_spike(candles, config))
+        self.assertTrue(result["candidate_bullish"][3])
+        self.assertTrue(result["result_bullish"][4])
+
+    def test_volume_spike_matches_tfo_bearish_confirmed_previous_candle(self):
+        candles = [
+            {"open": 10.0, "high": 10.3, "low": 9.6, "close": 9.9, "volume": 100.0},
+            {"open": 9.9, "high": 10.2, "low": 9.5, "close": 9.8, "volume": 100.0},
+            {"open": 9.8, "high": 10.4, "low": 9.7, "close": 10.0, "volume": 100.0},
+            {"open": 9.2, "high": 12.0, "low": 9.0, "close": 9.3, "volume": 1000.0},
+            {"open": 9.4, "high": 10.5, "low": 9.1, "close": 9.6, "volume": 100.0},
+        ]
+        config = {"vol_ma": 3, "vol_x": 1.5, "rule": "bearish"}
+
+        result = volume.compute_volume_spikes(candles, config)
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, config))
+        self.assertTrue(result["candidate_bearish"][3])
+        self.assertTrue(result["result_bearish"][4])
+
+    def test_volume_spike_filters_are_dynamic(self):
+        candles = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"open": 10.0, "high": 10.6, "low": 9.0, "close": 9.4, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 8.8, "close": 9.8, "volume": 100.0},
+        ]
+
+        strict_config = {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}
+        relaxed_config = {
+            "vol_ma": 3,
+            "vol_x": 1.5,
+            "rule": "bullish",
+            "only_valid_hl": False,
+            "only_hammers_shooters": False,
+        }
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, strict_config))
+        self.assertTrue(volume.evaluate_volume_spike(candles, relaxed_config))
+
+    def test_volume_spike_legacy_aliases_normalize_to_tfo_inputs(self):
+        config, error = volume.normalize_volume_spike_config({"length": 20, "multiplier": 2, "action": "long"})
+
+        self.assertIsNone(error)
+        self.assertEqual(config["vol_ma"], 20)
+        self.assertEqual(config["vol_x"], 2.0)
+        self.assertEqual(config["rule"], "bullish")
+
+    def test_volume_spike_legacy_alias_flag_remains_compatible(self):
+        config, error = volume.normalize_volume_spike_config({
+            "length": 20,
+            "multiplier": 2,
+            "allow_legacy_aliases": True,
+        })
+
+        self.assertIsNone(error)
+        self.assertEqual(config["vol_ma"], 20)
+        self.assertEqual(config["vol_x"], 2.0)
+
+    def test_volume_spike_config_warnings_explain_validation_mismatch_risk(self):
+        warnings = volume.volume_spike_config_warnings({"length": 20, "multiplier": 2})
+        codes = {warning["code"] for warning in warnings}
+
+        self.assertIn("VOLUME_SPIKES_LEGACY_ALIASES", codes)
+        self.assertIn("VOLUME_SPIKES_TV_DEFAULT_MISMATCH_RISK", codes)
+        alias = next(warning for warning in warnings if warning["code"] == "VOLUME_SPIKES_LEGACY_ALIASES")
+        self.assertEqual(alias["effective_config"]["vol_ma"], 20)
+        self.assertEqual(alias["effective_config"]["vol_x"], 2.0)
+
+    def test_volume_spike_custom_canonical_config_warns_when_different_from_tv_defaults(self):
+        warnings = volume.volume_spike_config_warnings({"vol_ma": 20, "vol_x": 2})
+        codes = {warning["code"] for warning in warnings}
+
+        self.assertIn("VOLUME_SPIKES_TV_DEFAULT_MISMATCH_RISK", codes)
+        mismatch = next(warning for warning in warnings if warning["code"] == "VOLUME_SPIKES_TV_DEFAULT_MISMATCH_RISK")
+        self.assertEqual(mismatch["effective_config"]["vol_ma"], 20)
+        self.assertEqual(mismatch["effective_config"]["vol_x"], 2.0)
+
+    def test_volume_spike_conflicting_aliases_are_rejected(self):
+        _config, error = volume.normalize_volume_spike_config({"length": 20, "vol_ma": 100})
+
+        self.assertIn("Conflicting Volume Spikes config aliases", error)
+        with self.assertRaises(volume.VolumeSpikeConfigError):
+            volume.evaluate_volume_spike([], {"length": 20, "vol_ma": 100})
+
+    def test_volume_spike_unsupported_rule_is_rejected(self):
+        _config, error = volume.normalize_volume_spike_config({"rule": "above"})
+
+        self.assertIn("Unsupported Volume Spikes rule", error)
+        with self.assertRaises(volume.VolumeSpikeConfigError):
+            volume.evaluate_volume_spike([], {"rule": "above"})
+
+    def test_volume_spike_equal_threshold_does_not_pass(self):
+        candles = [
+            {"open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.1, "high": 10.6, "low": 9.9, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 10.0, "close": 10.3, "volume": 100.0},
+            {"open": 10.5, "high": 10.8, "low": 8.0, "close": 10.4, "volume": 200.0},
+            {"open": 10.3, "high": 10.6, "low": 9.0, "close": 10.1, "volume": 100.0},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 2.0, "rule": "bullish"}))
+
+    def test_volume_spike_tolerance_does_not_change_pine_threshold(self):
+        candles = [
+            {"open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.1, "high": 10.6, "low": 9.9, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 10.0, "close": 10.3, "volume": 100.0},
+            {"open": 10.5, "high": 10.8, "low": 8.0, "close": 10.4, "volume": 190.0},
+            {"open": 10.3, "high": 10.6, "low": 9.0, "close": 10.1, "volume": 100.0},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 2.0, "rule": "bullish", "tolerance_pct": 10}))
+
+    def test_volume_spike_requires_sma_and_neighbor_history(self):
+        insufficient_sma = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 8.0, "close": 10.0, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+        insufficient_neighbors = insufficient_sma[-2:]
+
+        self.assertFalse(volume.evaluate_volume_spike(insufficient_sma, {"vol_ma": 4, "vol_x": 1.5, "rule": "bullish"}))
+        self.assertFalse(volume.evaluate_volume_spike(insufficient_neighbors, {"vol_ma": 1, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_same_color_rejects_doji(self):
+        candles = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"open": 10.3, "high": 10.6, "low": 8.0, "close": 10.3, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "only_same_color": True}))
+
+    def test_volume_spike_session_filters_candidate_candle(self):
+        candles = [
+            {"time": 1000, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2000, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3000, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 1711368000, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 1711371600, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+
+        included = {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "session": "1100-1300"}
+        excluded = {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "session": "1300-1400"}
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, included))
+        self.assertFalse(volume.evaluate_volume_spike(candles, excluded))
+
+    def test_volume_spike_overnight_session_filters_candidate_candle(self):
+        candles = [
+            {"time": 1000, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2000, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3000, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 1711413000, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 1711416600, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "session": "2200-0200"}))
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "session": "0100-0300"}))
+
+    def test_volume_spike_excludes_forming_candle_and_requires_confirmation(self):
+        candles = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0, "is_closed": False},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_reversed_input_is_sorted_by_time(self):
+        candles = [
+            {"time": 1, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 4, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 5, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+
+        self.assertTrue(volume.evaluate_volume_spike(list(reversed(candles)), {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_rules_select_expected_side(self):
+        candles = [
+            {"open": 10.0, "high": 10.3, "low": 9.6, "close": 9.9, "volume": 100.0},
+            {"open": 9.9, "high": 10.2, "low": 9.5, "close": 9.8, "volume": 100.0},
+            {"open": 9.8, "high": 10.4, "low": 9.7, "close": 10.0, "volume": 100.0},
+            {"open": 9.2, "high": 12.0, "low": 9.0, "close": 9.3, "volume": 1000.0},
+            {"open": 9.4, "high": 10.5, "low": 9.1, "close": 9.6, "volume": 100.0},
+        ]
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "either"}))
+        self.assertTrue(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bearish"}))
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_default_requires_latest_confirmed_signal(self):
+        candles = [
+            {"time": 1, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 4, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 5, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+            {"time": 6, "open": 9.8, "high": 10.2, "low": 9.4, "close": 9.9, "volume": 100.0},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_window_can_match_recent_confirmed_signal(self):
+        candles = [
+            {"time": 1, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 4, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 5, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+            {"time": 6, "open": 9.8, "high": 10.2, "low": 9.4, "close": 9.9, "volume": 100.0},
+        ]
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "window": 2}))
+
+    def test_volume_spike_reports_stale_tradingview_marker_outside_window(self):
+        candles = [
+            {"time": 1, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 4, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 5, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+            {"time": 6, "open": 9.8, "high": 10.2, "low": 9.4, "close": 9.9, "volume": 100.0},
+        ]
+
+        warnings = volume.volume_spike_signal_warnings(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"})
+
+        self.assertTrue(any(warning["code"] == "VOLUME_SPIKES_STALE_SIGNAL_OUTSIDE_WINDOW" for warning in warnings))
+        self.assertEqual(warnings[0]["signal_age"], 1)
+
+    def test_volume_snapshot_requires_ohlc_for_default_filters(self):
+        asset = {"symbol": "TEST"}
+        snapshot = {"volume": [100.0, 100.0, 100.0, 1000.0, 100.0]}
+
+        passed, _result = indicators._handle_volume_snapshot(asset, snapshot, {"vol_ma": 3, "vol_x": 1.5})
+
+        self.assertFalse(passed)
+
+    def test_volume_snapshot_with_ohlc_uses_tfo_logic(self):
+        asset = {"symbol": "TEST"}
+        snapshot = {
+            "open": [10.0, 10.2, 10.1, 10.3, 10.0],
+            "high": [10.8, 10.7, 10.5, 10.6, 10.4],
+            "low": [9.8, 9.9, 9.6, 8.0, 9.0],
+            "close": [10.2, 10.1, 10.0, 10.1, 9.8],
+            "volume": [100.0, 100.0, 100.0, 1000.0, 100.0],
+        }
+
+        passed, _result = indicators._handle_volume_snapshot(asset, snapshot, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"})
+
+        self.assertTrue(passed)
+
+    def test_volume_scope_hash_alias_config_matches_equivalent_canonical_config(self):
+        request_a = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"length": 20, "multiplier": 2})],
+        )
+        request_b = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 100, "vol_x": 1.5})],
+        )
+
+        request_c = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 20, "vol_x": 2})],
+        )
+
+        self.assertEqual(screener._scope_hash_from_request(request_a), screener._scope_hash_from_request(request_c))
+        self.assertNotEqual(screener._scope_hash_from_request(request_a), screener._scope_hash_from_request(request_b))
+
+    def test_volume_scope_hash_default_matches_explicit_tv_default(self):
+        request_a = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={})],
+        )
+        request_b = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 100, "vol_x": 1.5})],
+        )
+
+        self.assertEqual(screener._scope_hash_from_request(request_a), screener._scope_hash_from_request(request_b))
+
+    def test_volume_scope_hash_separates_custom_canonical_configs(self):
+        base = {
+            "asset_type": "stocks",
+            "symbols": ["BJRI"],
+            "stock_sources": ["zoya"],
+            "compliance_status": None,
+            "asset_categories": None,
+            "sectors": None,
+            "exchanges": None,
+            "excluded_categories": None,
+            "gate_timeframe": None,
+        }
+        request_a = SimpleNamespace(
+            **base,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 20, "vol_x": 2})],
+        )
+        request_b = SimpleNamespace(
+            **base,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 100, "vol_x": 1.5})],
+        )
+
+        self.assertNotEqual(screener._scope_hash_from_request(request_a), screener._scope_hash_from_request(request_b))
+
+    def test_volume_request_warnings_are_returned_even_with_no_results(self):
+        request = SimpleNamespace(
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"length": 20, "multiplier": 2})],
+        )
+        warnings = screener._request_config_warnings(request)
+
+        self.assertTrue(any(warning["code"] == "VOLUME_SPIKES_LEGACY_ALIASES" for warning in warnings))
+
+        response = screener.build_response([], timeframe="1h", scan_stage="single", warnings=warnings)
+
+        self.assertEqual(response["results"], [])
+        self.assertTrue(any(warning["indicator"] == "volume" for warning in response["warnings"]))
 
     def test_rsi_window_matches_within_recent_candles(self):
         rsi_series = [55.0, 48.0, 33.0, 28.0]
