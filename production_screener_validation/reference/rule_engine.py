@@ -15,6 +15,7 @@ from .custom_engine import (
     wavetrend,
 )
 from .talib_engine import calculate, finite_at, last_finite_index
+from services.volatility import compute_volatility as compute_backend_volatility
 
 
 class InsufficientReferenceData(ValueError):
@@ -59,6 +60,95 @@ def _window_match(
         if confirmed:
             return True, index
     return False, last
+
+
+def _current_volume_reference(candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
+    volumes = np.array([float(row.get("volume", 0) or 0) for row in candles], dtype=float)
+    highs = np.array([float(row.get("high", 0) or 0) for row in candles], dtype=float)
+    lows = np.array([float(row.get("low", 0) or 0) for row in candles], dtype=float)
+    closes = np.array([float(row.get("close", 0) or 0) for row in candles], dtype=float)
+    if len(volumes) < 1:
+        raise InsufficientReferenceData("current_volume requires at least 1 candle")
+
+    avg_count = max(1, int(config.get("avg_count", config.get("avgCnt", config.get("average_length", 30))) or 30))
+    atr_length = max(1, int(config.get("atr_length", config.get("length", 14)) or 14))
+    atr_multiplier = float(config.get("atr_multiplier", config.get("atrmultiplier", 0.5)) or 0.5)
+    smoothing = str(config.get("smoothing", "RMA") or "RMA").strip().upper()
+
+    average = float(np.mean(volumes[-avg_count:])) if len(volumes) >= avg_count else None
+    percent = float(np.floor((float(volumes[-1]) / average) * 100.0 + 0.5)) if average and average > 0 else None
+    true_range = _true_range_reference(highs, lows, closes)
+    atr_series = _smooth_reference(true_range, atr_length, smoothing)
+    atr = float(atr_series[-1] * atr_multiplier) if len(atr_series) and np.isfinite(atr_series[-1]) else None
+    return {
+        "current_volume": float(volumes[-1]),
+        "current_average_volume": average,
+        "current_resolution_percent_avg": percent,
+        "atr": atr,
+    }
+
+
+def _true_range_reference(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> np.ndarray:
+    output = np.full(len(highs), np.nan, dtype=float)
+    for index in range(len(highs)):
+        if index == 0:
+            output[index] = highs[index] - lows[index]
+            continue
+        output[index] = max(
+            highs[index] - lows[index],
+            abs(highs[index] - closes[index - 1]),
+            abs(lows[index] - closes[index - 1]),
+        )
+    return output
+
+
+def _smooth_reference(values: np.ndarray, length: int, smoothing: str) -> np.ndarray:
+    if smoothing == "SMA":
+        return _sma_reference(values, length)
+    if smoothing == "EMA":
+        return _ema_reference(values, length)
+    if smoothing == "WMA":
+        return _wma_reference(values, length)
+    return _rma_reference(values, length)
+
+
+def _sma_reference(values: np.ndarray, length: int) -> np.ndarray:
+    output = np.full(len(values), np.nan, dtype=float)
+    for index in range(length - 1, len(values)):
+        output[index] = float(np.mean(values[index - length + 1:index + 1]))
+    return output
+
+
+def _ema_reference(values: np.ndarray, length: int) -> np.ndarray:
+    output = np.full(len(values), np.nan, dtype=float)
+    if not len(values):
+        return output
+    multiplier = 2.0 / (length + 1.0)
+    output[0] = values[0]
+    for index in range(1, len(values)):
+        output[index] = (values[index] - output[index - 1]) * multiplier + output[index - 1]
+    return output
+
+
+def _rma_reference(values: np.ndarray, length: int) -> np.ndarray:
+    output = np.full(len(values), np.nan, dtype=float)
+    for index in range(len(values)):
+        if index < length - 1:
+            output[index] = float(np.mean(values[:index + 1]))
+        elif index == length - 1:
+            output[index] = float(np.mean(values[:length]))
+        else:
+            output[index] = (output[index - 1] * (length - 1) + values[index]) / length
+    return output
+
+
+def _wma_reference(values: np.ndarray, length: int) -> np.ndarray:
+    output = np.full(len(values), np.nan, dtype=float)
+    weights = np.arange(1, length + 1, dtype=float)
+    weight_sum = float(np.sum(weights))
+    for index in range(length - 1, len(values)):
+        output[index] = float(np.dot(values[index - length + 1:index + 1], weights) / weight_sum)
+    return output
 
 
 def evaluate_standard(name: str, candles: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
@@ -409,9 +499,25 @@ def evaluate_custom(name: str, candles: list[dict[str, Any]], metadata: dict[str
         threshold = float(config.get("multiplier", config.get("min_ratio"))) * (1 - tolerance / 100.0)
         return _evidence(name, ratio > threshold if name == "volume" else ratio >= threshold, latest, dates, {"current": current, "average": average, "ratio": ratio})
     if name == "current_volume":
-        value = float(volumes[-1]); minimum = config.get("min_value"); maximum = config.get("max_value")
-        passed = (minimum is None or value >= float(minimum) * (1 - tolerance / 100)) and (maximum is None or value <= float(maximum) * (1 + tolerance / 100))
-        return _evidence(name, passed, latest, dates, {"current_volume": value})
+        evidence = _current_volume_reference(candles, config)
+        value = evidence["current_volume"]; minimum = config.get("min_value"); maximum = config.get("max_value")
+        percent = evidence["current_resolution_percent_avg"]
+        rule = str(config.get("rule", "value") or "value").strip().lower()
+        if rule in {"above_average", "above_average_volume", "avg_100"}:
+            passed = percent is not None and percent >= 100.0 * (1 - tolerance / 100)
+        elif rule in {"above_average_percent", "percent", "percent_avg_above", "rvol_percent_above", "above_percent"}:
+            threshold = float(config.get("min_percent_avg", 100.0) or 100.0) * (1 - tolerance / 100)
+            passed = percent is not None and percent >= threshold
+        elif rule in {"below_average_percent", "below_percent", "percent_avg_below"}:
+            threshold = float(config.get("min_percent_avg", 100.0) or 100.0) * (1 + tolerance / 100)
+            passed = percent is not None and percent <= threshold
+        elif rule in {"between_average_percent", "between_percent", "percent_range"}:
+            lower = float(config.get("min_percent_avg", 100.0) or 100.0) * (1 - tolerance / 100)
+            upper = float(config.get("max_percent_avg")) * (1 + tolerance / 100)
+            passed = percent is not None and lower <= percent <= upper
+        else:
+            passed = (minimum is None or value >= float(minimum) * (1 - tolerance / 100)) and (maximum is None or value <= float(maximum) * (1 + tolerance / 100))
+        return _evidence(name, passed, latest, dates, evidence)
     if name in {"float", "shares_outstanding"}:
         key = "float_shares" if name == "float" else "shares_outstanding"; value = metadata.get(key)
         if value is None: raise InsufficientReferenceData(f"metadata is missing {key}")
@@ -419,6 +525,17 @@ def evaluate_custom(name: str, candles: list[dict[str, Any]], metadata: dict[str
         passed = (minimum is None or value >= float(minimum) * (1 - tolerance / 100)) and (maximum is None or value <= float(maximum) * (1 + tolerance / 100))
         return _evidence(name, passed, latest, dates, {key: value})
     if name == "volatility":
+        mode = str(config.get("mode", "range_avg") or "range_avg").strip().lower()
+        if mode in {"vstop", "volatility_stop", "v-stop", "volatility_stop_mtf"}:
+            result = compute_backend_volatility(candles, config)
+            if result.get("config_error"):
+                raise InsufficientReferenceData(result["config_error"])
+            if result["latest_index"] < 0:
+                raise InsufficientReferenceData("volatility has insufficient history")
+            latest_evidence = dict(result.get("debug", {}).get("latest", {}))
+            latest_evidence["matched_signal_index"] = result.get("matched_signal_index")
+            latest_evidence["matched_signal_age"] = result.get("matched_signal_age")
+            return _evidence(name, result.get("matched_signal_index") is not None, latest, dates, latest_evidence)
         value = volatility(candles, config)
         if value is None: raise InsufficientReferenceData("volatility has insufficient history")
         minimum = float(config.get("min_pct", 0)); maximum = config.get("max_pct")
