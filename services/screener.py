@@ -26,7 +26,18 @@ from services.regression_channels import compute_lrc_channel, compute_dw_regress
 from services.trend_channels import compute_trend_channel, is_area_rule_disabled, required_trend_channel_history
 from services.utils import build_indicator_sticker, format_price_value, humanize_token
 from services.stock_reference import asset_category_label, matches_asset_categories, matches_sectors
-from services.volume import normalize_volume_spike_config, required_volume_spike_candles, volume_spike_config_warnings
+from services.volume import (
+    current_volume_config_warnings,
+    normalize_relative_volume_config,
+    normalize_current_volume_config,
+    normalize_volume_spike_config,
+    relative_volume_config_warnings,
+    required_current_volume_candles,
+    required_relative_volume_candles,
+    required_volume_spike_candles,
+    volume_spike_config_warnings,
+)
+from services.volatility import normalize_volatility_config, required_volatility_candles, volatility_config_warnings
 
 logger = logging.getLogger(__name__)
 DETAIL_RECENT_CANDLES = 120
@@ -190,6 +201,24 @@ def _normalized_indicator_scope(indicators):
                 "effective": effective_config,
                 "config_error": error,
             }
+        elif name == "relative_volume":
+            effective_config, error = normalize_relative_volume_config(config)
+            config = {
+                "effective": effective_config,
+                "config_error": error,
+            }
+        elif name == "current_volume":
+            effective_config, error = normalize_current_volume_config(config)
+            config = {
+                "effective": effective_config,
+                "config_error": error,
+            }
+        elif name == "volatility":
+            effective_config, error = normalize_volatility_config(config)
+            config = {
+                "effective": effective_config,
+                "config_error": error,
+            }
         normalized.append({
             "name": name,
             "timeframe": getattr(indicator, "timeframe", None),
@@ -203,10 +232,20 @@ def _request_config_warnings(request):
     for indicator in getattr(request, "indicators", None) or []:
         name = str(getattr(indicator, "name", "") or "").strip().lower()
         if name != "volume":
-            continue
-        for warning in volume_spike_config_warnings(getattr(indicator, "config", {}) or {}):
+            if name == "relative_volume":
+                warning_items = relative_volume_config_warnings(getattr(indicator, "config", {}) or {})
+            elif name == "current_volume":
+                warning_items = current_volume_config_warnings(getattr(indicator, "config", {}) or {})
+            elif name == "volatility":
+                warning_items = volatility_config_warnings(getattr(indicator, "config", {}) or {})
+            else:
+                continue
+        else:
+            warning_items = volume_spike_config_warnings(getattr(indicator, "config", {}) or {})
+
+        for warning in warning_items:
             payload = dict(warning)
-            payload["indicator"] = "volume"
+            payload["indicator"] = name
             payload["timeframe"] = getattr(indicator, "timeframe", None)
             warnings.append(payload)
     return warnings
@@ -573,12 +612,12 @@ def required_candles_for_indicators(indicators):
         elif name == "volume":
             needed = required_volume_spike_candles(config)
         elif name == "volatility":
-            length = _safe_int(config.get("length"), 20, minimum=1)
-            needed = length + 1
+            needed = required_volatility_candles(config)
         elif name == "relative_volume":
-            length = _safe_int(config.get("length"), 10, minimum=1)
-            needed = length + 1
-        elif name in {"current_volume", "float", "shares_outstanding"}:
+            needed = required_relative_volume_candles(config)
+        elif name == "current_volume":
+            needed = required_current_volume_candles(config)
+        elif name in {"float", "shares_outstanding"}:
             needed = 1
         else:
             needed = window + confirmation_window + 2

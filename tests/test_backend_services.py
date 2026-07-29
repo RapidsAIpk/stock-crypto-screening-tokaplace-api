@@ -38,6 +38,7 @@ from services import (  # noqa: E402
     rsi,
     macd,
     volume,
+    volatility as volatility_service,
     utils,
     aroon_oscillator,
     linear_regression_candles,
@@ -7645,6 +7646,217 @@ class MarketDataWorkerTests(unittest.IsolatedAsyncioTestCase):
         called_timeframes = [call.args[1] for call in fetch_batches_mock.await_args_list]
         self.assertEqual(called_timeframes, ["4h", "1day"])
         clear_timeframes_mock.assert_called_once_with(["1m", "2day", "1w"])
+
+
+class RelativeVolumeTests(unittest.TestCase):
+    def _candles(self, volumes):
+        return [
+            {
+                "time": index,
+                "open": 1.0,
+                "high": 1.0,
+                "low": 1.0,
+                "close": 1.0,
+                "volume": float(volume),
+            }
+            for index, volume in enumerate(volumes)
+        ]
+
+    def test_relative_volume_uses_previous_average_like_pine_array_loop(self):
+        candles = self._candles([100.0] * 30 + [300.0])
+
+        result = volume.compute_relative_volume(candles, {"length": 30, "min_ratio": 2.5})
+
+        self.assertIsNone(result["config_error"])
+        self.assertAlmostEqual(float(result["previous_average"][-1]), 100.0)
+        self.assertAlmostEqual(float(result["rvol"][-1]), 3.0)
+        self.assertEqual(result["matched_signal_index"], 30)
+
+    def test_relative_volume_crossed_above_threshold(self):
+        candles = self._candles([100.0] * 30 + [150.0, 250.0])
+
+        result = volume.compute_relative_volume(
+            candles,
+            {"length": 30, "rule": "crossed_above", "min_ratio": 2.0},
+        )
+
+        self.assertTrue(bool(result["signal"][-1]))
+        self.assertEqual(result["matched_signal_index"], 31)
+
+    def test_relative_volume_ignores_unclosed_latest_candle(self):
+        candles = self._candles([100.0] * 30 + [150.0])
+        candles.append({
+            "time": 99,
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 10000.0,
+            "is_closed": False,
+        })
+
+        result = volume.compute_relative_volume(candles, {"length": 30, "min_ratio": 2.0})
+
+        self.assertEqual(len(result["candles"]), 31)
+        self.assertIsNone(result["matched_signal_index"])
+
+    def test_relative_volume_debug_trace_reports_latest_components(self):
+        candles = self._candles([100.0] * 60 + [300.0])
+
+        trace = volume.relative_volume_debug_trace(
+            candles,
+            {"length": 30, "min_ratio": 2.0, "trace": True},
+            symbol="TEST",
+            timeframe="1h",
+        )
+
+        self.assertEqual(trace["symbol"], "TEST")
+        self.assertEqual(trace["timeframe"], "1h")
+        self.assertAlmostEqual(trace["latest"]["rvol"], 3.0)
+        self.assertTrue(trace["latest"]["final_signal"])
+
+
+class CurrentVolumeTests(unittest.TestCase):
+    def _candles(self, volumes, close_start=10.0):
+        candles = []
+        for index, volume in enumerate(volumes):
+            close = close_start + index
+            candles.append({
+                "time": index,
+                "open": close - 0.5,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "volume": float(volume),
+            })
+        return candles
+
+    def test_current_volume_average_percent_includes_current_bar_like_pine(self):
+        candles = self._candles([100.0, 100.0, 400.0])
+
+        result = volume.compute_current_volume(
+            candles,
+            {"avg_count": 3, "rule": "above_average_percent", "min_percent_avg": 190},
+        )
+
+        self.assertIsNone(result["config_error"])
+        self.assertAlmostEqual(float(result["current_avg_volume"][-1]), 200.0)
+        self.assertAlmostEqual(float(result["current_resolution_percent_avg"][-1]), 200.0)
+        self.assertEqual(result["matched_signal_index"], 2)
+
+    def test_current_volume_preserves_min_max_value_rule(self):
+        candles = self._candles([100.0, 500.0])
+
+        passed = volume.evaluate_current_volume(
+            candles,
+            {"min_value": 400, "max_value": 600, "tolerance_pct": 0},
+        )
+        failed = volume.evaluate_current_volume(
+            candles,
+            {"min_value": 600, "tolerance_pct": 0},
+        )
+
+        self.assertTrue(passed)
+        self.assertFalse(failed)
+
+    def test_current_volume_atr_uses_selected_smoothing_and_multiplier(self):
+        candles = [
+            {"open": 10.0, "high": 11.0, "low": 9.0, "close": 10.0, "volume": 100.0},
+            {"open": 10.0, "high": 13.0, "low": 9.0, "close": 12.0, "volume": 100.0},
+            {"open": 12.0, "high": 15.0, "low": 11.0, "close": 14.0, "volume": 100.0},
+        ]
+
+        result = volume.compute_current_volume(
+            candles,
+            {"atr_length": 2, "smoothing": "SMA", "atr_multiplier": 0.5},
+        )
+
+        self.assertAlmostEqual(float(result["true_range"][-1]), 4.0)
+        self.assertAlmostEqual(float(result["catr"][-1]), 4.0)
+        self.assertAlmostEqual(float(result["atr_value"][-1]), 2.0)
+
+    def test_current_volume_ignores_unclosed_latest_candle(self):
+        candles = self._candles([100.0, 200.0])
+        candles.append({
+            "time": 99,
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 10000.0,
+            "is_closed": False,
+        })
+
+        result = volume.compute_current_volume(candles, {"min_value": 1000})
+
+        self.assertEqual(len(result["candles"]), 2)
+        self.assertIsNone(result["matched_signal_index"])
+
+
+class VolatilityStopTests(unittest.TestCase):
+    def _candles(self, closes):
+        candles = []
+        for index, close in enumerate(closes):
+            candles.append({
+                "time": index,
+                "open": float(close) - 0.2,
+                "high": float(close) + 1.0,
+                "low": float(close) - 1.0,
+                "close": float(close),
+                "volume": 1000.0,
+            })
+        return candles
+
+    def test_volatility_stop_computes_tradingview_vstop_components(self):
+        candles = self._candles([10, 11, 12, 13, 14, 15, 16])
+
+        computed = volatility_service.compute_volatility(
+            candles,
+            {"mode": "vstop", "htf_selection": "None", "rule": "uptrend", "length": 3, "atr_factor": 2.0},
+        )
+
+        self.assertIsNone(computed["config_error"])
+        self.assertTrue(bool(computed["trend_up"][-1]))
+        self.assertTrue(np.isfinite(computed["stop"][-1]))
+        self.assertTrue(np.isfinite(computed["atr"][-1]))
+        self.assertEqual(computed["matched_signal_index"], len(candles) - 1)
+
+    def test_volatility_stop_detects_change_to_downtrend(self):
+        candles = self._candles([20, 21, 22, 23, 24, 18])
+
+        computed = volatility_service.compute_volatility(
+            candles,
+            {"mode": "vstop", "htf_selection": "None", "rule": "change_to_downtrend", "length": 3, "atr_factor": 1.0},
+        )
+
+        self.assertTrue(bool(computed["trend_change_to_down"][-1]))
+        self.assertEqual(computed["matched_signal_index"], len(candles) - 1)
+
+    def test_volatility_stop_ignores_unclosed_latest_candle(self):
+        candles = self._candles([10, 11, 12, 13])
+        candles.append({
+            "time": 99,
+            "open": 1.0,
+            "high": 100.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 1000.0,
+            "is_closed": False,
+        })
+
+        computed = volatility_service.compute_volatility(
+            candles,
+            {"mode": "vstop", "htf_selection": "None", "rule": "downtrend", "length": 3},
+        )
+
+        self.assertEqual(len(computed["candles"]), 4)
+        self.assertIsNone(computed["matched_signal_index"])
+
+    def test_existing_returns_std_mode_still_ignores_zero_closes(self):
+        matched, sticker = indicators.handle_volatility({}, [{"close": 0.0}, {"close": 0.0}, {"close": 0.0}], {"length": 2, "mode": "returns_std"})
+
+        self.assertFalse(matched)
+        self.assertIsNone(sticker)
 
 
 if __name__ == "__main__":
