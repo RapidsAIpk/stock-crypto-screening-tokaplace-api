@@ -21,8 +21,8 @@ This document compares each Pine Script reference in `docs/pinescript/` against 
 | `wavetrend.md` | WaveTrend [LazyBear] | `backend/services/wavetrend.py` | `wavetrend` | **High** |
 | `ema_wave.md` | EMA Wave Indicator [LazyBear] | `backend/services/ema.py` (`compute_ema_wave`) | `ema_wave` | **High** |
 | `macd_chris_moody.md` | CM_Ult_MacD_MTF [ChrisMoody] | `backend/services/macd.py` (`compute_macd`) | `macd` | **High** |
-| `linear_regression_channel.md` | Linear Regression Channel [LonesomeTheBlue] | `backend/services/regression_channels.py` (`compute_lrc_channel`) | `lrc` | **High** |
-| `regression_channel.md` | Regression Channel [DW] | `backend/services/regression_channels.py` (`compute_dw_regression_channel`) | `regression` | **High** |
+| `linear_regression_channel.md` | Linear Regression Channel [LonesomeTheBlue] | `backend/services/linear_regression_channel.py` (`compute_lrc_channel`) | `lrc` | **High** |
+| `regression_channel.md` | Regression Channel [DW] | `backend/services/regression_channel_dw.py` (`compute_dw_regression_channel`) | `regression` | **High** |
 | `linear_regression_candle.md` | Humble LinReg Candles | `backend/services/linear_regression_candles.py` | `linreg_candles` | **High** |
 | `trend_channel.md` | Trend Channels With Liquidity Breaks [ChartPrime] | `backend/services/trend_channels.py` | `trend` | **High** (geometry) / **Partial** (liquidity label) |
 | `relative_volumn.md` | RelVol / RelVolForCEX | `backend/services/indicators.py` (`handle_relative_volume`) | `relative_volume` | **High** (stock) / **Partial** (CEX USD) |
@@ -79,7 +79,9 @@ Validation oracle: `backend/production_screener_validation/reference/custom_engi
 | `docs/pinescript/fix_summary.md` | Implementation changelog |
 | `backend/services/pine_math.py` | Shared Pine math primitives |
 | `backend/services/wavetrend.py` | WaveTrend computation + rules |
-| `backend/services/regression_channels.py` | LRC + DW regression channels |
+| `backend/services/linear_regression_channel.py` | LRC (LonesomeTheBlue) |
+| `backend/services/regression_channel_dw.py` | Donovan Wall regression channel |
+| `backend/services/channel_line_rules.py` | Shared LRC + DW line rule evaluation |
 | `backend/services/linear_regression_candles.py` | LinReg candles computation + screener rules |
 | `backend/services/trend_channels.py` | ChartPrime trend channel port |
 | `backend/services/indicators.py` | Handlers: relative volume, volatility, registry |

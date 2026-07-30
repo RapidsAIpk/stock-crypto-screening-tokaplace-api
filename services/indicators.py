@@ -12,13 +12,13 @@ from services.pine_math import (
 
 logger = logging.getLogger(__name__)
 
-from services.regression_channels import (
-    compute_lrc_channel,
-    compute_dw_regression_channel,
-    evaluate_regression_lines,
-    passes_r_filter,
+from services.channel_line_rules import (
     build_regression_sticker,
+    evaluate_regression_lines,
+    _evaluation_line_value,
 )
+from services.linear_regression_channel import compute_lrc_channel, passes_r_filter
+from services.regression_channel_dw import compute_dw_regression_channel
 
 from services.rsi import (
     compute_rsi_series,
@@ -297,30 +297,155 @@ def handle_lrc(asset, candles, config):
     )
 
 
+def _log_dw_regression_evaluation(asset, candles, channel, config, passed):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    window = max(1, int(config.get("window", 1) or 1))
+    start_index = len(candles) - int(channel["length"])
+    latest_index = len(candles) - 1
+    action = str(config.get("action") or "").strip().lower()
+    if action == "touch":
+        signal_index = latest_index - window + 1
+        source_indices = [signal_index] if signal_index >= 0 else []
+    else:
+        source_indices = [latest_index] if latest_index >= 0 else []
+    tolerance_pct = float(config.get("tolerance", 0) or 0)
+    tick_size = _regression_mintick(asset, config)
+    evaluations = []
+    for candle_index in source_indices:
+        regression_index = candle_index - start_index
+        candle = candles[candle_index]
+        line_values = {}
+        line_evaluations = {}
+        for line_name in config.get("lines") or []:
+            series = channel.get(line_name)
+            if series is not None and 0 <= regression_index < len(series):
+                raw_line_value = float(series[regression_index])
+                line_value = _evaluation_line_value(raw_line_value, config, line_name)
+                line_values[line_name] = {
+                    "raw": raw_line_value,
+                    "rounded": line_value,
+                }
+                tolerance = abs(line_value) * (tolerance_pct / 100)
+                lower_tolerance = line_value - tolerance
+                upper_tolerance = line_value + tolerance
+                if str(config.get("action") or "").lower() == "touch":
+                    low_at_or_below = (
+                        np.isfinite(line_value)
+                        and float(candle["low"]) <= upper_tolerance
+                    )
+                    high_at_or_above = (
+                        np.isfinite(line_value)
+                        and float(candle["high"]) >= lower_tolerance
+                    )
+                    body_high_at_or_below = (
+                        np.isfinite(line_value)
+                        and max(float(candle["open"]), float(candle["close"])) <= line_value
+                    )
+                    body_low_at_or_above = (
+                        np.isfinite(line_value)
+                        and min(float(candle["open"]), float(candle["close"])) >= line_value
+                    )
+                    line_evaluations[line_name] = {
+                        "formula": "low <= line + tolerance and high >= line - tolerance",
+                        "lower_tolerance": lower_tolerance,
+                        "upper_tolerance": upper_tolerance,
+                        "low_at_or_below": bool(low_at_or_below),
+                        "high_at_or_above": bool(high_at_or_above),
+                        "body_high_at_or_below_line": bool(body_high_at_or_below),
+                        "body_low_at_or_above_line": bool(body_low_at_or_above),
+                        "result": bool(
+                            high_at_or_above
+                            and (
+                                str(line_name).lower() != "upper"
+                                or body_high_at_or_below
+                            )
+                            and (
+                                str(line_name).lower() != "lower"
+                                or body_low_at_or_above
+                            )
+                        ),
+                        "line_is_finite": bool(np.isfinite(line_value)),
+                    }
+        evaluations.append(
+            {
+                "candle_index": candle_index,
+                "regression_index": regression_index,
+                "timestamp": candle.get("time"),
+                "open": candle.get("open"),
+                "high": candle.get("high"),
+                "low": candle.get("low"),
+                "close": candle.get("close"),
+                "closed": not (
+                    candle.get("is_closed") is False
+                    or candle.get("is_complete") is False
+                    or candle.get("complete") is False
+                    or candle.get("closed") is False
+                    or candle.get("is_live") is True
+                ),
+                "line_values": line_values,
+                "line_evaluations": line_evaluations,
+            }
+        )
+    logger.debug(
+        "regression evaluation symbol=%s provider=%s session_policy=%s "
+        "candle_count=%s channel_length=%s channel_start_index=%s "
+        "source_indices=%s action=%s touch_type=%s tolerance=%s "
+        "tick_size=%s evaluations=%s final=%s",
+        asset.get("symbol"),
+        asset.get("candles_provider"),
+        asset.get("session_policy"),
+        len(candles),
+        channel.get("length"),
+        start_index,
+        source_indices,
+        config.get("action"),
+        config.get("touch_type"),
+        config.get("tolerance"),
+        tick_size,
+        evaluations,
+        passed,
+    )
+
+
+def _regression_mintick(asset, config):
+    return _trend_mintick(asset, config)
+
+
 def handle_regression(asset, candles, config):
+    evaluation_config = dict(config or {})
+    mintick = _regression_mintick(asset, evaluation_config)
+    if mintick is not None:
+        evaluation_config.setdefault("mintick", mintick)
 
     channel = compute_dw_regression_channel(
         candles,
-        length=config.get("length", 200),
-        width_coeff=config.get("width_coeff", 1.0),
-        window_type=config.get("window_type", "continuous"),
-        interval_step=config.get("interval_step", 1),
-        filter_type=config.get("filter_type", "SMA"),
+        length=evaluation_config.get("length", 200),
+        width_coeff=evaluation_config.get("width_coeff", 1.0),
+        window_type=evaluation_config.get("window_type", "continuous"),
+        interval_step=evaluation_config.get("interval_step", 1),
+        filter_type=evaluation_config.get("filter_type", "SMA"),
     )
 
     if not channel:
         return False, None
 
-    if not evaluate_regression_lines(candles, channel, config):
+    # Retain the computed series even for a failed rule. Scan filtering is
+    # still controlled solely by `passed`, while the details/chart path can
+    # now display the exact channel that produced either PASS or FAIL.
+    asset["channels"]["regression"] = channel
+    passed = evaluate_regression_lines(candles, channel, evaluation_config)
+    _log_dw_regression_evaluation(asset, candles, channel, evaluation_config, passed)
+
+    if not passed:
         return False, None
 
-    asset["channels"]["regression"] = channel
-
-    sticker_data = build_regression_sticker("Regression Channel", channel, config)
+    sticker_data = build_regression_sticker("Regression Channel", channel, evaluation_config)
     return True, build_indicator_sticker(
         sticker_data["name"],
         sticker_data["condition"],
-        config,
+        evaluation_config,
         length=sticker_data["length"],
         window=sticker_data["window"],
         decision=sticker_data.get("decision"),

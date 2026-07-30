@@ -153,7 +153,7 @@ Defaults: `channel_length=10`, `average_length=21`, `signal_length=4`, `threshol
 
 #### 2. LRC (`lrc`)
 
-Pine ref: `linear_regression_channel.md` · Backend: `regression_channels.py` → `compute_lrc_channel`
+Pine ref: `linear_regression_channel.md` · Backend: `linear_regression_channel.py` → `compute_lrc_channel`
 
 | Tier | Dimensions |
 |------|------------|
@@ -165,7 +165,7 @@ Defaults: `length=100`, `upper_dev=2`, `lower_dev=2`.
 
 #### 3. DW Regression (`regression`)
 
-Pine ref: `regression_channel.md` · Backend: `compute_dw_regression_channel`
+Pine ref: `regression_channel.md` · Backend: `regression_channel_dw.py` → `compute_dw_regression_channel`
 
 | Tier | Dimensions |
 |------|------------|

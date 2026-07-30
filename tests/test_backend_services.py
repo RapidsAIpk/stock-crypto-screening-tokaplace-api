@@ -41,7 +41,9 @@ from services import (  # noqa: E402
     aroon_oscillator,
     linear_regression_candles,
     market_data,
-    regression_channels,
+    channel_line_rules,
+    linear_regression_channel,
+    regression_channel_dw,
     trend_channels,
     wavetrend,
     ema,
@@ -1342,7 +1344,7 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertEqual(screener.required_candles_for_indicators([indicator]), 120)
 
     def test_build_regression_sticker_includes_line_wording(self):
-        sticker = regression_channels.build_regression_sticker(
+        sticker = channel_line_rules.build_regression_sticker(
             "LRC",
             {"length": 100},
             {
@@ -2553,7 +2555,7 @@ class IndicatorMathTests(unittest.TestCase):
             "tolerance": 0,
             "confirmation": False,
         }
-        self.assertFalse(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
     def test_regression_close_above_requires_latest_candle_to_still_be_above_line(self):
         candles = [
@@ -2573,9 +2575,9 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertFalse(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
-    def test_regression_close_above_window_counts_from_signal_start_until_now(self):
+    def test_regression_close_above_window_requires_exact_signal_age(self):
         candles = [
             {"open": 111.0, "high": 112.0, "low": 110.0, "close": 111.0},
             {"open": 111.0, "high": 112.0, "low": 110.0, "close": 111.0},
@@ -2594,9 +2596,9 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertFalse(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
-    def test_regression_close_above_accepts_current_signal_started_within_window(self):
+    def test_regression_close_above_accepts_exact_signal_age(self):
         candles = [
             {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0},
             {"open": 111.0, "high": 112.0, "low": 110.0, "close": 111.0},
@@ -2614,7 +2616,55 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertTrue(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(candles, channel, config))
+
+    def test_regression_close_above_rejects_younger_signal_age(self):
+        candles = [
+            {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0},
+            {"open": 111.0, "high": 112.0, "low": 110.0, "close": 111.0},
+        ]
+        channel = {
+            "length": 2,
+            "upper": [110.0, 110.0],
+        }
+        config = {
+            "lines": ["upper"],
+            "action": "close_above",
+            "window": 2,
+            "tolerance": 0,
+            "confirmation": False,
+        }
+
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
+
+    def test_regression_touch_requires_exact_candle_age(self):
+        channel = {"length": 2, "upper": [0.536, 0.536]}
+        previous_touch = {"open": 0.530, "high": 0.540, "low": 0.520, "close": 0.530}
+        latest_touch = {"open": 0.530, "high": 0.540, "low": 0.520, "close": 0.530}
+        config = {
+            "lines": ["upper"],
+            "action": "touch",
+            "touch_type": "wick",
+            "window": 2,
+            "tolerance": 0,
+            "mintick": 0.01,
+            "confirmation": False,
+        }
+
+        self.assertTrue(
+            channel_line_rules.evaluate_regression_lines(
+                [previous_touch, {"open": 0.530, "high": 0.539, "low": 0.520, "close": 0.530}],
+                channel,
+                config,
+            )
+        )
+        self.assertFalse(
+            channel_line_rules.evaluate_regression_lines(
+                [{"open": 0.530, "high": 0.539, "low": 0.520, "close": 0.530}, latest_touch],
+                channel,
+                config,
+            )
+        )
 
     def test_regression_lower_wick_touch_rejects_candle_using_line_as_resistance(self):
         candles = [
@@ -2633,7 +2683,7 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertFalse(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
     def test_regression_lower_wick_touch_accepts_support_reaction(self):
         candles = [
@@ -2652,7 +2702,7 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertTrue(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
     def test_regression_channel_bounds_use_symmetric_close_deviation(self):
         candles = [
@@ -2662,7 +2712,7 @@ class IndicatorMathTests(unittest.TestCase):
             {"open": 106.0, "high": 107.0, "low": 105.0, "close": 106.0},
         ]
 
-        channel = regression_channels.compute_dw_regression_channel(candles, length=4, width_coeff=1.0)
+        channel = regression_channel_dw.compute_dw_regression_channel(candles, length=4, width_coeff=1.0)
 
         self.assertIsNotNone(channel)
         finite_rows = [
@@ -3089,12 +3139,12 @@ class IndicatorMathTests(unittest.TestCase):
             "r_mode": "min",
             "r_min": 0.8,
         }
-        self.assertTrue(regression_channels.passes_r_filter(-0.92, config))
+        self.assertTrue(linear_regression_channel.passes_r_filter(-0.92, config))
 
     def test_regression_r_filter_supports_guideline_presets(self):
-        self.assertTrue(regression_channels.passes_r_filter(0.75, {"r_filter": "strong"}))
-        self.assertTrue(regression_channels.passes_r_filter(0.65, {"r_filter": "balanced"}))
-        self.assertFalse(regression_channels.passes_r_filter(0.85, {"r_filter": "balanced"}))
+        self.assertTrue(linear_regression_channel.passes_r_filter(0.75, {"r_filter": "strong"}))
+        self.assertTrue(linear_regression_channel.passes_r_filter(0.65, {"r_filter": "balanced"}))
+        self.assertFalse(linear_regression_channel.passes_r_filter(0.85, {"r_filter": "balanced"}))
 
     def test_handle_regression_passes_interval_window_settings(self):
         asset = {"symbol": "AAPL", "channels": {}}
@@ -3122,8 +3172,10 @@ class IndicatorMathTests(unittest.TestCase):
             "evaluate_regression_lines",
             return_value=False,
         ):
-            indicators.handle_regression(asset, candles, config)
+            passed, _ = indicators.handle_regression(asset, candles, config)
 
+        self.assertFalse(passed)
+        self.assertIn("regression", asset["channels"])
         compute_mock.assert_called_once_with(
             candles,
             length=200,
@@ -4547,7 +4599,7 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
             await screener.fetch_screening_data(assets, "1h", [], request=request)
 
         kwargs = fetch_live_data_mock.await_args.kwargs
-        self.assertEqual(kwargs.get("candles_limit"), 234)
+        self.assertEqual(kwargs.get("candles_limit"), 466)
 
     async def test_fetch_screening_data_uses_snapshot_fast_path_for_fundamentals_only(self):
         assets = [{"symbol": "AAPL", "asset_type": "stocks", "exchange": "NASDAQ"}]
@@ -4806,8 +4858,17 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
         live_data = [
             {
                 "symbol": "AAPL",
-                "price": candles[-1]["close"],
-                "candles": candles,
+                "price": candles[-1]["close"] + 25.0,
+                "candles": [
+                    *candles,
+                    {
+                        **candles[-1],
+                        "time": candles[-1]["time"] + 3600,
+                        "close": candles[-1]["close"] + 25.0,
+                        "high": candles[-1]["close"] + 25.0,
+                        "is_closed": False,
+                    },
+                ],
                 "candles_provider": "massive",
                 "next_refresh_at": 1710000000 + (221 * 3600),
                 "shares_outstanding": 1000000.0,
@@ -4829,9 +4890,11 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
         ) as fetch_live_data_mock:
             detail = await screener.get_asset_detail("AAPL", "stocks", "1day", request)
 
-        self.assertEqual(fetch_live_data_mock.await_args.kwargs["candles_limit"], 200)
-        self.assertEqual(len(detail["market_data"]["recent_candles"]), 200)
-        self.assertEqual(detail["market_data"]["recent_candles"][0]["time"], candles[-200]["time"])
+        self.assertEqual(fetch_live_data_mock.await_args.kwargs["candles_limit"], 400)
+        self.assertEqual(len(detail["market_data"]["recent_candles"]), 220)
+        self.assertEqual(detail["market_data"]["recent_candles"][0]["time"], candles[0]["time"])
+        self.assertEqual(detail["market_data"]["recent_candles"][-1]["time"], candles[-1]["time"])
+        self.assertEqual(detail["price"], candles[-1]["close"])
         self.assertIsInstance(detail["channels"]["lrc"]["middle"], list)
         self.assertIsInstance(
             detail["confluence_channels"]["fast_lrc"]["channel"]["middle"],
