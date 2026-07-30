@@ -46,7 +46,7 @@ The system utilizes an asynchronous, cache-first pipeline to process asset scree
       ▼
 [Indicator Calculation Engine] (indicators.py / services/*)
       │ ── Calculates: RSI, WaveTrend, MACD, Volume, LRC, and EMA
-      │ ── Fits: Trend Channels / Linear Regression Channels (regression_channels.py)
+      │ ── Fits: Trend Channels (`trend_channels.py`) / LRC (`linear_regression_channel.py`) / DW Regression (`regression_channel_dw.py`)
       │ ── Evaluates: Channel touches and respects (channel_respect.py)
       ▼
 [Confluence Processor] (confluence.py)

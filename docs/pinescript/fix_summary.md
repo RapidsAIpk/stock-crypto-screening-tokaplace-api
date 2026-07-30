@@ -32,7 +32,7 @@ Date: 2026-07-15
 
 ### 2. Linear Regression Channel [LonesomeTheBlue]
 
-**Files:** `backend/services/regression_channels.py`, `backend/production_screener_validation/reference/custom_engine.py`
+**Files:** `backend/services/linear_regression_channel.py`, `backend/services/regression_channel_dw.py`, `backend/services/channel_line_rules.py`, `backend/production_screener_validation/reference/custom_engine.py`
 
 | Change | Before | After |
 |--------|--------|-------|
@@ -44,7 +44,7 @@ Date: 2026-07-15
 
 ### 3. Regression Channel [DW]
 
-**Files:** `backend/services/regression_channels.py`, `pine_math.py`
+**Files:** `backend/services/regression_channel_dw.py`, `backend/services/channel_line_rules.py`, `pine_math.py`
 
 | Change | Before | After |
 |--------|--------|-------|
@@ -162,7 +162,9 @@ See `docs/pinescript/comparison.md` for the detailed before/after reference.
 backend/services/pine_math.py                          (new)
 backend/services/wavetrend.py
 backend/services/linear_regression_candles.py
-backend/services/regression_channels.py
+backend/services/linear_regression_channel.py
+backend/services/regression_channel_dw.py
+backend/services/channel_line_rules.py
 backend/services/trend_channels.py
 backend/services/indicators.py
 backend/services/screener.py

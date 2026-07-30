@@ -228,6 +228,189 @@ def lonesomeblue_linreg_channel(
     }
 
 
+def _dw_period_series(size: int, length: int, periods: np.ndarray | None = None) -> np.ndarray:
+    if periods is None:
+        return np.full(size, max(1, int(length)), dtype=int)
+    normalized = np.asarray(periods, dtype=int)
+    if len(normalized) != size:
+        raise ValueError("DW period series must align with source values")
+    return np.maximum(normalized, 1)
+
+
+def _dw_history_value(values: np.ndarray, index: int, offset: int) -> float:
+    point_index = index - offset
+    if point_index < 0:
+        # Pine: nz(y[offset], y)
+        return float(values[index])
+    value = float(values[point_index])
+    return value if np.isfinite(value) else float(values[index])
+
+
+def _dw_filter_series(
+    values: np.ndarray,
+    periods: np.ndarray,
+    filter_type: str,
+    volumes: np.ndarray | None = None,
+) -> np.ndarray:
+    """Literal implementation of the custom filters in Regression Channel [DW].
+
+    These are intentionally separate from the shared Pine helpers. The DW
+    script fills unavailable historical offsets with the current series value
+    (`nz(y[i], y)`) instead of producing a warm-up NaN.
+    """
+    values = as_float_array(values)
+    normalized = str(filter_type or "SMA").strip().upper()
+    output = np.full(len(values), NAN, dtype=float)
+    volume_values = (
+        as_float_array(volumes)
+        if volumes is not None
+        else np.ones(len(values), dtype=float)
+    )
+
+    for index, raw_period in enumerate(periods):
+        period = max(1, int(raw_period))
+        current = float(values[index])
+
+        if normalized == "EMA":
+            previous = output[index - 1] if index > 0 else NAN
+            output[index] = (
+                current
+                if not np.isfinite(previous)
+                else (current - previous) * (2.0 / (period + 1.0)) + previous
+            )
+            continue
+
+        if normalized == "RMA":
+            previous = output[index - 1] if index > 0 else NAN
+            if np.isfinite(previous):
+                output[index] = (previous * (period - 1) + current) / period
+                continue
+
+        if normalized == "ALMA":
+            m = 0.85 * (period - 1)
+            s = period / 6.0
+            weighted_sum = 0.0
+            weight_sum = 0.0
+            for position in range(period):
+                weight = math.exp(-pow(position - m, 2) / (2.0 * pow(s, 2)))
+                offset = period - 1 - position
+                weighted_sum += weight * _dw_history_value(values, index, offset)
+                weight_sum += weight
+            output[index] = weighted_sum / weight_sum
+            continue
+
+        if normalized == "LWMA":
+            weighted_sum = 0.0
+            weight_sum = 0.0
+            for offset in range(period):
+                weight = period - offset
+                weighted_sum += weight * _dw_history_value(values, index, offset)
+                weight_sum += weight
+            output[index] = weighted_sum / weight_sum
+            continue
+
+        if normalized == "VWMA":
+            current_volume = float(volume_values[index])
+            if not np.isfinite(current_volume):
+                current_volume = 1.0
+            weighted_sum = 0.0
+            volume_sum = 0.0
+            for offset in range(period):
+                point_index = index - offset
+                if point_index < 0:
+                    value = current
+                    volume = current_volume
+                else:
+                    value = _dw_history_value(values, index, offset)
+                    volume = float(volume_values[point_index])
+                    if not np.isfinite(volume):
+                        volume = current_volume
+                weighted_sum += value * volume
+                volume_sum += volume
+            output[index] = weighted_sum / volume_sum if volume_sum else NAN
+            continue
+
+        # SMA is also the initial-state seed used by the script's RMA.
+        total = sum(
+            _dw_history_value(values, index, offset)
+            for offset in range(period)
+        )
+        output[index] = total / period
+
+    return output
+
+
+def _dw_calculation_series(
+    values: np.ndarray,
+    bar_indices: np.ndarray,
+    length: int,
+    filter_type: str,
+    width_coeff: float,
+    volumes: np.ndarray | None = None,
+    periods: np.ndarray | None = None,
+) -> dict[str, np.ndarray]:
+    values = as_float_array(values)
+    bar_indices = as_float_array(bar_indices)
+    period_series = _dw_period_series(len(values), length, periods)
+
+    filtered = _dw_filter_series(values, period_series, filter_type, volumes)
+    deviations = values - filtered
+    squared_deviations = np.power(deviations, 2)
+    filtered_squared = _dw_filter_series(
+        squared_deviations,
+        period_series,
+        filter_type,
+        volumes,
+    )
+    standard_deviation = (
+        np.sqrt(np.maximum(filtered_squared, 0.0)) * float(width_coeff)
+    )
+
+    middle = np.full(len(values), NAN, dtype=float)
+    correlations = np.full(len(values), NAN, dtype=float)
+    slopes = np.full(len(values), NAN, dtype=float)
+
+    for index, raw_period in enumerate(period_series):
+        period = max(1, int(raw_period))
+        # Pine round(t / 2), where positive .5 values round upward.
+        x_deviation = (period + 1) // 2
+        current_deviation = float(deviations[index])
+        historical_deviations = [
+            (
+                float(deviations[index - offset])
+                if index - offset >= 0 and np.isfinite(deviations[index - offset])
+                else current_deviation
+            )
+            for offset in range(period)
+        ]
+
+        xy_sum = sum(x_deviation * value for value in historical_deviations)
+        x2_sum = period * x_deviation * x_deviation
+        y2_sum = sum(value * value for value in historical_deviations)
+        denominator = math.sqrt(x2_sum * y2_sum)
+        correlation = 0.0 if denominator == 0 else xy_sum / denominator
+        correlations[index] = correlation
+
+        slope = (
+            0.0
+            if period == 1 or x_deviation == 0
+            else correlation * (float(standard_deviation[index]) / x_deviation)
+        )
+        slopes[index] = slope
+
+        x_mean_index = index - x_deviation
+        x_mean = float(bar_indices[x_mean_index]) if x_mean_index >= 0 else 0.0
+        intercept = float(filtered[index]) - slope * x_mean
+        middle[index] = intercept + slope * float(bar_indices[index])
+
+    return {
+        "middle": middle,
+        "standard_deviation": standard_deviation,
+        "correlation": correlations,
+        "slope": slopes,
+    }
+
+
 def _dw_filtered_std(
     values: np.ndarray,
     index: int,
@@ -236,19 +419,16 @@ def _dw_filtered_std(
     width_coeff: float,
     volumes: np.ndarray | None,
 ) -> float:
-    if length <= 0 or index < length - 1:
-        return NAN
-
-    filtered = pine_filter(values, length, filter_type, volumes)
-    if not np.isfinite(filtered[index]):
-        return NAN
-
-    squared = np.power(values - filtered, 2)
-    working = np.where(np.isfinite(squared), squared, 0.0)
-    filtered_squared = pine_filter(working, length, filter_type, volumes)
-    if not np.isfinite(filtered_squared[index]):
-        return NAN
-    return math.sqrt(max(0.0, float(filtered_squared[index]))) * float(width_coeff)
+    bar_indices = np.arange(len(values), dtype=float)
+    calculated = _dw_calculation_series(
+        values,
+        bar_indices,
+        length,
+        filter_type,
+        width_coeff,
+        volumes,
+    )
+    return float(calculated["standard_deviation"][index])
 
 
 def _dw_correlation(
@@ -259,29 +439,15 @@ def _dw_correlation(
     filter_type: str,
     volumes: np.ndarray | None,
 ) -> float:
-    if length <= 1 or index < length - 1:
-        return 0.0
-
-    x_dev = round(length / 2)
-    filtered = pine_filter(values, length, filter_type, volumes)
-    y_dev = values - filtered
-
-    xy_sum = 0.0
-    x2_sum = 0.0
-    y2_sum = 0.0
-    for offset in range(length):
-        point_index = index - offset
-        deviation = y_dev[point_index]
-        if not np.isfinite(deviation):
-            deviation = 0.0
-        xy_sum += x_dev * deviation
-        x2_sum += x_dev * x_dev
-        y2_sum += deviation * deviation
-
-    denominator = math.sqrt(x2_sum * y2_sum)
-    if denominator == 0:
-        return 0.0
-    return xy_sum / denominator
+    calculated = _dw_calculation_series(
+        values,
+        bar_indices,
+        length,
+        filter_type,
+        1.0,
+        volumes,
+    )
+    return float(calculated["correlation"][index])
 
 
 def dw_regression_point(
@@ -293,26 +459,21 @@ def dw_regression_point(
     width_coeff: float,
     volumes: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
-    if length <= 0 or index < length - 1:
+    if length <= 0 or index < 0 or index >= len(values):
         return NAN, NAN, NAN
-
-    filtered = pine_filter(values, length, filter_type, volumes)
-    y_mean = filtered[index]
-    if not np.isfinite(y_mean):
-        return NAN, NAN, NAN
-
-    std_dev = _dw_filtered_std(values, index, length, filter_type, width_coeff, volumes)
-    if not np.isfinite(std_dev):
-        return NAN, NAN, NAN
-
-    correlation = _dw_correlation(values, bar_indices, index, length, filter_type, volumes)
-    sx = round(length / 2)
-    x_mean = float(bar_indices[index - sx]) if index - sx >= 0 else 0.0
-    slope = 0.0 if length == 1 else correlation * (std_dev / sx if sx else 0.0)
-    intercept = y_mean - slope * x_mean
-    current_x = float(bar_indices[index])
-    y2 = intercept + slope * current_x
-    return y2, std_dev, slope
+    calculated = _dw_calculation_series(
+        values,
+        bar_indices,
+        length,
+        filter_type,
+        width_coeff,
+        volumes,
+    )
+    return (
+        float(calculated["middle"][index]),
+        float(calculated["standard_deviation"][index]),
+        float(calculated["slope"][index]),
+    )
 
 
 def dw_channel_series(
@@ -322,32 +483,23 @@ def dw_channel_series(
     filter_type: str = "SMA",
     width_coeff: float = 1.0,
     volumes: np.ndarray | None = None,
+    periods: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
-    values = as_float_array(values)
-    bar_indices = as_float_array(bar_indices)
-    middle = np.full(len(values), NAN, dtype=float)
-    upper = np.full(len(values), NAN, dtype=float)
-    lower = np.full(len(values), NAN, dtype=float)
-    q3 = np.full(len(values), NAN, dtype=float)
-    q1 = np.full(len(values), NAN, dtype=float)
-
-    for index in range(len(values)):
-        y2, std_dev, _ = dw_regression_point(
-            values,
-            bar_indices,
-            index,
-            length,
-            filter_type,
-            width_coeff,
-            volumes,
-        )
-        if not np.isfinite(y2) or not np.isfinite(std_dev):
-            continue
-        middle[index] = y2
-        upper[index] = y2 + std_dev
-        lower[index] = y2 - std_dev
-        q3[index] = y2 + std_dev / 2.0
-        q1[index] = y2 - std_dev / 2.0
+    calculated = _dw_calculation_series(
+        values,
+        bar_indices,
+        length,
+        filter_type,
+        width_coeff,
+        volumes,
+        periods,
+    )
+    middle = calculated["middle"]
+    std_dev = calculated["standard_deviation"]
+    upper = middle + std_dev
+    lower = middle - std_dev
+    q3 = middle + std_dev / 2.0
+    q1 = middle - std_dev / 2.0
 
     return {"middle": middle, "upper": upper, "lower": lower, "q3": q3, "q1": q1}
 

@@ -222,16 +222,20 @@ async def close_market_data_clients():
     await close_binance_client()
 
 
-def normalize_candles_limit(candles_limit):
+def _normalize_candles_limit(candles_limit, maximum):
     if candles_limit is None:
-        return MAX_CANDLES
+        return maximum
 
     try:
         parsed = int(candles_limit)
     except (TypeError, ValueError):
-        return MAX_CANDLES
+        return maximum
 
-    return max(1, min(MAX_CANDLES, parsed))
+    return max(1, min(maximum, parsed))
+
+
+def normalize_candles_limit(candles_limit):
+    return _normalize_candles_limit(candles_limit, MAX_CANDLES)
 
 
 def timeframe_uses_worker_cache(timeframe):
@@ -438,8 +442,8 @@ def _binance_base_asset(symbol):
 # CANDLE SHAPING
 # =========================================================
 
-def slice_recent(candles, limit=MAX_CANDLES):
-    normalized_limit = normalize_candles_limit(limit)
+def slice_recent(candles, limit=MAX_CANDLES, maximum=MAX_CANDLES):
+    normalized_limit = _normalize_candles_limit(limit, maximum)
     if len(candles) <= normalized_limit:
         return candles
     return candles[-normalized_limit:]
@@ -714,8 +718,10 @@ def is_payload_for_symbol_provider(payload, symbol):
 # for RTH intraday timeframes is now always derived from
 # resolve_session_bucket_start rather than the provider's own row
 # timestamp, which was previously trusted as already anchored and could
-# drift by whatever offset the provider's fetch window started at.
-CANDLE_ALIGNMENT_VERSION = 3
+# drift by whatever offset the provider's fetch window started at. v4:
+# session-anchored intraday fetches expand source history until enough
+# eligible target candles survive RTH filtering/aggregation.
+CANDLE_ALIGNMENT_VERSION = 4
 
 
 def _payload_candles_are_session_anchored(payload, target_minutes):
@@ -870,18 +876,31 @@ def _build_market_data_payload(symbol, candles, timeframe, candles_provider=None
     return payload
 
 
-def _finalize_intraday_candles(candles, symbol, timeframe, candles_limit, session_policy=None):
+def _finalize_intraday_candles(
+    candles,
+    symbol,
+    timeframe,
+    candles_limit,
+    session_policy=None,
+    limit_cap=MAX_CANDLES,
+):
     filtered = apply_stock_session_policy(candles, symbol, timeframe, session_policy)
-    return slice_recent(filtered, limit=candles_limit)
+    return slice_recent(filtered, limit=candles_limit, maximum=limit_cap)
 
 
-def _polygon_download_limit(candles_limit, symbol, timeframe, session_policy=None):
-    normalized_limit = normalize_candles_limit(candles_limit)
+def _polygon_download_limit(
+    candles_limit,
+    symbol,
+    timeframe,
+    session_policy=None,
+    limit_cap=MAX_CANDLES,
+):
+    normalized_limit = _normalize_candles_limit(candles_limit, limit_cap)
     multiplier = session_fetch_multiplier(symbol, timeframe, session_policy)
     if multiplier <= 1.0:
         return normalized_limit
     return min(
-        MAX_CANDLES,
+        limit_cap,
         max(normalized_limit, int(math.ceil(normalized_limit * multiplier))),
     )
 
@@ -956,8 +975,8 @@ def _redact_secrets(value):
     return _SECRET_QUERY_PARAM_PATTERN.sub(r"\1=[REDACTED]", str(value))
 
 
-def _polygon_buffer_bars(candles_limit):
-    normalized_limit = normalize_candles_limit(candles_limit)
+def _polygon_buffer_bars(candles_limit, limit_cap=MAX_CANDLES):
+    normalized_limit = _normalize_candles_limit(candles_limit, limit_cap)
     return max(
         POLYGON_LOOKBACK_BUFFER_MIN_BARS,
         int(math.ceil(normalized_limit * POLYGON_LOOKBACK_BUFFER_RATIO)),
@@ -1127,9 +1146,17 @@ async def _request_polygon_aggregate_page(symbol, timeframe, to_timestamp_ms, ta
     return _extract_polygon_results(payload)
 
 
-async def _download_polygon_rows(symbol, timeframe, candles_limit):
-    normalized_limit = normalize_candles_limit(candles_limit)
-    target_bars = normalized_limit + _polygon_buffer_bars(normalized_limit)
+async def _download_polygon_rows(
+    symbol,
+    timeframe,
+    candles_limit,
+    limit_cap=MAX_CANDLES,
+):
+    normalized_limit = _normalize_candles_limit(candles_limit, limit_cap)
+    target_bars = normalized_limit + _polygon_buffer_bars(
+        normalized_limit,
+        limit_cap=limit_cap,
+    )
     collected = []
     seen_timestamps = set()
     next_to_ms = int(time.time() * 1000)
@@ -1196,7 +1223,13 @@ def _polygon_backoff_seconds(exc, attempt):
     return max(base, retry_after)
 
 
-async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
+async def request_polygon_candles(
+    symbol,
+    timeframe,
+    candles_limit=MAX_CANDLES,
+    *,
+    _limit_cap=MAX_CANDLES,
+):
     global _polygon_key_warning_emitted
 
     try:
@@ -1217,13 +1250,24 @@ async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
             _polygon_key_warning_emitted = True
         return None
 
-    normalized_limit = normalize_candles_limit(candles_limit)
+    normalized_limit = _normalize_candles_limit(candles_limit, _limit_cap)
     session_policy = expected_session_policy_for_symbol(symbol, timeframe)
-    download_limit = _polygon_download_limit(normalized_limit, symbol, timeframe, session_policy)
+    download_limit = _polygon_download_limit(
+        normalized_limit,
+        symbol,
+        timeframe,
+        session_policy,
+        limit_cap=_limit_cap,
+    )
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
         started = time.perf_counter()
         try:
-            rows = await _download_polygon_rows(symbol, timeframe, download_limit)
+            rows = await _download_polygon_rows(
+                symbol,
+                timeframe,
+                download_limit,
+                limit_cap=_limit_cap,
+            )
             candles = normalize_polygon_rows(rows)
             candles = _finalize_intraday_candles(
                 candles,
@@ -1231,6 +1275,7 @@ async def request_polygon_candles(symbol, timeframe, candles_limit=MAX_CANDLES):
                 timeframe,
                 normalized_limit,
                 session_policy=session_policy,
+                limit_cap=_limit_cap,
             )
 
             if not candles:
@@ -1350,6 +1395,14 @@ def _stock_session_anchor_source_plan(timeframe):
     return None
 
 
+def _polygon_source_candle_limit(timeframe):
+    base_aggregates_per_bar = _polygon_minute_base_aggregates_per_bar(timeframe)
+    return max(
+        MAX_CANDLES,
+        POLYGON_MAX_BASE_AGGREGATES // max(1, base_aggregates_per_bar),
+    )
+
+
 def _session_anchor_plan_for_symbol(symbol, timeframe):
     if is_crypto_symbol(symbol):
         return None
@@ -1362,15 +1415,33 @@ async def _request_polygon_session_anchored_candles(symbol, timeframe, candles_l
     source_timeframe, source_minutes, target_minutes = plan
     normalized_limit = normalize_candles_limit(candles_limit)
     ratio = target_minutes // source_minutes
-    source_limit = normalize_candles_limit(
-        (normalized_limit + _polygon_buffer_bars(normalized_limit)) * ratio
+    source_limit_cap = _polygon_source_candle_limit(source_timeframe)
+    source_limit = _normalize_candles_limit(
+        (normalized_limit + _polygon_buffer_bars(normalized_limit)) * ratio,
+        source_limit_cap,
     )
 
-    source_payload = await request_polygon_candles(symbol, source_timeframe, candles_limit=source_limit)
-    if not source_payload:
-        return None
+    source_payload = None
+    aggregated = []
+    while True:
+        source_payload = await request_polygon_candles(
+            symbol,
+            source_timeframe,
+            candles_limit=source_limit,
+            _limit_cap=source_limit_cap,
+        )
+        if not source_payload:
+            return None
 
-    aggregated = aggregate_session_anchored_candles(source_payload.get("candles") or [], target_minutes)
+        aggregated = aggregate_session_anchored_candles(source_payload.get("candles") or [], target_minutes)
+        if len(aggregated) >= normalized_limit or source_limit >= source_limit_cap:
+            break
+
+        next_limit = min(source_limit_cap, max(source_limit + 1, source_limit * 2))
+        if next_limit <= source_limit:
+            break
+        source_limit = next_limit
+
     aggregated = slice_recent(aggregated, limit=normalized_limit)
     if not aggregated:
         return None

@@ -37,11 +37,15 @@ from services import (  # noqa: E402
     vlr,
     rsi,
     macd,
+    volume,
+    volatility as volatility_service,
     utils,
     aroon_oscillator,
     linear_regression_candles,
     market_data,
-    regression_channels,
+    channel_line_rules,
+    linear_regression_channel,
+    regression_channel_dw,
     trend_channels,
     wavetrend,
     ema,
@@ -1090,13 +1094,49 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertTrue(passed)
         self.assertIsNotNone(sticker)
 
-    def test_confirm_if_needed_without_type_does_not_fail(self):
+    def test_confirm_if_needed_without_type_or_pattern_fails(self):
         candles = [{"open": 1.0, "close": 1.1, "high": 1.2, "low": 0.9}]
-        self.assertTrue(
+        self.assertFalse(
             utils.confirm_if_needed(
                 candles,
                 0,
                 {"confirmation": True, "confirmation_window": 1, "confirmation_type": None},
+            )
+        )
+
+    def test_confirm_if_needed_type_only_ignores_opposite_pattern_selection(self):
+        candles = [
+            {"open": 10.0, "close": 10.05, "high": 10.1, "low": 9.95},
+            {"open": 10.05, "close": 10.08, "high": 10.15, "low": 10.0},
+        ]
+        self.assertFalse(
+            utils.confirm_if_needed(
+                candles,
+                0,
+                {
+                    "confirmation": True,
+                    "confirmation_window": 1,
+                    "confirmation_types": ["bearish"],
+                    "confirmation_patterns": ["bullish_engulfing"],
+                },
+            )
+        )
+
+    def test_confirm_if_needed_type_and_pattern_union(self):
+        candles = [
+            {"open": 10.0, "close": 9.2, "high": 10.1, "low": 9.1},
+            {"open": 9.1, "close": 10.4, "high": 10.5, "low": 9.0},
+        ]
+        self.assertTrue(
+            utils.confirm_if_needed(
+                candles,
+                0,
+                {
+                    "confirmation": True,
+                    "confirmation_window": 1,
+                    "confirmation_types": ["bullish"],
+                    "confirmation_patterns": ["bullish_engulfing"],
+                },
             )
         )
 
@@ -1341,8 +1381,39 @@ class IndicatorMathTests(unittest.TestCase):
         # needs deeper history to avoid warm-up-only false positives.
         self.assertEqual(screener.required_candles_for_indicators([indicator]), 120)
 
+    def test_required_candles_for_macd_uses_stable_warmup_floor(self):
+        indicator = SimpleNamespace(
+            name="macd",
+            config={"fast": 12, "slow": 26, "signal": 9},
+        )
+        # The formula minimum is only 37 candles, but the recursive EMA legs need
+        # deeper history to keep latest-cross timing aligned with TradingView.
+        self.assertEqual(screener.required_candles_for_indicators([indicator]), 200)
+
+        raised = SimpleNamespace(
+            name="macd",
+            config={"fast": 12, "slow": 26, "signal": 9, "min_history": 260},
+        )
+        self.assertEqual(screener.required_candles_for_indicators([raised]), 260)
+
+        lowered = SimpleNamespace(
+            name="macd",
+            config={"fast": 12, "slow": 26, "signal": 9, "min_history": 50},
+        )
+        self.assertEqual(screener.required_candles_for_indicators([lowered]), 200)
+
+    def test_required_candles_for_volume_uses_tfo_sma_length_default(self):
+        default = SimpleNamespace(name="volume", config={})
+        self.assertEqual(screener.required_candles_for_indicators([default]), 102)
+
+        configured = SimpleNamespace(name="volume", config={"vol_ma": 55})
+        self.assertEqual(screener.required_candles_for_indicators([configured]), 57)
+
+        configured_window = SimpleNamespace(name="volume", config={"vol_ma": 55, "window": 4})
+        self.assertEqual(screener.required_candles_for_indicators([configured_window]), 60)
+
     def test_build_regression_sticker_includes_line_wording(self):
-        sticker = regression_channels.build_regression_sticker(
+        sticker = channel_line_rules.build_regression_sticker(
             "LRC",
             {"length": 100},
             {
@@ -1470,6 +1541,41 @@ class IndicatorMathTests(unittest.TestCase):
             macd.evaluate_macd_rules(macd_data, {"rule": "bullish_cross"})
         )
 
+    def test_macd_bullish_cross_requires_latest_completed_fresh_cross(self):
+        macd_data = {
+            "macd": np.array([-0.02, 0.03, 0.05], dtype=float),
+            "signal": np.array([0.01, 0.02, 0.04], dtype=float),
+            "hist": np.array([-0.03, 0.01, 0.01], dtype=float),
+        }
+
+        self.assertFalse(macd.evaluate_macd_rules(macd_data, {"rule": "bullish_cross"}))
+        self.assertTrue(macd.evaluate_macd_rules(macd_data, {"rule": "above_signal"}))
+
+    def test_macd_compute_ignores_explicit_incomplete_latest_candle_for_crosses(self):
+        closed_candles = []
+        for index, close in enumerate([10.0, 9.7, 9.4, 9.1, 8.9, 8.7, 8.6, 8.65, 8.8, 9.05, 9.3, 9.55]):
+            closed_candles.append({
+                "open": close,
+                "high": close + 0.2,
+                "low": close - 0.2,
+                "close": close,
+                "is_closed": True,
+            })
+        with_live_candle = closed_candles + [{
+            "open": 9.55,
+            "high": 12.0,
+            "low": 9.4,
+            "close": 12.0,
+            "is_closed": False,
+        }]
+
+        closed_only = macd.compute_macd(closed_candles, fast=3, slow=6, signal=3)
+        trimmed = macd.compute_macd(with_live_candle, fast=3, slow=6, signal=3)
+
+        self.assertEqual(len(trimmed["macd"]), len(closed_only["macd"]))
+        np.testing.assert_allclose(trimmed["macd"], closed_only["macd"], equal_nan=True)
+        np.testing.assert_allclose(trimmed["signal"], closed_only["signal"], equal_nan=True)
+
     def test_macd_uses_chris_moody_sma_signal_formula(self):
         candles = []
         for index in range(80):
@@ -1550,6 +1656,386 @@ class IndicatorMathTests(unittest.TestCase):
         latest = np.flatnonzero(np.isfinite(high_macd["macd"]) & np.isfinite(high_macd["signal"]))[-1]
         expected_rule = "above_signal" if high_macd["macd"][latest] >= high_macd["signal"][latest] else "below_signal"
         self.assertTrue(macd.evaluate_macd_rules(high_macd, {"rule": expected_rule}))
+
+    def test_volume_spike_matches_tfo_bullish_confirmed_previous_candle(self):
+        candles = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+        config = {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}
+
+        result = volume.compute_volume_spikes(candles, config)
+
+        self.assertFalse(volume.evaluate_volume_spike(candles[:-1], config))
+        self.assertTrue(volume.evaluate_volume_spike(candles, config))
+        self.assertTrue(result["candidate_bullish"][3])
+        self.assertTrue(result["result_bullish"][4])
+
+    def test_volume_spike_matches_tfo_bearish_confirmed_previous_candle(self):
+        candles = [
+            {"open": 10.0, "high": 10.3, "low": 9.6, "close": 9.9, "volume": 100.0},
+            {"open": 9.9, "high": 10.2, "low": 9.5, "close": 9.8, "volume": 100.0},
+            {"open": 9.8, "high": 10.4, "low": 9.7, "close": 10.0, "volume": 100.0},
+            {"open": 9.2, "high": 12.0, "low": 9.0, "close": 9.3, "volume": 1000.0},
+            {"open": 9.4, "high": 10.5, "low": 9.1, "close": 9.6, "volume": 100.0},
+        ]
+        config = {"vol_ma": 3, "vol_x": 1.5, "rule": "bearish"}
+
+        result = volume.compute_volume_spikes(candles, config)
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, config))
+        self.assertTrue(result["candidate_bearish"][3])
+        self.assertTrue(result["result_bearish"][4])
+
+    def test_volume_spike_filters_are_dynamic(self):
+        candles = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"open": 10.0, "high": 10.6, "low": 9.0, "close": 9.4, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 8.8, "close": 9.8, "volume": 100.0},
+        ]
+
+        strict_config = {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}
+        relaxed_config = {
+            "vol_ma": 3,
+            "vol_x": 1.5,
+            "rule": "bullish",
+            "only_valid_hl": False,
+            "only_hammers_shooters": False,
+        }
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, strict_config))
+        self.assertTrue(volume.evaluate_volume_spike(candles, relaxed_config))
+
+    def test_volume_spike_legacy_aliases_normalize_to_tfo_inputs(self):
+        config, error = volume.normalize_volume_spike_config({"length": 20, "multiplier": 2, "action": "long"})
+
+        self.assertIsNone(error)
+        self.assertEqual(config["vol_ma"], 20)
+        self.assertEqual(config["vol_x"], 2.0)
+        self.assertEqual(config["rule"], "bullish")
+
+    def test_volume_spike_legacy_alias_flag_remains_compatible(self):
+        config, error = volume.normalize_volume_spike_config({
+            "length": 20,
+            "multiplier": 2,
+            "allow_legacy_aliases": True,
+        })
+
+        self.assertIsNone(error)
+        self.assertEqual(config["vol_ma"], 20)
+        self.assertEqual(config["vol_x"], 2.0)
+
+    def test_volume_spike_config_warnings_explain_validation_mismatch_risk(self):
+        warnings = volume.volume_spike_config_warnings({"length": 20, "multiplier": 2})
+        codes = {warning["code"] for warning in warnings}
+
+        self.assertIn("VOLUME_SPIKES_LEGACY_ALIASES", codes)
+        self.assertIn("VOLUME_SPIKES_TV_DEFAULT_MISMATCH_RISK", codes)
+        alias = next(warning for warning in warnings if warning["code"] == "VOLUME_SPIKES_LEGACY_ALIASES")
+        self.assertEqual(alias["effective_config"]["vol_ma"], 20)
+        self.assertEqual(alias["effective_config"]["vol_x"], 2.0)
+
+    def test_volume_spike_custom_canonical_config_warns_when_different_from_tv_defaults(self):
+        warnings = volume.volume_spike_config_warnings({"vol_ma": 20, "vol_x": 2})
+        codes = {warning["code"] for warning in warnings}
+
+        self.assertIn("VOLUME_SPIKES_TV_DEFAULT_MISMATCH_RISK", codes)
+        mismatch = next(warning for warning in warnings if warning["code"] == "VOLUME_SPIKES_TV_DEFAULT_MISMATCH_RISK")
+        self.assertEqual(mismatch["effective_config"]["vol_ma"], 20)
+        self.assertEqual(mismatch["effective_config"]["vol_x"], 2.0)
+
+    def test_volume_spike_conflicting_aliases_are_rejected(self):
+        _config, error = volume.normalize_volume_spike_config({"length": 20, "vol_ma": 100})
+
+        self.assertIn("Conflicting Volume Spikes config aliases", error)
+        with self.assertRaises(volume.VolumeSpikeConfigError):
+            volume.evaluate_volume_spike([], {"length": 20, "vol_ma": 100})
+
+    def test_volume_spike_unsupported_rule_is_rejected(self):
+        _config, error = volume.normalize_volume_spike_config({"rule": "above"})
+
+        self.assertIn("Unsupported Volume Spikes rule", error)
+        with self.assertRaises(volume.VolumeSpikeConfigError):
+            volume.evaluate_volume_spike([], {"rule": "above"})
+
+    def test_volume_spike_equal_threshold_does_not_pass(self):
+        candles = [
+            {"open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.1, "high": 10.6, "low": 9.9, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 10.0, "close": 10.3, "volume": 100.0},
+            {"open": 10.5, "high": 10.8, "low": 8.0, "close": 10.4, "volume": 200.0},
+            {"open": 10.3, "high": 10.6, "low": 9.0, "close": 10.1, "volume": 100.0},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 2.0, "rule": "bullish"}))
+
+    def test_volume_spike_tolerance_does_not_change_pine_threshold(self):
+        candles = [
+            {"open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.1, "high": 10.6, "low": 9.9, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 10.0, "close": 10.3, "volume": 100.0},
+            {"open": 10.5, "high": 10.8, "low": 8.0, "close": 10.4, "volume": 190.0},
+            {"open": 10.3, "high": 10.6, "low": 9.0, "close": 10.1, "volume": 100.0},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 2.0, "rule": "bullish", "tolerance_pct": 10}))
+
+    def test_volume_spike_requires_sma_and_neighbor_history(self):
+        insufficient_sma = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 8.0, "close": 10.0, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+        insufficient_neighbors = insufficient_sma[-2:]
+
+        self.assertFalse(volume.evaluate_volume_spike(insufficient_sma, {"vol_ma": 4, "vol_x": 1.5, "rule": "bullish"}))
+        self.assertFalse(volume.evaluate_volume_spike(insufficient_neighbors, {"vol_ma": 1, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_same_color_rejects_doji(self):
+        candles = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"open": 10.3, "high": 10.6, "low": 8.0, "close": 10.3, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "only_same_color": True}))
+
+    def test_volume_spike_session_filters_candidate_candle(self):
+        candles = [
+            {"time": 1000, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2000, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3000, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 1711368000, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 1711371600, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+
+        included = {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "session": "1100-1300"}
+        excluded = {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "session": "1300-1400"}
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, included))
+        self.assertFalse(volume.evaluate_volume_spike(candles, excluded))
+
+    def test_volume_spike_overnight_session_filters_candidate_candle(self):
+        candles = [
+            {"time": 1000, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2000, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3000, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 1711413000, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 1711416600, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "session": "2200-0200"}))
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "session": "0100-0300"}))
+
+    def test_volume_spike_excludes_forming_candle_and_requires_confirmation(self):
+        candles = [
+            {"open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0, "is_closed": False},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_reversed_input_is_sorted_by_time(self):
+        candles = [
+            {"time": 1, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 4, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 5, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+        ]
+
+        self.assertTrue(volume.evaluate_volume_spike(list(reversed(candles)), {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_rules_select_expected_side(self):
+        candles = [
+            {"open": 10.0, "high": 10.3, "low": 9.6, "close": 9.9, "volume": 100.0},
+            {"open": 9.9, "high": 10.2, "low": 9.5, "close": 9.8, "volume": 100.0},
+            {"open": 9.8, "high": 10.4, "low": 9.7, "close": 10.0, "volume": 100.0},
+            {"open": 9.2, "high": 12.0, "low": 9.0, "close": 9.3, "volume": 1000.0},
+            {"open": 9.4, "high": 10.5, "low": 9.1, "close": 9.6, "volume": 100.0},
+        ]
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "either"}))
+        self.assertTrue(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bearish"}))
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_default_requires_latest_confirmed_signal(self):
+        candles = [
+            {"time": 1, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 4, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 5, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+            {"time": 6, "open": 9.8, "high": 10.2, "low": 9.4, "close": 9.9, "volume": 100.0},
+        ]
+
+        self.assertFalse(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"}))
+
+    def test_volume_spike_window_can_match_recent_confirmed_signal(self):
+        candles = [
+            {"time": 1, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 4, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 5, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+            {"time": 6, "open": 9.8, "high": 10.2, "low": 9.4, "close": 9.9, "volume": 100.0},
+        ]
+
+        self.assertTrue(volume.evaluate_volume_spike(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish", "window": 2}))
+
+    def test_volume_spike_reports_stale_tradingview_marker_outside_window(self):
+        candles = [
+            {"time": 1, "open": 10.0, "high": 10.8, "low": 9.8, "close": 10.2, "volume": 100.0},
+            {"time": 2, "open": 10.2, "high": 10.7, "low": 9.9, "close": 10.1, "volume": 100.0},
+            {"time": 3, "open": 10.1, "high": 10.5, "low": 9.6, "close": 10.0, "volume": 100.0},
+            {"time": 4, "open": 10.3, "high": 10.6, "low": 8.0, "close": 10.1, "volume": 1000.0},
+            {"time": 5, "open": 10.0, "high": 10.4, "low": 9.0, "close": 9.8, "volume": 100.0},
+            {"time": 6, "open": 9.8, "high": 10.2, "low": 9.4, "close": 9.9, "volume": 100.0},
+        ]
+
+        warnings = volume.volume_spike_signal_warnings(candles, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"})
+
+        self.assertTrue(any(warning["code"] == "VOLUME_SPIKES_STALE_SIGNAL_OUTSIDE_WINDOW" for warning in warnings))
+        self.assertEqual(warnings[0]["signal_age"], 1)
+
+    def test_volume_snapshot_requires_ohlc_for_default_filters(self):
+        asset = {"symbol": "TEST"}
+        snapshot = {"volume": [100.0, 100.0, 100.0, 1000.0, 100.0]}
+
+        passed, _result = indicators._handle_volume_snapshot(asset, snapshot, {"vol_ma": 3, "vol_x": 1.5})
+
+        self.assertFalse(passed)
+
+    def test_volume_snapshot_with_ohlc_uses_tfo_logic(self):
+        asset = {"symbol": "TEST"}
+        snapshot = {
+            "open": [10.0, 10.2, 10.1, 10.3, 10.0],
+            "high": [10.8, 10.7, 10.5, 10.6, 10.4],
+            "low": [9.8, 9.9, 9.6, 8.0, 9.0],
+            "close": [10.2, 10.1, 10.0, 10.1, 9.8],
+            "volume": [100.0, 100.0, 100.0, 1000.0, 100.0],
+        }
+
+        passed, _result = indicators._handle_volume_snapshot(asset, snapshot, {"vol_ma": 3, "vol_x": 1.5, "rule": "bullish"})
+
+        self.assertTrue(passed)
+
+    def test_volume_scope_hash_alias_config_matches_equivalent_canonical_config(self):
+        request_a = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"length": 20, "multiplier": 2})],
+        )
+        request_b = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 100, "vol_x": 1.5})],
+        )
+
+        request_c = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 20, "vol_x": 2})],
+        )
+
+        self.assertEqual(screener._scope_hash_from_request(request_a), screener._scope_hash_from_request(request_c))
+        self.assertNotEqual(screener._scope_hash_from_request(request_a), screener._scope_hash_from_request(request_b))
+
+    def test_volume_scope_hash_default_matches_explicit_tv_default(self):
+        request_a = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={})],
+        )
+        request_b = SimpleNamespace(
+            asset_type="stocks",
+            symbols=["BJRI"],
+            stock_sources=["zoya"],
+            compliance_status=None,
+            asset_categories=None,
+            sectors=None,
+            exchanges=None,
+            excluded_categories=None,
+            gate_timeframe=None,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 100, "vol_x": 1.5})],
+        )
+
+        self.assertEqual(screener._scope_hash_from_request(request_a), screener._scope_hash_from_request(request_b))
+
+    def test_volume_scope_hash_separates_custom_canonical_configs(self):
+        base = {
+            "asset_type": "stocks",
+            "symbols": ["BJRI"],
+            "stock_sources": ["zoya"],
+            "compliance_status": None,
+            "asset_categories": None,
+            "sectors": None,
+            "exchanges": None,
+            "excluded_categories": None,
+            "gate_timeframe": None,
+        }
+        request_a = SimpleNamespace(
+            **base,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 20, "vol_x": 2})],
+        )
+        request_b = SimpleNamespace(
+            **base,
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"vol_ma": 100, "vol_x": 1.5})],
+        )
+
+        self.assertNotEqual(screener._scope_hash_from_request(request_a), screener._scope_hash_from_request(request_b))
+
+    def test_volume_request_warnings_are_returned_even_with_no_results(self):
+        request = SimpleNamespace(
+            indicators=[SimpleNamespace(name="volume", timeframe="single", config={"length": 20, "multiplier": 2})],
+        )
+        warnings = screener._request_config_warnings(request)
+
+        self.assertTrue(any(warning["code"] == "VOLUME_SPIKES_LEGACY_ALIASES" for warning in warnings))
+
+        response = screener.build_response([], timeframe="1h", scan_stage="single", warnings=warnings)
+
+        self.assertEqual(response["results"], [])
+        self.assertTrue(any(warning["indicator"] == "volume" for warning in response["warnings"]))
 
     def test_rsi_window_matches_within_recent_candles(self):
         rsi_series = [55.0, 48.0, 33.0, 28.0]
@@ -2553,7 +3039,7 @@ class IndicatorMathTests(unittest.TestCase):
             "tolerance": 0,
             "confirmation": False,
         }
-        self.assertFalse(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
     def test_regression_close_above_requires_latest_candle_to_still_be_above_line(self):
         candles = [
@@ -2573,9 +3059,9 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertFalse(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
-    def test_regression_close_above_window_counts_from_signal_start_until_now(self):
+    def test_regression_close_above_window_requires_exact_signal_age(self):
         candles = [
             {"open": 111.0, "high": 112.0, "low": 110.0, "close": 111.0},
             {"open": 111.0, "high": 112.0, "low": 110.0, "close": 111.0},
@@ -2594,9 +3080,9 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertFalse(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
-    def test_regression_close_above_accepts_current_signal_started_within_window(self):
+    def test_regression_close_above_accepts_exact_signal_age(self):
         candles = [
             {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0},
             {"open": 111.0, "high": 112.0, "low": 110.0, "close": 111.0},
@@ -2614,9 +3100,64 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertTrue(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
-    def test_regression_lower_wick_touch_rejects_candle_using_line_as_resistance(self):
+    def test_regression_close_above_rejects_younger_signal_age(self):
+        candles = [
+            {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0},
+            {"open": 111.0, "high": 112.0, "low": 110.0, "close": 111.0},
+        ]
+        channel = {
+            "length": 2,
+            "upper": [110.0, 110.0],
+        }
+        config = {
+            "lines": ["upper"],
+            "action": "close_above",
+            "window": 2,
+            "tolerance": 0,
+            "confirmation": False,
+        }
+
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
+
+    def test_regression_touch_requires_exact_candle_age(self):
+        channel = {"length": 2, "upper": [0.536, 0.536]}
+        previous_touch = {"open": 0.530, "high": 0.540, "low": 0.520, "close": 0.530}
+        latest_touch = {"open": 0.530, "high": 0.540, "low": 0.520, "close": 0.530}
+        config = {
+            "lines": ["upper"],
+            "action": "touch",
+            "touch_type": "wick",
+            "window": 2,
+            "tolerance": 0,
+            "mintick": 0.01,
+            "confirmation": False,
+        }
+
+        self.assertFalse(
+            channel_line_rules.evaluate_regression_lines(
+                [previous_touch, {"open": 0.530, "high": 0.539, "low": 0.520, "close": 0.530}],
+                channel,
+                config,
+            )
+        )
+        self.assertTrue(
+            channel_line_rules.evaluate_regression_lines(
+                [previous_touch, latest_touch],
+                channel,
+                config,
+            )
+        )
+        self.assertFalse(
+            channel_line_rules.evaluate_regression_lines(
+                [{"open": 0.530, "high": 0.539, "low": 0.520, "close": 0.530}, latest_touch],
+                channel,
+                config,
+            )
+        )
+
+    def test_regression_lower_line_accepts_an_actual_upper_wick_touch(self):
         candles = [
             {"open": 98.0, "high": 100.5, "low": 97.5, "close": 99.0},
         ]
@@ -2633,7 +3174,7 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertFalse(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
     def test_regression_lower_wick_touch_accepts_support_reaction(self):
         candles = [
@@ -2652,7 +3193,7 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertTrue(regression_channels.evaluate_regression_lines(candles, channel, config))
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
     def test_regression_channel_bounds_use_symmetric_close_deviation(self):
         candles = [
@@ -2662,7 +3203,7 @@ class IndicatorMathTests(unittest.TestCase):
             {"open": 106.0, "high": 107.0, "low": 105.0, "close": 106.0},
         ]
 
-        channel = regression_channels.compute_dw_regression_channel(candles, length=4, width_coeff=1.0)
+        channel = regression_channel_dw.compute_dw_regression_channel(candles, length=4, width_coeff=1.0)
 
         self.assertIsNotNone(channel)
         finite_rows = [
@@ -2814,13 +3355,13 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertEqual(channel["line_x1"], 2)
         self.assertEqual(channel["line_x2"], 13)
 
-        # TradingView-parity geometry projects the visible/evaluated channel
-        # directly from the two confirmed pivot anchors at each candle index.
+        # Pine advances y2 by one slope step per confirmed bar even though x2
+        # initially jumps forward by `length` bars from the pivot anchor.
         self.assertAlmostEqual(float(channel["top"][0]), 12.457142857142857)
-        self.assertAlmostEqual(float(channel["top"][-1]), 11.797142857142859)
+        self.assertAlmostEqual(float(channel["top"][-1]), 11.857142857142856)
         self.assertAlmostEqual(float(channel["bottom"][0]), 4.742857142857143)
-        self.assertAlmostEqual(float(channel["bottom"][-1]), 4.0828571428571445)
-        self.assertAlmostEqual(float(channel["middle"][-1]), 7.940000000000001)
+        self.assertAlmostEqual(float(channel["bottom"][-1]), 4.142857142857146)
+        self.assertAlmostEqual(float(channel["middle"][-1]), 7.999999999999999)
 
     def test_compute_trend_channel_freezes_broken_channel_line_endpoints(self):
         bases = self._chartprime_fixture_bases() + [13.0, 12.5, 12.0, 11.5, 11.0, 10.5]
@@ -2838,11 +3379,18 @@ class IndicatorMathTests(unittest.TestCase):
         break_regression_index = channel["break_index"] - channel["start_index"]
         bottom_at_break = float(channel["bottom"][break_regression_index])
 
-        # The endpoint freezes at the break bar for break eligibility, while
-        # the rendered segment remains the same straight pivot projection.
+        # The endpoint freezes at the break bar for break eligibility.
         self.assertNotAlmostEqual(float(channel["bottom"][-1]), bottom_at_break)
 
-        closed_form_bottom_at_latest = bottom_at_break + (latest_index - 14) * (-0.06)
+        # Rendering continues the slope represented by the frozen Pine
+        # endpoint. That rendered slope differs from the raw pivot slope
+        # because Pine's y2 intentionally lags its x2.
+        rendered_slope = (
+            bottom_at_break - float(channel["bottom"][0])
+        ) / (channel["break_index"] - channel["start_index"])
+        closed_form_bottom_at_latest = bottom_at_break + (
+            latest_index - channel["break_index"]
+        ) * rendered_slope
         self.assertAlmostEqual(float(channel["bottom"][-1]), closed_form_bottom_at_latest)
 
     def test_evaluate_single_area_rejects_post_break_extrapolated_touch(self):
@@ -3089,12 +3637,12 @@ class IndicatorMathTests(unittest.TestCase):
             "r_mode": "min",
             "r_min": 0.8,
         }
-        self.assertTrue(regression_channels.passes_r_filter(-0.92, config))
+        self.assertTrue(linear_regression_channel.passes_r_filter(-0.92, config))
 
     def test_regression_r_filter_supports_guideline_presets(self):
-        self.assertTrue(regression_channels.passes_r_filter(0.75, {"r_filter": "strong"}))
-        self.assertTrue(regression_channels.passes_r_filter(0.65, {"r_filter": "balanced"}))
-        self.assertFalse(regression_channels.passes_r_filter(0.85, {"r_filter": "balanced"}))
+        self.assertTrue(linear_regression_channel.passes_r_filter(0.75, {"r_filter": "strong"}))
+        self.assertTrue(linear_regression_channel.passes_r_filter(0.65, {"r_filter": "balanced"}))
+        self.assertFalse(linear_regression_channel.passes_r_filter(0.85, {"r_filter": "balanced"}))
 
     def test_handle_regression_passes_interval_window_settings(self):
         asset = {"symbol": "AAPL", "channels": {}}
@@ -3122,8 +3670,10 @@ class IndicatorMathTests(unittest.TestCase):
             "evaluate_regression_lines",
             return_value=False,
         ):
-            indicators.handle_regression(asset, candles, config)
+            passed, _ = indicators.handle_regression(asset, candles, config)
 
+        self.assertFalse(passed)
+        self.assertIn("regression", asset["channels"])
         compute_mock.assert_called_once_with(
             candles,
             length=200,
@@ -4547,7 +5097,7 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
             await screener.fetch_screening_data(assets, "1h", [], request=request)
 
         kwargs = fetch_live_data_mock.await_args.kwargs
-        self.assertEqual(kwargs.get("candles_limit"), 234)
+        self.assertEqual(kwargs.get("candles_limit"), 466)
 
     async def test_fetch_screening_data_uses_snapshot_fast_path_for_fundamentals_only(self):
         assets = [{"symbol": "AAPL", "asset_type": "stocks", "exchange": "NASDAQ"}]
@@ -4806,8 +5356,17 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
         live_data = [
             {
                 "symbol": "AAPL",
-                "price": candles[-1]["close"],
-                "candles": candles,
+                "price": candles[-1]["close"] + 25.0,
+                "candles": [
+                    *candles,
+                    {
+                        **candles[-1],
+                        "time": candles[-1]["time"] + 3600,
+                        "close": candles[-1]["close"] + 25.0,
+                        "high": candles[-1]["close"] + 25.0,
+                        "is_closed": False,
+                    },
+                ],
                 "candles_provider": "massive",
                 "next_refresh_at": 1710000000 + (221 * 3600),
                 "shares_outstanding": 1000000.0,
@@ -4829,9 +5388,11 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
         ) as fetch_live_data_mock:
             detail = await screener.get_asset_detail("AAPL", "stocks", "1day", request)
 
-        self.assertEqual(fetch_live_data_mock.await_args.kwargs["candles_limit"], 200)
-        self.assertEqual(len(detail["market_data"]["recent_candles"]), 200)
-        self.assertEqual(detail["market_data"]["recent_candles"][0]["time"], candles[-200]["time"])
+        self.assertEqual(fetch_live_data_mock.await_args.kwargs["candles_limit"], 400)
+        self.assertEqual(len(detail["market_data"]["recent_candles"]), 220)
+        self.assertEqual(detail["market_data"]["recent_candles"][0]["time"], candles[0]["time"])
+        self.assertEqual(detail["market_data"]["recent_candles"][-1]["time"], candles[-1]["time"])
+        self.assertEqual(detail["price"], candles[-1]["close"])
         self.assertIsInstance(detail["channels"]["lrc"]["middle"], list)
         self.assertIsInstance(
             detail["confluence_channels"]["fast_lrc"]["channel"]["middle"],
@@ -7198,6 +7759,217 @@ class MarketDataWorkerTests(unittest.IsolatedAsyncioTestCase):
         called_timeframes = [call.args[1] for call in fetch_batches_mock.await_args_list]
         self.assertEqual(called_timeframes, ["4h", "1day"])
         clear_timeframes_mock.assert_called_once_with(["1m", "2day", "1w"])
+
+
+class RelativeVolumeTests(unittest.TestCase):
+    def _candles(self, volumes):
+        return [
+            {
+                "time": index,
+                "open": 1.0,
+                "high": 1.0,
+                "low": 1.0,
+                "close": 1.0,
+                "volume": float(volume),
+            }
+            for index, volume in enumerate(volumes)
+        ]
+
+    def test_relative_volume_uses_previous_average_like_pine_array_loop(self):
+        candles = self._candles([100.0] * 30 + [300.0])
+
+        result = volume.compute_relative_volume(candles, {"length": 30, "min_ratio": 2.5})
+
+        self.assertIsNone(result["config_error"])
+        self.assertAlmostEqual(float(result["previous_average"][-1]), 100.0)
+        self.assertAlmostEqual(float(result["rvol"][-1]), 3.0)
+        self.assertEqual(result["matched_signal_index"], 30)
+
+    def test_relative_volume_crossed_above_threshold(self):
+        candles = self._candles([100.0] * 30 + [150.0, 250.0])
+
+        result = volume.compute_relative_volume(
+            candles,
+            {"length": 30, "rule": "crossed_above", "min_ratio": 2.0},
+        )
+
+        self.assertTrue(bool(result["signal"][-1]))
+        self.assertEqual(result["matched_signal_index"], 31)
+
+    def test_relative_volume_ignores_unclosed_latest_candle(self):
+        candles = self._candles([100.0] * 30 + [150.0])
+        candles.append({
+            "time": 99,
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 10000.0,
+            "is_closed": False,
+        })
+
+        result = volume.compute_relative_volume(candles, {"length": 30, "min_ratio": 2.0})
+
+        self.assertEqual(len(result["candles"]), 31)
+        self.assertIsNone(result["matched_signal_index"])
+
+    def test_relative_volume_debug_trace_reports_latest_components(self):
+        candles = self._candles([100.0] * 60 + [300.0])
+
+        trace = volume.relative_volume_debug_trace(
+            candles,
+            {"length": 30, "min_ratio": 2.0, "trace": True},
+            symbol="TEST",
+            timeframe="1h",
+        )
+
+        self.assertEqual(trace["symbol"], "TEST")
+        self.assertEqual(trace["timeframe"], "1h")
+        self.assertAlmostEqual(trace["latest"]["rvol"], 3.0)
+        self.assertTrue(trace["latest"]["final_signal"])
+
+
+class CurrentVolumeTests(unittest.TestCase):
+    def _candles(self, volumes, close_start=10.0):
+        candles = []
+        for index, volume in enumerate(volumes):
+            close = close_start + index
+            candles.append({
+                "time": index,
+                "open": close - 0.5,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "volume": float(volume),
+            })
+        return candles
+
+    def test_current_volume_average_percent_includes_current_bar_like_pine(self):
+        candles = self._candles([100.0, 100.0, 400.0])
+
+        result = volume.compute_current_volume(
+            candles,
+            {"avg_count": 3, "rule": "above_average_percent", "min_percent_avg": 190},
+        )
+
+        self.assertIsNone(result["config_error"])
+        self.assertAlmostEqual(float(result["current_avg_volume"][-1]), 200.0)
+        self.assertAlmostEqual(float(result["current_resolution_percent_avg"][-1]), 200.0)
+        self.assertEqual(result["matched_signal_index"], 2)
+
+    def test_current_volume_preserves_min_max_value_rule(self):
+        candles = self._candles([100.0, 500.0])
+
+        passed = volume.evaluate_current_volume(
+            candles,
+            {"min_value": 400, "max_value": 600, "tolerance_pct": 0},
+        )
+        failed = volume.evaluate_current_volume(
+            candles,
+            {"min_value": 600, "tolerance_pct": 0},
+        )
+
+        self.assertTrue(passed)
+        self.assertFalse(failed)
+
+    def test_current_volume_atr_uses_selected_smoothing_and_multiplier(self):
+        candles = [
+            {"open": 10.0, "high": 11.0, "low": 9.0, "close": 10.0, "volume": 100.0},
+            {"open": 10.0, "high": 13.0, "low": 9.0, "close": 12.0, "volume": 100.0},
+            {"open": 12.0, "high": 15.0, "low": 11.0, "close": 14.0, "volume": 100.0},
+        ]
+
+        result = volume.compute_current_volume(
+            candles,
+            {"atr_length": 2, "smoothing": "SMA", "atr_multiplier": 0.5},
+        )
+
+        self.assertAlmostEqual(float(result["true_range"][-1]), 4.0)
+        self.assertAlmostEqual(float(result["catr"][-1]), 4.0)
+        self.assertAlmostEqual(float(result["atr_value"][-1]), 2.0)
+
+    def test_current_volume_ignores_unclosed_latest_candle(self):
+        candles = self._candles([100.0, 200.0])
+        candles.append({
+            "time": 99,
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 10000.0,
+            "is_closed": False,
+        })
+
+        result = volume.compute_current_volume(candles, {"min_value": 1000})
+
+        self.assertEqual(len(result["candles"]), 2)
+        self.assertIsNone(result["matched_signal_index"])
+
+
+class VolatilityStopTests(unittest.TestCase):
+    def _candles(self, closes):
+        candles = []
+        for index, close in enumerate(closes):
+            candles.append({
+                "time": index,
+                "open": float(close) - 0.2,
+                "high": float(close) + 1.0,
+                "low": float(close) - 1.0,
+                "close": float(close),
+                "volume": 1000.0,
+            })
+        return candles
+
+    def test_volatility_stop_computes_tradingview_vstop_components(self):
+        candles = self._candles([10, 11, 12, 13, 14, 15, 16])
+
+        computed = volatility_service.compute_volatility(
+            candles,
+            {"mode": "vstop", "htf_selection": "None", "rule": "uptrend", "length": 3, "atr_factor": 2.0},
+        )
+
+        self.assertIsNone(computed["config_error"])
+        self.assertTrue(bool(computed["trend_up"][-1]))
+        self.assertTrue(np.isfinite(computed["stop"][-1]))
+        self.assertTrue(np.isfinite(computed["atr"][-1]))
+        self.assertEqual(computed["matched_signal_index"], len(candles) - 1)
+
+    def test_volatility_stop_detects_change_to_downtrend(self):
+        candles = self._candles([20, 21, 22, 23, 24, 18])
+
+        computed = volatility_service.compute_volatility(
+            candles,
+            {"mode": "vstop", "htf_selection": "None", "rule": "change_to_downtrend", "length": 3, "atr_factor": 1.0},
+        )
+
+        self.assertTrue(bool(computed["trend_change_to_down"][-1]))
+        self.assertEqual(computed["matched_signal_index"], len(candles) - 1)
+
+    def test_volatility_stop_ignores_unclosed_latest_candle(self):
+        candles = self._candles([10, 11, 12, 13])
+        candles.append({
+            "time": 99,
+            "open": 1.0,
+            "high": 100.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 1000.0,
+            "is_closed": False,
+        })
+
+        computed = volatility_service.compute_volatility(
+            candles,
+            {"mode": "vstop", "htf_selection": "None", "rule": "downtrend", "length": 3},
+        )
+
+        self.assertEqual(len(computed["candles"]), 4)
+        self.assertIsNone(computed["matched_signal_index"])
+
+    def test_existing_returns_std_mode_still_ignores_zero_closes(self):
+        matched, sticker = indicators.handle_volatility({}, [{"close": 0.0}, {"close": 0.0}, {"close": 0.0}], {"length": 2, "mode": "returns_std"})
+
+        self.assertFalse(matched)
+        self.assertIsNone(sticker)
 
 
 if __name__ == "__main__":

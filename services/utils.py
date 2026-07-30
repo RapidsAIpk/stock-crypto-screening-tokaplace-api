@@ -87,6 +87,104 @@ STRONG_BEARISH_PATTERNS = {
     "strong_breakdown_candle",
 }
 
+BULLISH_CONFIRMATION_TYPE_IDS = {"bullish", "strong_bullish"}
+BEARISH_CONFIRMATION_TYPE_IDS = {"bearish", "strong_bearish"}
+
+
+def _confirmation_types_from_config(config):
+    types = list(config.get("confirmation_types") or [])
+    confirmation_type = config.get("confirmation_type")
+    if confirmation_type and confirmation_type not in types:
+        types = [confirmation_type, *types]
+    return types
+
+
+def _allowed_confirmation_pattern_ids(types):
+    if not types:
+        return None
+
+    allowed = set()
+    for ctype in types:
+        if ctype in BULLISH_CONFIRMATION_TYPE_IDS:
+            allowed |= BULLISH_PATTERNS
+        elif ctype in BEARISH_CONFIRMATION_TYPE_IDS:
+            allowed |= BEARISH_PATTERNS
+
+    return allowed if allowed else None
+
+
+def _sanitize_confirmation_patterns(types, patterns):
+    selected = list(patterns or [])
+    if not selected:
+        return []
+
+    allowed = _allowed_confirmation_pattern_ids(types)
+    if allowed is None:
+        return selected
+
+    return [pattern for pattern in selected if pattern in allowed]
+
+
+VLR_BULLISH_CANDLE_PATTERNS = {
+    "bullish_engulfing",
+    "hammer",
+    "morning_star",
+}
+
+VLR_BEARISH_CANDLE_PATTERNS = {
+    "bearish_engulfing",
+    "shooting_star",
+    "evening_star",
+}
+
+
+def _sanitize_vlr_candle_confirmation_patterns(direction, patterns):
+    selected = list(patterns or [])
+    if not selected:
+        return []
+
+    token = str(direction or "both").strip().lower()
+    if token == "bullish":
+        allowed = VLR_BULLISH_CANDLE_PATTERNS
+    elif token == "bearish":
+        allowed = VLR_BEARISH_CANDLE_PATTERNS
+    else:
+        return selected
+
+    return [pattern for pattern in selected if pattern in allowed]
+
+
+def normalize_confirmation_config(config):
+    """Align confirmation type/pattern fields before screening or API handling."""
+    if not isinstance(config, dict):
+        return config
+
+    normalized = dict(config)
+
+    if normalized.get("areas"):
+        normalized["areas"] = [
+            normalize_confirmation_config(area)
+            if isinstance(area, dict)
+            else area
+            for area in normalized["areas"]
+        ]
+
+    if normalized.get("candle_confirmation"):
+        normalized["candle_confirmation_patterns"] = _sanitize_vlr_candle_confirmation_patterns(
+            normalized.get("direction"),
+            normalized.get("candle_confirmation_patterns"),
+        )
+
+    if not normalized.get("confirmation"):
+        return normalized
+
+    types = _confirmation_types_from_config(normalized)
+    normalized["confirmation_patterns"] = _sanitize_confirmation_patterns(
+        types,
+        normalized.get("confirmation_patterns"),
+    )
+    return normalized
+
 
 def humanize_token(value):
     return str(value or "").replace("_", " ").strip().title()
@@ -349,9 +447,6 @@ def _wick_touch_matches(candle, lower_tol, upper_tol, direction=None):
     low = _safe_float(candle["low"])
     high = _safe_float(candle["high"])
 
-    if direction not in {"up", "down"}:
-        return low <= upper_tol and high >= lower_tol
-
     if any(key not in candle for key in ("open", "close")):
         return low <= upper_tol and high >= lower_tol
 
@@ -360,19 +455,22 @@ def _wick_touch_matches(candle, lower_tol, upper_tol, direction=None):
 
     upper_wick_intersects = (
         high > body_high
+        and body_high <= upper_tol
         and high >= lower_tol
-        and body_high <= reference_value
     )
     lower_wick_intersects = (
         low < body_low
         and low <= upper_tol
-        and body_low >= reference_value
+        and body_low >= lower_tol
     )
 
     if direction == "up":
-        return upper_wick_intersects
+        return upper_wick_intersects and body_high <= reference_value
 
-    return lower_wick_intersects
+    if direction == "down":
+        return lower_wick_intersects and body_low >= reference_value
+
+    return upper_wick_intersects or lower_wick_intersects
 
 
 def detect_touch(candle, lower_tol, upper_tol, config, direction=None):
@@ -456,15 +554,18 @@ def confirm_if_needed(candles, index, config):
         return True
 
     window = int(config.get("confirmation_window", 1) or 1)
-    confirmation_type = config.get("confirmation_type")
-    confirmation_types = config.get("confirmation_types") or []
-    confirmation_patterns = config.get("confirmation_patterns") or []
+    confirmation_types = _confirmation_types_from_config(config)
+    confirmation_patterns = _sanitize_confirmation_patterns(
+        confirmation_types,
+        config.get("confirmation_patterns") or [],
+    )
 
-    if confirmation_type and confirmation_type not in confirmation_types:
-        confirmation_types = [confirmation_type, *confirmation_types]
+    has_types = bool(confirmation_types)
+    has_patterns = bool(confirmation_patterns)
 
-    if not confirmation_types and not confirmation_patterns:
-        return True
+    # Require Confirmation with no type (Auto) and no patterns cannot pass.
+    if not has_types and not has_patterns:
+        return False
 
     for i in range(0, window + 1):
 
@@ -477,11 +578,12 @@ def confirm_if_needed(candles, index, config):
         if not _is_confirmable_candle(candle):
             continue
 
-        for ctype in confirmation_types:
-            if _confirmation_type_matches(candles, candle_index, ctype):
-                return True
+        if has_types:
+            for ctype in confirmation_types:
+                if _confirmation_type_matches(candles, candle_index, ctype):
+                    return True
 
-        if confirmation_patterns:
+        if has_patterns:
             patterns = detect_candlestick_patterns(candles, candle_index)
             if any(pattern in patterns for pattern in confirmation_patterns):
                 return True

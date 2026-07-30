@@ -3,22 +3,16 @@ import logging
 
 import numpy as np
 
-from services.pine_math import (
-    NAN,
-    pine_daily_volatility,
-    pine_range_volatility,
-    pine_relative_volume_ratio,
-)
-
 logger = logging.getLogger(__name__)
 
-from services.regression_channels import (
-    compute_lrc_channel,
-    compute_dw_regression_channel,
-    evaluate_regression_lines,
-    passes_r_filter,
+from services.channel_line_rules import (
     build_regression_sticker,
+    evaluate_line_rule,
+    evaluate_regression_lines,
+    _evaluation_line_value,
 )
+from services.linear_regression_channel import compute_lrc_channel, passes_r_filter
+from services.regression_channel_dw import compute_dw_regression_channel
 
 from services.rsi import (
     compute_rsi_series,
@@ -66,12 +60,40 @@ from services.vlr import (
 
 from services.ema import evaluate_ema_rules, build_ema_sticker, build_moving_average_sticker, price_matches_ema_rule
 from services.macd import compute_macd, evaluate_macd_rules, build_macd_sticker
-from services.volume import evaluate_volume_spike, build_volume_sticker
+from services.volume import (
+    evaluate_volume_spike,
+    build_volume_sticker,
+    volume_spike_config_warnings,
+    volume_spike_signal_warnings,
+    volume_spike_debug_trace,
+    VolumeSpikeConfigError,
+    evaluate_relative_volume,
+    build_relative_volume_sticker,
+    relative_volume_config_warnings,
+    relative_volume_signal_warnings,
+    relative_volume_debug_trace,
+    RelativeVolumeConfigError,
+    evaluate_current_volume,
+    build_current_volume_sticker,
+    current_volume_config_warnings,
+    current_volume_signal_warnings,
+    current_volume_debug_trace,
+    CurrentVolumeConfigError,
+)
+from services.volatility import (
+    evaluate_volatility,
+    build_volatility_sticker,
+    volatility_config_warnings,
+    volatility_signal_warnings,
+    volatility_debug_trace,
+    VolatilityConfigError,
+)
 from services.utils import (
     build_indicator_sticker,
     format_compact_number,
     format_decimal,
     humanize_token,
+    normalize_confirmation_config,
 )
 
 
@@ -216,16 +238,6 @@ def _trend_decision(area_rules):
     return "Channel Structure Match"
 
 
-def _volatility_decision(min_pct, max_pct):
-    if max_pct is None and float(min_pct or 0) > 0:
-        return "Range Expansion"
-    if max_pct is not None and float(min_pct or 0) <= 0:
-        return "Controlled Volatility"
-    if max_pct is not None:
-        return "Volatility Band Match"
-    return "Volatility Match"
-
-
 def _adx_decision(rule):
     normalized = str(rule or "").strip().lower()
 
@@ -297,30 +309,152 @@ def handle_lrc(asset, candles, config):
     )
 
 
+def _log_dw_regression_evaluation(asset, candles, channel, config, passed):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    window = max(1, int(config.get("window", 1) or 1))
+    start_index = len(candles) - int(channel["length"])
+    latest_index = len(candles) - 1
+    action = str(config.get("action") or "").strip().lower()
+    if action == "touch":
+        signal_start_index = latest_index - window + 1
+        source_indices = (
+            list(range(signal_start_index, latest_index + 1))
+            if signal_start_index >= 0
+            else []
+        )
+    else:
+        source_indices = [latest_index] if latest_index >= 0 else []
+    tolerance_pct = float(config.get("tolerance", 0) or 0)
+    tick_size = _regression_mintick(asset, config)
+    evaluations = []
+    for candle_index in source_indices:
+        regression_index = candle_index - start_index
+        candle = candles[candle_index]
+        line_values = {}
+        line_evaluations = {}
+        for line_name in config.get("lines") or []:
+            series = channel.get(line_name)
+            if series is not None and 0 <= regression_index < len(series):
+                raw_line_value = float(series[regression_index])
+                line_value = _evaluation_line_value(raw_line_value, config, line_name)
+                line_values[line_name] = {
+                    "raw": raw_line_value,
+                    "rounded": line_value,
+                }
+                tolerance = abs(line_value) * (tolerance_pct / 100)
+                lower_tolerance = line_value - tolerance
+                upper_tolerance = line_value + tolerance
+                if str(config.get("action") or "").lower() == "touch":
+                    touch_result = evaluate_line_rule(
+                        candle,
+                        lower_tolerance,
+                        upper_tolerance,
+                        config,
+                        touch_direction=None,
+                    )
+                    line_evaluations[line_name] = {
+                        "formula": "selected body or actual wick overlaps the line tolerance band",
+                        "touch_type": config.get("touch_type"),
+                        "lower_tolerance": lower_tolerance,
+                        "upper_tolerance": upper_tolerance,
+                        "result": bool(touch_result),
+                        "line_is_finite": bool(np.isfinite(line_value)),
+                    }
+        evaluations.append(
+            {
+                "candle_index": candle_index,
+                "regression_index": regression_index,
+                "timestamp": candle.get("time"),
+                "open": candle.get("open"),
+                "high": candle.get("high"),
+                "low": candle.get("low"),
+                "close": candle.get("close"),
+                "closed": not (
+                    candle.get("is_closed") is False
+                    or candle.get("is_complete") is False
+                    or candle.get("complete") is False
+                    or candle.get("closed") is False
+                    or candle.get("is_live") is True
+                ),
+                "line_values": line_values,
+                "line_evaluations": line_evaluations,
+            }
+        )
+    logger.debug(
+        "regression evaluation symbol=%s provider=%s session_policy=%s "
+        "candle_count=%s channel_length=%s channel_start_index=%s "
+        "source_indices=%s action=%s touch_type=%s tolerance=%s "
+        "tick_size=%s evaluations=%s final=%s",
+        asset.get("symbol"),
+        asset.get("candles_provider"),
+        asset.get("session_policy"),
+        len(candles),
+        channel.get("length"),
+        start_index,
+        source_indices,
+        config.get("action"),
+        config.get("touch_type"),
+        config.get("tolerance"),
+        tick_size,
+        evaluations,
+        passed,
+    )
+
+
+def _latest_candle_price(candles):
+    for candle in reversed(candles or []):
+        try:
+            value = float(candle.get("close"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if np.isfinite(value) and value > 0:
+            return value
+    return None
+
+
+def _regression_mintick(asset, config, candles=None):
+    return _trend_mintick(
+        asset,
+        config,
+        reference_price=_latest_candle_price(candles),
+    )
+
+
 def handle_regression(asset, candles, config):
+    evaluation_config = dict(config or {})
+    mintick = _regression_mintick(asset, evaluation_config, candles)
+    if mintick is not None:
+        evaluation_config.setdefault("mintick", mintick)
 
     channel = compute_dw_regression_channel(
         candles,
-        length=config.get("length", 200),
-        width_coeff=config.get("width_coeff", 1.0),
-        window_type=config.get("window_type", "continuous"),
-        interval_step=config.get("interval_step", 1),
-        filter_type=config.get("filter_type", "SMA"),
+        length=evaluation_config.get("length", 200),
+        width_coeff=evaluation_config.get("width_coeff", 1.0),
+        window_type=evaluation_config.get("window_type", "continuous"),
+        interval_step=evaluation_config.get("interval_step", 1),
+        filter_type=evaluation_config.get("filter_type", "SMA"),
     )
 
     if not channel:
         return False, None
 
-    if not evaluate_regression_lines(candles, channel, config):
+    # Retain the computed series even for a failed rule. Scan filtering is
+    # still controlled solely by `passed`, while the details/chart path can
+    # now display the exact channel that produced either PASS or FAIL.
+    asset["channels"]["regression"] = channel
+    passed = evaluate_regression_lines(candles, channel, evaluation_config)
+    _log_dw_regression_evaluation(asset, candles, channel, evaluation_config, passed)
+
+    if not passed:
         return False, None
 
-    asset["channels"]["regression"] = channel
-
-    sticker_data = build_regression_sticker("Regression Channel", channel, config)
+    sticker_data = build_regression_sticker("Regression Channel", channel, evaluation_config)
     return True, build_indicator_sticker(
         sticker_data["name"],
         sticker_data["condition"],
-        config,
+        evaluation_config,
         length=sticker_data["length"],
         window=sticker_data["window"],
         decision=sticker_data.get("decision"),
@@ -357,7 +491,7 @@ def _trend_closed_candles(candles):
     return candles
 
 
-def _trend_mintick(asset, config):
+def _trend_mintick(asset, config, reference_price=None):
     for key in ("mintick", "tick_size", "price_tick_size"):
         raw_value = config.get(key)
         if raw_value is not None:
@@ -371,6 +505,16 @@ def _trend_mintick(asset, config):
     symbol = str((asset or {}).get("symbol") or "").strip().upper()
     asset_type = str((asset or {}).get("asset_type") or "").strip().lower()
     if asset_type == "stocks" or (symbol and not symbol.endswith("-USD")):
+        try:
+            numeric_reference_price = float(reference_price)
+        except (TypeError, ValueError):
+            numeric_reference_price = None
+        if (
+            numeric_reference_price is not None
+            and np.isfinite(numeric_reference_price)
+            and 0 < numeric_reference_price < 1
+        ):
+            return 0.0001
         return 0.01
     return None
 
@@ -385,7 +529,11 @@ def handle_trend(asset, candles, config):
         length=config.get("length", 8),
         wait_for_break=True if wait_for_break is None else bool(wait_for_break),
         show_last_channel=True if show_last_channel is None else bool(show_last_channel),
-        mintick=_trend_mintick(asset, config),
+        mintick=_trend_mintick(
+            asset,
+            config,
+            reference_price=_latest_candle_price(closed_candles),
+        ),
     )
 
     if not tc:
@@ -573,58 +721,171 @@ def handle_macd(asset, candles, config):
 
 
 def handle_volume(asset, candles, config):
+    warnings = volume_spike_config_warnings(config) + volume_spike_signal_warnings(candles, config)
+    if warnings:
+        asset.setdefault("warnings", []).extend(warnings)
 
-    if not evaluate_volume_spike(candles, config):
-        return False, None
+    try:
+        if not evaluate_volume_spike(candles, config):
+            if warnings or config.get("debug") or config.get("trace"):
+                evidence = None
+                if config.get("debug") or config.get("trace"):
+                    evidence = volume_spike_debug_trace(
+                        candles,
+                        config,
+                        symbol=asset.get("symbol"),
+                        timeframe=asset.get("timeframe") or config.get("timeframe"),
+                    )
+                return False, {
+                    "sticker": None,
+                    "evidence": evidence or {},
+                    "warnings": warnings,
+                }
+            return False, None
 
-    return True, build_volume_sticker(candles, config)
+        sticker = build_volume_sticker(candles, config)
+        evidence = None
+        if config.get("debug") or config.get("trace"):
+            evidence = volume_spike_debug_trace(
+                candles,
+                config,
+                symbol=asset.get("symbol"),
+                timeframe=asset.get("timeframe") or config.get("timeframe"),
+            )
+        if evidence or warnings:
+            return True, {
+                "sticker": sticker,
+                "evidence": evidence or {},
+                "warnings": warnings,
+            }
+        return True, sticker
+    except VolumeSpikeConfigError as exc:
+        logger.warning(
+            "Volume Spikes config error symbol=%s error=%s config=%s",
+            asset.get("symbol"),
+            exc,
+            config,
+        )
+        return False, {
+            "sticker": None,
+            "evidence": {
+                "config_error": str(exc),
+                "requested_config": dict(config or {}),
+            },
+            "warnings": warnings,
+        }
 
 
 def handle_relative_volume(asset, candles, config):
-    volumes = np.array([c["volume"] for c in candles], dtype=float)
-    length = int(config.get("length", 10) or 10)
-    min_ratio = float(config.get("min_ratio", 1.0) or 1.0)
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
+    warnings = relative_volume_config_warnings(config) + relative_volume_signal_warnings(candles, config)
+    if warnings:
+        asset.setdefault("warnings", []).extend(warnings)
 
-    ratio = pine_relative_volume_ratio(volumes, length)
-    if not np.isfinite(ratio):
-        return False, None
+    try:
+        if not evaluate_relative_volume(candles, config):
+            if warnings or config.get("debug") or config.get("trace"):
+                evidence = None
+                if config.get("debug") or config.get("trace"):
+                    evidence = relative_volume_debug_trace(
+                        candles,
+                        config,
+                        symbol=asset.get("symbol"),
+                        timeframe=asset.get("timeframe") or config.get("timeframe"),
+                    )
+                return False, {
+                    "sticker": None,
+                    "evidence": evidence or {},
+                    "warnings": warnings,
+                }
+            return False, None
 
-    adjusted_min_ratio = max(0.0, min_ratio * (1 - tolerance_pct / 100.0))
-    if ratio < adjusted_min_ratio:
-        return False, None
-
-    return True, build_indicator_sticker(
-        "Relative Volume",
-        f"{format_decimal(ratio, 2)}x average on {length}-bar lookback",
-        {"window": 1, "confirmation": False},
-        length=length,
-        window=1,
-        decision="High Relative Volume",
-    )
+        sticker = build_relative_volume_sticker(candles, config)
+        evidence = None
+        if config.get("debug") or config.get("trace"):
+            evidence = relative_volume_debug_trace(
+                candles,
+                config,
+                symbol=asset.get("symbol"),
+                timeframe=asset.get("timeframe") or config.get("timeframe"),
+            )
+        if evidence or warnings:
+            return True, {
+                "sticker": sticker,
+                "evidence": evidence or {},
+                "warnings": warnings,
+            }
+        return True, sticker
+    except RelativeVolumeConfigError as exc:
+        logger.warning(
+            "Relative Volume config error symbol=%s error=%s config=%s",
+            asset.get("symbol"),
+            exc,
+            config,
+        )
+        return False, {
+            "sticker": None,
+            "evidence": {
+                "config_error": str(exc),
+                "requested_config": dict(config or {}),
+            },
+            "warnings": warnings,
+        }
 
 
 def handle_current_volume(asset, candles, config):
-    if not candles:
-        return False, None
+    warnings = current_volume_config_warnings(config) + current_volume_signal_warnings(candles, config)
+    if warnings:
+        asset.setdefault("warnings", []).extend(warnings)
 
-    current_volume = float(candles[-1].get("volume", 0) or 0)
-    min_value = config.get("min_value")
-    max_value = config.get("max_value")
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
+    try:
+        if not evaluate_current_volume(candles, config):
+            if warnings or config.get("debug") or config.get("trace"):
+                evidence = None
+                if config.get("debug") or config.get("trace"):
+                    evidence = current_volume_debug_trace(
+                        candles,
+                        config,
+                        symbol=asset.get("symbol"),
+                        timeframe=asset.get("timeframe") or config.get("timeframe"),
+                    )
+                return False, {
+                    "sticker": None,
+                    "evidence": evidence or {},
+                    "warnings": warnings,
+                }
+            return False, None
 
-    if min_value is not None and current_volume < float(min_value) * (1 - tolerance_pct / 100.0):
-        return False, None
-    if max_value is not None and current_volume > float(max_value) * (1 + tolerance_pct / 100.0):
-        return False, None
-
-    return True, build_indicator_sticker(
-        "Current Volume",
-        f"{format_compact_number(current_volume)} traded this bar",
-        {"window": 1, "confirmation": False},
-        window=1,
-        decision="Liquidity Threshold Met",
-    )
+        sticker = build_current_volume_sticker(candles, config)
+        evidence = None
+        if config.get("debug") or config.get("trace"):
+            evidence = current_volume_debug_trace(
+                candles,
+                config,
+                symbol=asset.get("symbol"),
+                timeframe=asset.get("timeframe") or config.get("timeframe"),
+            )
+        if evidence or warnings:
+            return True, {
+                "sticker": sticker,
+                "evidence": evidence or {},
+                "warnings": warnings,
+            }
+        return True, sticker
+    except CurrentVolumeConfigError as exc:
+        logger.warning(
+            "Current Volume config error symbol=%s error=%s config=%s",
+            asset.get("symbol"),
+            exc,
+            config,
+        )
+        return False, {
+            "sticker": None,
+            "evidence": {
+                "config_error": str(exc),
+                "requested_config": dict(config or {}),
+            },
+            "warnings": warnings,
+        }
 
 
 def handle_float(asset, candles, config):
@@ -676,50 +937,59 @@ def handle_shares_outstanding(asset, candles, config):
 
 
 def handle_volatility(asset, candles, config):
-    length = int(config.get("length", 20) or 20)
-    min_pct = float(config.get("min_pct", 0) or 0)
-    max_pct = config.get("max_pct")
-    max_pct = float(max_pct) if max_pct is not None else None
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
-    mode = str(config.get("mode", "range_avg") or "range_avg").strip().lower()
+    warnings = volatility_config_warnings(config) + volatility_signal_warnings(candles, config)
+    if warnings:
+        asset.setdefault("warnings", []).extend(warnings)
 
-    if len(candles) < max(2, length):
-        return False, None
-
-    if mode == "daily":
-        latest = candles[-1]
-        previous_close = float(candles[-2]["close"]) if len(candles) >= 2 else float(latest["close"])
-        enriched = dict(latest)
-        enriched["previous_close"] = previous_close
-        vol_pct = pine_daily_volatility(enriched)
-        label = "Daily true-range volatility"
-    elif mode == "returns_std":
-        closes = np.array([c["close"] for c in candles], dtype=float)
-        returns = _safe_percent_returns(closes[-(length + 1):])
-        if returns.size == 0:
+    try:
+        if not evaluate_volatility(candles, config):
+            if warnings or config.get("debug") or config.get("trace"):
+                evidence = None
+                if config.get("debug") or config.get("trace"):
+                    evidence = volatility_debug_trace(
+                        candles,
+                        config,
+                        symbol=asset.get("symbol"),
+                        timeframe=asset.get("timeframe") or config.get("timeframe"),
+                    )
+                return False, {
+                    "sticker": None,
+                    "evidence": evidence or {},
+                    "warnings": warnings,
+                }
             return False, None
-        vol_pct = float(np.std(returns) * 100)
-        label = f"Realized vol over {length} bars"
-    else:
-        vol_pct = pine_range_volatility(candles, length)
-        label = f"Range volatility over {length} bars"
 
-    if not np.isfinite(vol_pct):
-        return False, None
-
-    if vol_pct < max(0.0, min_pct - tolerance_pct):
-        return False, None
-    if max_pct is not None and vol_pct > (max_pct + tolerance_pct):
-        return False, None
-
-    return True, build_indicator_sticker(
-        "Volatility",
-        f"{label}: {format_decimal(vol_pct, 2)}%",
-        {"window": 1, "confirmation": False},
-        length=length,
-        window=1,
-        decision=_volatility_decision(min_pct, max_pct),
-    )
+        sticker = build_volatility_sticker(candles, config)
+        evidence = None
+        if config.get("debug") or config.get("trace"):
+            evidence = volatility_debug_trace(
+                candles,
+                config,
+                symbol=asset.get("symbol"),
+                timeframe=asset.get("timeframe") or config.get("timeframe"),
+            )
+        if evidence or warnings:
+            return True, {
+                "sticker": sticker,
+                "evidence": evidence or {},
+                "warnings": warnings,
+            }
+        return True, sticker
+    except VolatilityConfigError as exc:
+        logger.warning(
+            "Volatility config error symbol=%s error=%s config=%s",
+            asset.get("symbol"),
+            exc,
+            config,
+        )
+        return False, {
+            "sticker": None,
+            "evidence": {
+                "config_error": str(exc),
+                "requested_config": dict(config or {}),
+            },
+            "warnings": warnings,
+        }
 
 
 # =========================================================
@@ -761,19 +1031,11 @@ def _snapshot_series(snapshot, name):
     return [series]
 
 
-def _safe_percent_returns(closes):
-    series = np.array(closes, dtype=float)
-    if series.size < 2:
-        return np.array([], dtype=float)
-
-    previous = series[:-1]
-    current = series[1:]
-    valid_mask = np.isfinite(previous) & np.isfinite(current) & (previous != 0)
-    if not np.any(valid_mask):
-        return np.array([], dtype=float)
-
-    returns = (current[valid_mask] - previous[valid_mask]) / previous[valid_mask]
-    return returns[np.isfinite(returns)]
+def _snapshot_config_bool(config, key, default):
+    value = config.get(key, default)
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", "off"}
+    return bool(value)
 
 
 def _handle_rsi_snapshot(asset, snapshot, config):
@@ -944,71 +1206,146 @@ def _handle_stochrsi_snapshot(asset, snapshot, config):
 
 
 def _handle_volume_snapshot(asset, snapshot, config):
-    volumes = np.array(_snapshot_series(snapshot, "volume"), dtype=float)
-    length = int(config.get("length", 20) or 20)
-    multiplier = float(config.get("multiplier", 2) or 2)
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
+    try:
+        volumes = _snapshot_series(snapshot, "volume")
+        opens = _snapshot_series(snapshot, "open")
+        highs = _snapshot_series(snapshot, "high")
+        lows = _snapshot_series(snapshot, "low")
+        closes = _snapshot_series(snapshot, "close")
+        times = _snapshot_series(snapshot, "time")
 
-    if len(volumes) < length + 1:
-        return False, None
+        if not volumes:
+            return False, None
 
-    avg_volume = np.mean(volumes[-length-1:-1])
-    last_volume = volumes[-1]
+        full_ohlc = all(len(series) == len(volumes) for series in (opens, highs, lows, closes))
+        volume_only_allowed = not (
+            _snapshot_config_bool(config, "only_valid_hl", True)
+            or _snapshot_config_bool(config, "only_hammers_shooters", True)
+            or _snapshot_config_bool(config, "only_same_color", False)
+        )
+        if not full_ohlc and not volume_only_allowed:
+            return False, None
 
-    adjusted_multiplier = max(0.0, multiplier * (1 - tolerance_pct / 100.0))
-    if not last_volume > avg_volume * adjusted_multiplier:
-        return False, None
+        if not full_ohlc:
+            opens = highs = lows = closes = [0.0] * len(volumes)
 
-    candle_like = [{"volume": float(volume)} for volume in volumes.tolist()]
-    return True, build_volume_sticker(candle_like, config)
+        candle_like = []
+        for index, volume in enumerate(volumes):
+            candle = {
+                "open": float(opens[index]),
+                "high": float(highs[index]),
+                "low": float(lows[index]),
+                "close": float(closes[index]),
+                "volume": float(volume),
+            }
+            if len(times) == len(volumes):
+                candle["time"] = times[index]
+            candle_like.append(candle)
+
+        warnings = volume_spike_config_warnings(config) + volume_spike_signal_warnings(candle_like, config)
+        if warnings:
+            asset.setdefault("warnings", []).extend(warnings)
+
+        if not evaluate_volume_spike(candle_like, config):
+            if warnings or config.get("debug") or config.get("trace"):
+                evidence = None
+                if config.get("debug") or config.get("trace"):
+                    evidence = volume_spike_debug_trace(
+                        candle_like,
+                        config,
+                        symbol=asset.get("symbol"),
+                        timeframe=asset.get("timeframe") or config.get("timeframe"),
+                    )
+                return False, {
+                    "sticker": None,
+                    "evidence": evidence or {},
+                    "warnings": warnings,
+                }
+            return False, None
+
+        sticker = build_volume_sticker(candle_like, config)
+        evidence = None
+        if config.get("debug") or config.get("trace"):
+            evidence = volume_spike_debug_trace(
+                candle_like,
+                config,
+                symbol=asset.get("symbol"),
+                timeframe=asset.get("timeframe") or config.get("timeframe"),
+            )
+        if evidence or warnings:
+            return True, {
+                "sticker": sticker,
+                "evidence": evidence or {},
+                "warnings": warnings,
+            }
+        return True, sticker
+    except VolumeSpikeConfigError as exc:
+        logger.warning(
+            "Volume Spikes snapshot config error symbol=%s error=%s config=%s",
+            asset.get("symbol"),
+            exc,
+            config,
+        )
+        return False, {
+            "sticker": None,
+            "evidence": {
+                "config_error": str(exc),
+                "requested_config": dict(config or {}),
+            },
+            "warnings": warnings,
+        }
 
 
 def _handle_relative_volume_snapshot(asset, snapshot, config):
-    volumes = np.array(_snapshot_series(snapshot, "volume"), dtype=float)
-    length = int(config.get("length", 10) or 10)
-    min_ratio = float(config.get("min_ratio", 1.0) or 1.0)
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
+    volumes = _snapshot_series(snapshot, "volume")
+    times = _snapshot_series(snapshot, "time")
+    candles = []
+    for index, volume in enumerate(volumes):
+        candle = {
+            "open": 0.0,
+            "high": 0.0,
+            "low": 0.0,
+            "close": 0.0,
+            "volume": float(volume),
+        }
+        if len(times) == len(volumes):
+            candle["time"] = times[index]
+        candles.append(candle)
 
-    ratio = pine_relative_volume_ratio(volumes, length)
-    if not np.isfinite(ratio):
+    try:
+        if not evaluate_relative_volume(candles, config):
+            return False, None
+        return True, build_relative_volume_sticker(candles, config)
+    except RelativeVolumeConfigError:
         return False, None
-
-    adjusted_min_ratio = max(0.0, min_ratio * (1 - tolerance_pct / 100.0))
-    if ratio < adjusted_min_ratio:
-        return False, None
-
-    return True, build_indicator_sticker(
-        "Relative Volume",
-        f"{format_decimal(ratio, 2)}x average on {length}-bar lookback",
-        {"window": 1, "confirmation": False},
-        length=length,
-        window=1,
-        decision="High Relative Volume",
-    )
 
 
 def _handle_current_volume_snapshot(asset, snapshot, config):
-    volumes = np.array(_snapshot_series(snapshot, "volume"), dtype=float)
-    if len(volumes) < 1:
-        return False, None
+    volumes = _snapshot_series(snapshot, "volume")
+    times = _snapshot_series(snapshot, "time")
+    opens = _snapshot_series(snapshot, "open")
+    highs = _snapshot_series(snapshot, "high")
+    lows = _snapshot_series(snapshot, "low")
+    closes = _snapshot_series(snapshot, "close")
+    candles = []
+    for index, volume in enumerate(volumes):
+        candle = {
+            "open": float(opens[index]) if len(opens) == len(volumes) else 0.0,
+            "high": float(highs[index]) if len(highs) == len(volumes) else 0.0,
+            "low": float(lows[index]) if len(lows) == len(volumes) else 0.0,
+            "close": float(closes[index]) if len(closes) == len(volumes) else 0.0,
+            "volume": float(volume),
+        }
+        if len(times) == len(volumes):
+            candle["time"] = times[index]
+        candles.append(candle)
 
-    current_volume = float(volumes[-1])
-    min_value = config.get("min_value")
-    max_value = config.get("max_value")
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
-
-    if min_value is not None and current_volume < float(min_value) * (1 - tolerance_pct / 100.0):
+    try:
+        if not evaluate_current_volume(candles, config):
+            return False, None
+        return True, build_current_volume_sticker(candles, config)
+    except CurrentVolumeConfigError:
         return False, None
-    if max_value is not None and current_volume > float(max_value) * (1 + tolerance_pct / 100.0):
-        return False, None
-
-    return True, build_indicator_sticker(
-        "Current Volume",
-        f"{format_compact_number(current_volume)} traded this bar",
-        {"window": 1, "confirmation": False},
-        window=1,
-        decision="Liquidity Threshold Met",
-    )
 
 
 def _handle_float_snapshot(asset, snapshot, config):
@@ -1060,56 +1397,40 @@ def _handle_shares_outstanding_snapshot(asset, snapshot, config):
 
 
 def _handle_volatility_snapshot(asset, snapshot, config):
-    length = int(config.get("length", 20) or 20)
-    min_pct = float(config.get("min_pct", 0) or 0)
-    max_pct = config.get("max_pct")
-    max_pct = float(max_pct) if max_pct is not None else None
-    tolerance_pct = abs(float(config.get("tolerance_pct", 0) or 0))
     mode = str(config.get("mode", "range_avg") or "range_avg").strip().lower()
+    if mode in {"returns_std", "returns", "realized"}:
+        closes = _snapshot_series(snapshot, "close")
+        candles = [{"close": float(close)} for close in closes]
+        try:
+            if not evaluate_volatility(candles, config):
+                return False, None
+            return True, build_volatility_sticker(candles, config)
+        except VolatilityConfigError:
+            return False, None
 
+    times = _snapshot_series(snapshot, "time")
+    opens = _snapshot_series(snapshot, "open")
     highs = _snapshot_series(snapshot, "high")
     lows = _snapshot_series(snapshot, "low")
     closes = _snapshot_series(snapshot, "close")
-    if len(closes) < max(2, length):
-        return False, None
+    candles = []
+    for index, close in enumerate(closes):
+        candle = {
+            "open": float(opens[index]) if len(opens) == len(closes) else float(close),
+            "high": float(highs[index]) if len(highs) == len(closes) else float(close),
+            "low": float(lows[index]) if len(lows) == len(closes) else float(close),
+            "close": float(close),
+        }
+        if len(times) == len(closes):
+            candle["time"] = times[index]
+        candles.append(candle)
 
-    candles = [
-        {"high": float(high), "low": float(low), "close": float(close)}
-        for high, low, close in zip(highs, lows, closes)
-    ]
-
-    if mode == "daily":
-        latest = dict(candles[-1])
-        latest["previous_close"] = float(candles[-2]["close"])
-        vol_pct = pine_daily_volatility(latest)
-        label = "Daily true-range volatility"
-    elif mode == "returns_std":
-        close_values = np.array(closes, dtype=float)
-        returns = _safe_percent_returns(close_values[-(length + 1):])
-        if returns.size == 0:
+    try:
+        if not evaluate_volatility(candles, config):
             return False, None
-        vol_pct = float(np.std(returns) * 100)
-        label = f"Realized vol over {length} bars"
-    else:
-        vol_pct = pine_range_volatility(candles, length)
-        label = f"Range volatility over {length} bars"
-
-    if not np.isfinite(vol_pct):
+        return True, build_volatility_sticker(candles, config)
+    except VolatilityConfigError:
         return False, None
-
-    if vol_pct < max(0.0, min_pct - tolerance_pct):
-        return False, None
-    if max_pct is not None and vol_pct > (max_pct + tolerance_pct):
-        return False, None
-
-    return True, build_indicator_sticker(
-        "Volatility",
-        f"{label}: {format_decimal(vol_pct, 2)}%",
-        {"window": 1, "confirmation": False},
-        length=length,
-        window=1,
-        decision=_volatility_decision(min_pct, max_pct),
-    )
 
 
 SNAPSHOT_INDICATOR_REGISTRY = {
@@ -1147,7 +1468,13 @@ def _compile_selected_indicators(selected_indicators, registry):
         if not handler:
             return None
 
-        compiled.append((indicator.name.lower(), handler, indicator.config or {}))
+        compiled.append(
+            (
+                indicator.name.lower(),
+                handler,
+                normalize_confirmation_config(dict(indicator.config or {})),
+            )
+        )
 
     return compiled
 
@@ -1159,8 +1486,8 @@ def _compile_selected_indicators(selected_indicators, registry):
 def _normalize_handler_result(result):
     """Handlers may return a sticker string or {sticker, evidence}."""
     if isinstance(result, dict):
-        return result.get("sticker"), result.get("evidence")
-    return result, None
+        return result.get("sticker"), result.get("evidence"), result.get("warnings") or []
+    return result, None, []
 
 
 def apply_indicators(data, selected_indicators):
@@ -1204,7 +1531,9 @@ def apply_indicators(data, selected_indicators):
                     candles,
                     config
                 )
-                sticker, _evidence = _normalize_handler_result(result)
+                sticker, _evidence, warnings = _normalize_handler_result(result)
+                if warnings:
+                    asset.setdefault("warnings", []).extend(warnings)
             except Exception:
                 logger.exception(
                     "Indicator evaluation failed, skipping symbol symbol=%s indicator=%s",
@@ -1257,7 +1586,7 @@ def evaluate_indicator_details(asset, selected_indicators, timeframe_scope=None)
 
     for indicator_name, handler, config in compiled_indicators:
         passed, result = handler(asset, candles, config)
-        sticker, evidence = _normalize_handler_result(result)
+        sticker, evidence, warnings = _normalize_handler_result(result)
         detail = {
             "name": indicator_name,
             "timeframe_scope": timeframe_scope,
@@ -1267,6 +1596,8 @@ def evaluate_indicator_details(asset, selected_indicators, timeframe_scope=None)
         }
         if evidence:
             detail["evidence"] = evidence
+        if warnings:
+            detail["warnings"] = warnings
         details.append(detail)
 
     return details
@@ -1292,7 +1623,10 @@ def apply_indicator_snapshots(data, selected_indicators):
         passed_all = True
 
         for indicator_name, handler, config in compiled_indicators:
-            passed, sticker = handler(asset, snapshot, config)
+            passed, result = handler(asset, snapshot, config)
+            sticker, _evidence, warnings = _normalize_handler_result(result)
+            if warnings:
+                asset.setdefault("warnings", []).extend(warnings)
 
             if not passed:
                 passed_all = False

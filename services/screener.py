@@ -22,13 +22,27 @@ from services.confluence import (
 from services.market_data import fetch_live_data
 from services.scan_progress import emit_scan_progress
 from services.gate_session_store import store as gate_session_store
-from services.regression_channels import compute_lrc_channel, compute_dw_regression_channel
+from services.linear_regression_channel import compute_lrc_channel
+from services.regression_channel_dw import compute_dw_regression_channel
 from services.trend_channels import compute_trend_channel, is_area_rule_disabled, required_trend_channel_history
 from services.utils import build_indicator_sticker, format_price_value, humanize_token
 from services.stock_reference import asset_category_label, matches_asset_categories, matches_sectors
+from services.volume import (
+    current_volume_config_warnings,
+    normalize_relative_volume_config,
+    normalize_current_volume_config,
+    normalize_volume_spike_config,
+    relative_volume_config_warnings,
+    required_current_volume_candles,
+    required_relative_volume_candles,
+    required_volume_spike_candles,
+    volume_spike_config_warnings,
+)
+from services.volatility import normalize_volatility_config, required_volatility_candles, volatility_config_warnings
 
 logger = logging.getLogger(__name__)
 DETAIL_RECENT_CANDLES = 120
+MACD_MIN_HISTORY_FLOOR = 200
 SNAPSHOT_COMPATIBLE_INDICATORS = {"float", "shares_outstanding"}
 MARKET_DATA_AUDIT_LOG = "screening_market_data_audit"
 
@@ -173,7 +187,69 @@ def _scope_payload_from_request(request):
         "exchanges": _normalize_list(getattr(request, "exchanges", None)),
         "excluded_categories": _normalize_list(getattr(request, "excluded_categories", None)),
         "gate_timeframe": getattr(request, "gate_timeframe", None),
+        "indicators": _normalized_indicator_scope(getattr(request, "indicators", None)),
     }
+
+
+def _normalized_indicator_scope(indicators):
+    normalized = []
+    for indicator in indicators or []:
+        name = str(getattr(indicator, "name", "") or "").strip().lower()
+        config = dict(getattr(indicator, "config", {}) or {})
+        if name == "volume":
+            effective_config, error = normalize_volume_spike_config(config)
+            config = {
+                "effective": effective_config,
+                "config_error": error,
+            }
+        elif name == "relative_volume":
+            effective_config, error = normalize_relative_volume_config(config)
+            config = {
+                "effective": effective_config,
+                "config_error": error,
+            }
+        elif name == "current_volume":
+            effective_config, error = normalize_current_volume_config(config)
+            config = {
+                "effective": effective_config,
+                "config_error": error,
+            }
+        elif name == "volatility":
+            effective_config, error = normalize_volatility_config(config)
+            config = {
+                "effective": effective_config,
+                "config_error": error,
+            }
+        normalized.append({
+            "name": name,
+            "timeframe": getattr(indicator, "timeframe", None),
+            "config": config,
+        })
+    return normalized
+
+
+def _request_config_warnings(request):
+    warnings = []
+    for indicator in getattr(request, "indicators", None) or []:
+        name = str(getattr(indicator, "name", "") or "").strip().lower()
+        if name != "volume":
+            if name == "relative_volume":
+                warning_items = relative_volume_config_warnings(getattr(indicator, "config", {}) or {})
+            elif name == "current_volume":
+                warning_items = current_volume_config_warnings(getattr(indicator, "config", {}) or {})
+            elif name == "volatility":
+                warning_items = volatility_config_warnings(getattr(indicator, "config", {}) or {})
+            else:
+                continue
+        else:
+            warning_items = volume_spike_config_warnings(getattr(indicator, "config", {}) or {})
+
+        for warning in warning_items:
+            payload = dict(warning)
+            payload["indicator"] = name
+            payload["timeframe"] = getattr(indicator, "timeframe", None)
+            warnings.append(payload)
+    return warnings
 
 
 def _scope_hash_from_request(request):
@@ -497,7 +573,14 @@ def required_candles_for_indicators(indicators):
             needed = length + window + confirmation_window
         elif name == "regression":
             length = _safe_int(config.get("length"), 200, minimum=2)
-            needed = length + window + confirmation_window
+            window_type = str(config.get("window_type") or "continuous").strip().lower()
+            if window_type == "interval":
+                needed = length + window + confirmation_window
+            else:
+                # DW nests a length-period filter inside another length-period
+                # filter. Full Pine parity for the latest result therefore
+                # needs 2*length-1 completed source bars.
+                needed = (2 * length) + window + confirmation_window - 2
         elif name == "trend":
             length = _safe_int(config.get("length"), 8, minimum=2)
             area_window, area_confirmation_window = _trend_area_window(config)
@@ -526,14 +609,23 @@ def required_candles_for_indicators(indicators):
             fast = _safe_int(config.get("fast"), 12, minimum=1)
             slow = _safe_int(config.get("slow"), 26, minimum=1)
             signal = _safe_int(config.get("signal"), 9, minimum=1)
-            needed = max(fast, slow) + signal + 2
-        elif name in {"volume", "volatility"}:
-            length = _safe_int(config.get("length"), 20, minimum=1)
-            needed = length + 1
+            # MACD uses two recursive EMAs before the SMA signal line. Fetching
+            # only the formula minimum can leave the EMA seed under-warmed versus
+            # TradingView's full-chart calculation and move a prior cross onto the
+            # latest candle. Keep a generic floor, while allowing callers to raise
+            # it for symbols/timeframes that need a deeper parity margin.
+            min_history = _safe_int(config.get("min_history"), MACD_MIN_HISTORY_FLOOR, minimum=MACD_MIN_HISTORY_FLOOR)
+            ema_warmup = max(fast, slow) * 5 + signal + window + confirmation_window
+            needed = max(max(fast, slow) + signal + 2, ema_warmup, min_history)
+        elif name == "volume":
+            needed = required_volume_spike_candles(config)
+        elif name == "volatility":
+            needed = required_volatility_candles(config)
         elif name == "relative_volume":
-            length = _safe_int(config.get("length"), 10, minimum=1)
-            needed = length + 1
-        elif name in {"current_volume", "float", "shares_outstanding"}:
+            needed = required_relative_volume_candles(config)
+        elif name == "current_volume":
+            needed = required_current_volume_candles(config)
+        elif name in {"float", "shares_outstanding"}:
             needed = 1
         else:
             needed = window + confirmation_window + 2
@@ -559,7 +651,7 @@ def _required_candles_for_channel_type(channel_type, length=None):
     if channel_type == "lrc":
         return normalized_length
     if channel_type == "regression":
-        return normalized_length
+        return (2 * normalized_length) - 1
     if channel_type == "trend":
         return required_trend_channel_history(normalized_length)
     return 1
@@ -1260,12 +1352,17 @@ async def get_asset_detail(symbol, asset_type, timeframe, request, scan_stage="s
         for indicator in selected_indicators
     )
     candles_limit = max(DETAIL_RECENT_CANDLES, required_candles_for_request(request, selected_indicators))
+    # Match the scan path exactly: fetch one possible forming bar beyond the
+    # required completed history, then remove it before indicator evaluation
+    # and before returning recent_candles to the frontend chart.
+    fetch_candles_limit = min(500, candles_limit + 1)
     data = await fetch_live_data(
         [resolved_asset["symbol"]],
         timeframe,
         include_fundamentals=need_fundamentals,
-        candles_limit=candles_limit,
+        candles_limit=fetch_candles_limit,
     )
+    data = _completed_candle_snapshot(data, candles_limit)
 
     if not data:
         return None
@@ -1330,6 +1427,7 @@ async def get_asset_detail(symbol, asset_type, timeframe, request, scan_stage="s
         "last_candle_time": candles[-1].get("time") if candles else None,
         "stickers": detail_stickers,
         "matched_indicators": detail_matches,
+        "warnings": _request_config_warnings(request) + (asset.get("warnings") or []),
         "asset_metadata": asset.get("asset_metadata") or {},
         "request_filters": _build_request_filters(request, normalized_stage, timeframe, selected_indicators),
         "indicator_details": indicator_details,
@@ -1355,6 +1453,7 @@ async def get_asset_detail(symbol, asset_type, timeframe, request, scan_stage="s
 async def run_single(request):
     started = time.perf_counter()
     audit_run_id = uuid.uuid4().hex
+    request_warnings = _request_config_warnings(request)
 
     await _progress_stage("building_universe")
     assets = await build_asset_universe(request)
@@ -1382,7 +1481,7 @@ async def run_single(request):
 
     if not data:
         _audit_market_data_run(audit_run_id, "single", universe_symbols, {})
-        return {"results": []}
+        return {"results": [], "warnings": request_warnings}
 
     attach_asset_metadata(data, assets)
     fetched_by_symbol = {asset["symbol"]: dict(asset) for asset in data}
@@ -1415,6 +1514,7 @@ async def run_single(request):
         data,
         timeframe=request.single_timeframe,
         scan_stage="single",
+        warnings=request_warnings,
     )
 
 
@@ -1425,6 +1525,7 @@ async def run_single(request):
 async def run_gate(request, client_id=None):
     started = time.perf_counter()
     audit_run_id = uuid.uuid4().hex
+    request_warnings = _request_config_warnings(request)
 
     await _progress_stage("building_universe", detail="gate")
     assets = await build_asset_universe(request)
@@ -1453,7 +1554,7 @@ async def run_gate(request, client_id=None):
 
     if not data:
         _audit_market_data_run(audit_run_id, "gate", universe_symbols, {})
-        return {"results": []}
+        return {"results": [], "warnings": request_warnings}
 
     attach_asset_metadata(data, assets)
     fetched_by_symbol = {asset["symbol"]: dict(asset) for asset in data}
@@ -1497,6 +1598,7 @@ async def run_gate(request, client_id=None):
         timeframe=request.gate_timeframe,
         scan_stage="gate",
         gate_session_id=gate_session_id,
+        warnings=request_warnings,
     )
 
 
@@ -1507,6 +1609,7 @@ async def run_gate(request, client_id=None):
 async def run_entry(request, client_id=None):
     started = time.perf_counter()
     audit_run_id = uuid.uuid4().hex
+    request_warnings = _request_config_warnings(request)
     gate_session_id = request.gate_session_id or ""
     scope_hash = _scope_hash_from_request(request)
     metadata = _consume_gate_results(
@@ -1516,7 +1619,7 @@ async def run_entry(request, client_id=None):
     )
 
     if not metadata:
-        return {"results": []}
+        return {"results": [], "warnings": request_warnings}
 
     try:
         universe_symbols = [asset["symbol"] for asset in metadata]
@@ -1542,7 +1645,7 @@ async def run_entry(request, client_id=None):
 
         if not data:
             _audit_market_data_run(audit_run_id, "entry", universe_symbols, {})
-            return {"results": []}
+            return {"results": [], "warnings": request_warnings}
 
         attach_asset_metadata(data, metadata)
         fetched_by_symbol = {asset["symbol"]: dict(asset) for asset in data}
@@ -1578,6 +1681,7 @@ async def run_entry(request, client_id=None):
         data,
         timeframe=request.entry_timeframe,
         scan_stage="entry",
+        warnings=request_warnings,
     )
 
 
@@ -1641,7 +1745,10 @@ def _market_data_freshness(asset):
     }
 
 
-def build_response(filtered, timeframe, scan_stage, gate_session_id=None):
+def build_response(filtered, timeframe, scan_stage, gate_session_id=None, warnings=None):
+    response_warnings = list(warnings or [])
+    for asset in filtered or []:
+        response_warnings.extend(asset.get("warnings") or [])
 
     return {
         "results": [
@@ -1672,8 +1779,10 @@ def build_response(filtered, timeframe, scan_stage, gate_session_id=None):
                 "stickers": a.get("stickers", []),
                 "matched_indicators": a.get("matched_indicators"),
                 "market_data_freshness": _market_data_freshness(a),
+                "warnings": a.get("warnings", []),
             }
             for a in filtered
         ],
         "gate_session_id": gate_session_id,
+        "warnings": response_warnings,
     }

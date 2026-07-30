@@ -4,8 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from validation.screener.cases import FilterCase, ScreenerCaseSuite
-from validation.spec import ValidationSpec, canonical_utc_timestamp
+from services.utils import (
+    _confirmation_types_from_config,
+    _sanitize_confirmation_patterns,
+    normalize_confirmation_config,
+)
 
 
 class ReferenceRuleError(ValueError):
@@ -88,11 +91,13 @@ def _confirmation_matches(
 ) -> tuple[bool, str | None]:
     if not config.get("confirmation"):
         return True, signal_timestamp
-    types = list(config.get("confirmation_types") or [])
-    single_type = config.get("confirmation_type")
-    if single_type and single_type not in types:
-        types.insert(0, single_type)
-    patterns = list(config.get("confirmation_patterns") or [])
+
+    normalized = normalize_confirmation_config(dict(config))
+    types = _confirmation_types_from_config(normalized)
+    patterns = _sanitize_confirmation_patterns(
+        types,
+        normalized.get("confirmation_patterns") or [],
+    )
     supported_patterns = {
         "bullish_engulfing",
         "bearish_engulfing",
@@ -106,8 +111,12 @@ def _confirmation_matches(
         raise ReferenceRuleError(
             f"unsupported independent confirmation patterns: {sorted(unsupported)}"
         )
-    if not types and not patterns:
-        return True, signal_timestamp
+
+    has_types = bool(types)
+    has_patterns = bool(patterns)
+    if not has_types and not has_patterns:
+        return False, None
+
     indexes = {
         _timestamp_value(candle["datetime"]): index
         for index, candle in enumerate(candles)
@@ -115,21 +124,24 @@ def _confirmation_matches(
     if signal_timestamp not in indexes:
         return False, None
     start = indexes[signal_timestamp]
-    window = max(0, int(config.get("confirmation_window", 1) or 1))
+    window = max(0, int(normalized.get("confirmation_window", 1) or 1))
     for index in range(start, min(len(candles), start + window + 1)):
         candle = candles[index]
         open_value = float(candle["open"])
         close = float(candle["close"])
         candle_range = max(float(candle["high"]) - float(candle["low"]), 1e-9)
         body = abs(close - open_value)
-        type_match = any(
-            (value == "bullish" and close > open_value)
-            or (value == "bearish" and close < open_value)
-            or (value == "strong_bullish" and close > open_value and body > candle_range * 0.6)
-            or (value == "strong_bearish" and close < open_value and body > candle_range * 0.6)
-            for value in types
-        )
-        if type_match or set(patterns) & _patterns(candles, index):
+        type_match = False
+        if has_types:
+            type_match = any(
+                (value == "bullish" and close > open_value)
+                or (value == "bearish" and close < open_value)
+                or (value == "strong_bullish" and close > open_value and body > candle_range * 0.6)
+                or (value == "strong_bearish" and close < open_value and body > candle_range * 0.6)
+                for value in types
+            )
+        pattern_match = bool(has_patterns and set(patterns) & _patterns(candles, index))
+        if type_match or pattern_match:
             return True, _timestamp_value(candle["datetime"])
     return False, None
 

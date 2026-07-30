@@ -19,8 +19,10 @@ LINE_KEYS = (
     "middle",
     "top_zone_upper",
     "top_zone_lower",
+    "top_zone_mid",
     "bottom_zone_upper",
     "bottom_zone_lower",
+    "bottom_zone_mid",
 )
 # Matches the ChartPrime Pine source: atr_10 = ta.atr(10) * 6, and each
 # boundary line sits offset/7 to either side of its anchor (pivot) line.
@@ -326,21 +328,27 @@ def _initialize_channel_line_endpoints(channel_state):
 
 
 def _advance_channel_line_endpoints(channel_state, bar_index):
-    """Project every channel endpoint to the current bar.
+    """Advance Pine's mutable x2/y2 endpoint by exactly one bar.
 
-    TradingView displays the active channel as a straight extension from the
-    two confirmed pivot anchors. When a pivot confirms, the current bar can be
-    several bars after the second pivot; adding one slope step while jumping
-    x2 to that bar leaves the rendered/evaluated line lagged by
-    (length - 1) bars.
+    The ChartPrime script increments y2 by one `dydx` step and then assigns x2
+    to the current confirmation bar. At channel creation that x jump spans the
+    pivot-confirmation delay, so the displayed endpoint intentionally remains
+    behind a direct geometric projection by `length - 1` slope steps.
     """
     channel_state["line_x2"] = bar_index
-    lines = _channel_line_values(channel_state, bar_index)
     for key in LINE_KEYS:
-        channel_state[f"line_y2_{key}"] = _round_to_mintick(lines[key], channel_state.get("mintick"))
+        channel_state[f"line_y2_{key}"] += channel_state["slope"]
 
 
 def _line_values_from_endpoints(channel_state, x_values):
+    """Return the continuous prices represented by Pine's line endpoints.
+
+    Pine rounds the endpoint prices when a channel is created, then moves y2
+    by the unrounded dydx and lets the chart interpolate continuously between
+    x1/y1 and x2/y2. Rounding every interpolated bar to mintick here turns a
+    shallow line into a staircase and can also move screener geometry away
+    from line.get_price().
+    """
     x1 = channel_state["line_x1"]
     x2 = channel_state["line_x2"]
     x_arr = np.asarray(x_values, dtype=float)
@@ -354,9 +362,6 @@ def _line_values_from_endpoints(channel_state, x_values):
         + (channel_state[f"line_y2_{key}"] - channel_state[f"line_y1_{key}"]) * ratio
         for key in LINE_KEYS
     }
-    mintick = channel_state.get("mintick")
-    if mintick is not None:
-        return {key: _round_to_mintick(value, mintick) for key, value in values.items()}
     return values
 
 
@@ -384,8 +389,10 @@ def _channel_line_values(channel_state, x):
         "middle": middle,
         "top_zone_upper": top,
         "top_zone_lower": top_zone_lower,
+        "top_zone_mid": (top + top_zone_lower) / 2.0,
         "bottom_zone_upper": bottom_zone_upper,
         "bottom_zone_lower": bottom,
+        "bottom_zone_mid": (bottom_zone_upper + bottom) / 2.0,
     }
 
 
@@ -403,9 +410,13 @@ def _round_to_mintick(value, mintick):
     normalized = _normalize_mintick(mintick)
     if normalized is None:
         return value
+    # Pine's math.round_to_mintick rounds exact ties upward. Python/NumPy's
+    # round uses ties-to-even, which can shift an endpoint by one tick.
     if isinstance(value, np.ndarray):
-        return np.round(value / normalized) * normalized
-    return round(float(value) / normalized) * normalized
+        shifted = np.nextafter((value / normalized) + 0.5, np.inf)
+        return np.floor(shifted) * normalized
+    shifted = math.nextafter((float(value) / normalized) + 0.5, math.inf)
+    return math.floor(shifted) * normalized
 
 
 def _check_channel_break(channel_state, candle):
@@ -485,8 +496,10 @@ def _build_rendered_channel(channel_state, current_index):
         "bottom": lines["bottom"],
         "top_zone_upper": lines["top_zone_upper"],
         "top_zone_lower": lines["top_zone_lower"],
+        "top_zone_mid": lines["top_zone_mid"],
         "bottom_zone_upper": lines["bottom_zone_upper"],
         "bottom_zone_lower": lines["bottom_zone_lower"],
+        "bottom_zone_mid": lines["bottom_zone_mid"],
         "length": len(x),
         "model": "pivot_liquidity",
         "direction": channel_state["direction"],
@@ -632,8 +645,8 @@ def evaluate_single_area(candles, tc, rule, evidence=None):
     return result["matched"]
 
 
-# Area -> (line series key, break-eligibility direction) used by both the
-# window-scan and the closed/on_line "run" evaluators, and by evidence.
+# Area -> (line series key, break-eligibility direction) used by evidence and
+# the exact-window evaluator.
 _LINE_AREA_SERIES_KEY = {"top_line": "top", "bottom_line": "bottom", "middle_line": "middle"}
 _LINE_AREA_DIRECTION = {"top_line": "up", "bottom_line": "down", "middle_line": None}
 _ZONE_AREA_KEYS = {
@@ -725,145 +738,127 @@ def _finalize_area_result(candidates, matched_index, empty_reason="no_candidates
     }
 
 
-def _evaluate_window_area(candles, tc, rule, area, window, start_index, length):
-    """touched/breach (line areas) and entered/rejected/breach (zone areas):
-    scan every candle in the trailing `window`, oldest to newest, first
-    match wins - identical priority to the pre-fix implementation, but now
-    every candidate examined is recorded so evidence can report exactly
-    which one (if any) actually matched instead of assuming the latest.
-    """
-    candidates = []
-    matched_index = None
-    window = max(1, window)
-    first_checked_index = max(0, len(candles) - window)
+def _evaluate_area_candidate(candles, tc, rule, area, candle_index, start_index, length):
+    candle = candles[candle_index]
+    candidate = _base_candidate_info(candle, candle_index)
 
-    for candle_index in range(first_checked_index, len(candles)):
-        candle = candles[candle_index]
-        candidate = _base_candidate_info(candle, candle_index)
+    if not _candle_index_eligible_for_signal(tc, candle_index):
+        candidate["signal_eligible"] = False
+        candidate["failure_reason"] = "candle_after_channel_break"
+        return candidate
 
-        if not _candle_index_eligible_for_signal(tc, candle_index):
-            candidate["signal_eligible"] = False
-            candidate["failure_reason"] = "candle_after_channel_break"
-            candidates.append(candidate)
-            continue
+    regression_index = candle_index - start_index
+    if regression_index < 0 or regression_index >= length:
+        candidate["failure_reason"] = "outside_channel_range"
+        return candidate
 
-        regression_index = candle_index - start_index
-        if regression_index < 0 or regression_index >= length:
-            candidate["failure_reason"] = "outside_channel_range"
-            candidates.append(candidate)
-            continue
+    matched, line_value, zone_low, zone_high, wick_overlap = _evaluate_area_geometry(
+        tc,
+        rule,
+        area,
+        candle,
+        regression_index,
+    )
+    candidate["line_value"] = line_value
+    candidate["zone_low"] = zone_low
+    candidate["zone_high"] = zone_high
+    candidate["geometry_overlap"] = matched
+    candidate["wick_overlap"] = wick_overlap
+    if not matched:
+        candidate["failure_reason"] = "no_geometry_overlap"
 
-        matched, line_value, zone_low, zone_high, wick_overlap = _evaluate_area_geometry(
-            tc, rule, area, candle, regression_index,
-        )
-        candidate["line_value"] = line_value
-        candidate["zone_low"] = zone_low
-        candidate["zone_high"] = zone_high
-        candidate["geometry_overlap"] = matched
-        candidate["wick_overlap"] = wick_overlap
-
-        if not matched:
-            candidate["failure_reason"] = "no_geometry_overlap"
-            candidates.append(candidate)
-            continue
-
-        if not confirm_if_needed(candles, candle_index, rule):
-            candidate["failure_reason"] = "confirmation_failed"
-            candidates.append(candidate)
-            continue
-
-        candidates.append(candidate)
-        matched_index = candle_index
-        break
-
-    return _finalize_area_result(candidates, matched_index)
+    return candidate
 
 
-def _evaluate_run_area(candles, tc, rule, area, window, start_index):
-    """closed_above/closed_below/on_line: requires an unbroken run of
-    matching candles ending at the LATEST candle, with the run's start
-    falling within `window` bars of it (mirrors the pre-fix backward walk
-    in _current_line_signal_start_index exactly, one candidate at a time).
+def _evaluate_exact_window_area(candles, tc, rule, area, window, start_index, length):
+    """Match regression/LRC window semantics for every Trend Channel action.
+
+    The current consecutive matching run must end on the latest candle and be
+    exactly `window` bars long. Shorter and longer runs fail.
     """
     latest_index = len(candles) - 1
     if latest_index < 0:
         return _finalize_area_result([], None, empty_reason="no_candles")
 
-    line_series, direction = _line_series_for_area(tc, area)
-    if line_series is None:
-        return _finalize_area_result([], None, empty_reason="unsupported_area_for_action")
-
-    last_signal_index = _channel_last_signal_index(tc)
+    window = max(1, int(window or 1))
     candidates = []
-    signal_start_index = None
-    candle_index = latest_index
+
+    latest_candidate = _evaluate_area_candidate(
+        candles, tc, rule, area, latest_index, start_index, length,
+    )
+    candidates.append(latest_candidate)
+
+    if not latest_candidate.get("signal_eligible", True):
+        return {
+            "matched": False,
+            "matched_index": None,
+            "candidates": candidates,
+            "failure_reason": "candle_after_channel_break",
+        }
+
+    if not latest_candidate.get("geometry_overlap"):
+        return _finalize_area_result(candidates, None)
+
+    signal_start_index = latest_index
+    candle_index = latest_index - 1
 
     while candle_index >= 0:
-        candle = candles[candle_index]
-        candidate = _base_candidate_info(candle, candle_index)
-
-        eligible = last_signal_index is None or candle_index <= last_signal_index
-        if not eligible:
-            candidate["signal_eligible"] = False
-            candidate["failure_reason"] = "candle_after_channel_break"
-            candidates.append(candidate)
-            break
-
-        regression_index = candle_index - start_index
-        if regression_index < 0 or regression_index >= len(line_series):
-            candidate["failure_reason"] = "outside_channel_range"
-            candidates.append(candidate)
-            break
-
-        line_value = float(line_series[regression_index])
-        candidate["line_value"] = line_value
-        candidate["wick_overlap"] = float(candle["low"]) <= line_value <= float(candle["high"])
-        matched = evaluate_line_action(candle, line_value, rule, direction)
-        candidate["geometry_overlap"] = matched
-
-        if not matched:
-            candidate["failure_reason"] = "no_geometry_overlap"
-            candidates.append(candidate)
-            break
-
+        candidate = _evaluate_area_candidate(
+            candles, tc, rule, area, candle_index, start_index, length,
+        )
         candidates.append(candidate)
+
+        if not candidate.get("signal_eligible", True):
+            break
+        if not candidate.get("geometry_overlap"):
+            break
+
         signal_start_index = candle_index
         candle_index -= 1
 
-    if signal_start_index is None:
-        return _finalize_area_result(candidates, None)
-
-    if (len(candles) - signal_start_index) > window:
+    signal_age = latest_index - signal_start_index + 1
+    if signal_age != window:
         for candidate in candidates:
             if candidate["candle_index"] == signal_start_index:
                 candidate["failure_reason"] = "outside_window"
-        return {"matched": False, "matched_index": None, "candidates": candidates, "failure_reason": "outside_window"}
+        return {
+            "matched": False,
+            "matched_index": None,
+            "candidates": candidates,
+            "failure_reason": "outside_window",
+        }
 
     if not confirm_if_needed(candles, signal_start_index, rule):
         for candidate in candidates:
             if candidate["candle_index"] == signal_start_index:
                 candidate["failure_reason"] = "confirmation_failed"
-        return {"matched": False, "matched_index": None, "candidates": candidates, "failure_reason": "confirmation_failed"}
+        return {
+            "matched": False,
+            "matched_index": None,
+            "candidates": candidates,
+            "failure_reason": "confirmation_failed",
+        }
 
-    return {"matched": True, "matched_index": signal_start_index, "candidates": candidates, "failure_reason": None}
+    return {
+        "matched": True,
+        "matched_index": signal_start_index,
+        "candidates": candidates,
+        "failure_reason": None,
+    }
 
 
 def _evaluate_single_area_core(candles, tc, rule):
     """Evaluate `rule` and return full diagnostics:
     {"matched": bool, "matched_index": int|None, "candidates": [...],
-     "failure_reason": str|None}. See _evaluate_window_area/_evaluate_run_
-    area for the two matching strategies this dispatches to.
+     "failure_reason": str|None}. Uses the same exact-window semantics as
+     regression/LRC channel rules.
     """
     area = rule.get("area")
     window = int(rule.get("window", 1) or 1)
     length = tc["length"]
     start_index = len(candles) - length
-    action = str(rule.get("action") or "").strip().lower()
 
-    if action in {"closed_above", "closed_below", "on_line"}:
-        return _evaluate_run_area(candles, tc, rule, area, window, start_index)
-
-    return _evaluate_window_area(candles, tc, rule, area, window, start_index, length)
+    return _evaluate_exact_window_area(candles, tc, rule, area, window, start_index, length)
 
 
 def _build_area_evidence(candles, tc, rule, result):
