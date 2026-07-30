@@ -49,7 +49,8 @@ from services.wavetrend import (
 from services.trendy_adx import (
     compute_trendy_adx,
     evaluate_trendy_adx_rules,
-    build_trendy_adx_sticker
+    build_trendy_adx_sticker,
+    trendy_adx_debug_trace,
 )
 
 from services.vlr import (
@@ -659,9 +660,33 @@ def handle_trendy_adx(asset, candles, config):
         candles,
         config
     ):
+        if config.get("debug") or config.get("trace"):
+            return False, {
+                "sticker": None,
+                "evidence": trendy_adx_debug_trace(
+                    computed,
+                    candles,
+                    config,
+                    symbol=asset.get("symbol"),
+                    timeframe=asset.get("timeframe") or config.get("timeframe"),
+                ),
+            }
         return False, None
 
-    return True, build_trendy_adx_sticker(computed, candles, config)
+    sticker = build_trendy_adx_sticker(computed, candles, config)
+    if config.get("debug") or config.get("trace"):
+        return True, {
+            "sticker": sticker,
+            "evidence": trendy_adx_debug_trace(
+                computed,
+                candles,
+                config,
+                symbol=asset.get("symbol"),
+                timeframe=asset.get("timeframe") or config.get("timeframe"),
+            ),
+        }
+
+    return True, sticker
 
 
 def handle_vlr(asset, candles, config):
