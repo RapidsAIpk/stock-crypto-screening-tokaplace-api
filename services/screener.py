@@ -22,7 +22,8 @@ from services.confluence import (
 from services.market_data import fetch_live_data
 from services.scan_progress import emit_scan_progress
 from services.gate_session_store import store as gate_session_store
-from services.regression_channels import compute_lrc_channel, compute_dw_regression_channel
+from services.linear_regression_channel import compute_lrc_channel
+from services.regression_channel_dw import compute_dw_regression_channel
 from services.trend_channels import compute_trend_channel, is_area_rule_disabled, required_trend_channel_history
 from services.utils import build_indicator_sticker, format_price_value, humanize_token
 from services.stock_reference import asset_category_label, matches_asset_categories, matches_sectors
@@ -572,7 +573,14 @@ def required_candles_for_indicators(indicators):
             needed = length + window + confirmation_window
         elif name == "regression":
             length = _safe_int(config.get("length"), 200, minimum=2)
-            needed = length + window + confirmation_window
+            window_type = str(config.get("window_type") or "continuous").strip().lower()
+            if window_type == "interval":
+                needed = length + window + confirmation_window
+            else:
+                # DW nests a length-period filter inside another length-period
+                # filter. Full Pine parity for the latest result therefore
+                # needs 2*length-1 completed source bars.
+                needed = (2 * length) + window + confirmation_window - 2
         elif name == "trend":
             length = _safe_int(config.get("length"), 8, minimum=2)
             area_window, area_confirmation_window = _trend_area_window(config)
@@ -643,7 +651,7 @@ def _required_candles_for_channel_type(channel_type, length=None):
     if channel_type == "lrc":
         return normalized_length
     if channel_type == "regression":
-        return normalized_length
+        return (2 * normalized_length) - 1
     if channel_type == "trend":
         return required_trend_channel_history(normalized_length)
     return 1
@@ -1344,12 +1352,17 @@ async def get_asset_detail(symbol, asset_type, timeframe, request, scan_stage="s
         for indicator in selected_indicators
     )
     candles_limit = max(DETAIL_RECENT_CANDLES, required_candles_for_request(request, selected_indicators))
+    # Match the scan path exactly: fetch one possible forming bar beyond the
+    # required completed history, then remove it before indicator evaluation
+    # and before returning recent_candles to the frontend chart.
+    fetch_candles_limit = min(500, candles_limit + 1)
     data = await fetch_live_data(
         [resolved_asset["symbol"]],
         timeframe,
         include_fundamentals=need_fundamentals,
-        candles_limit=candles_limit,
+        candles_limit=fetch_candles_limit,
     )
+    data = _completed_candle_snapshot(data, candles_limit)
 
     if not data:
         return None

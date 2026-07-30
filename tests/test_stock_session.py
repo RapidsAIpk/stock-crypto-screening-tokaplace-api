@@ -104,6 +104,82 @@ class SessionPolicyCacheCompatibilityTests(unittest.TestCase):
 
 
 class RequestPolygonCandlesSessionIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_hourly_session_aggregation_can_fetch_more_than_public_output_cap(self):
+        source_payload = {
+            "symbol": "FURY",
+            "candles": [
+                _candle(1785159000, 0.53),  # 2026-07-27 09:30 ET
+            ],
+            "candles_provider": "massive",
+            "session_policy": SESSION_POLICY_TRADINGVIEW_REGULAR,
+        }
+        plan = ("30m", 30, 60)
+
+        with patch.object(
+            market_data,
+            "request_polygon_candles",
+            AsyncMock(return_value=source_payload),
+        ) as source_mock:
+            payload = await market_data._request_polygon_session_anchored_candles(
+                "FURY",
+                "1h",
+                399,
+                plan,
+            )
+
+        self.assertIsNotNone(payload)
+        self.assertGreaterEqual(source_mock.await_count, 1)
+        call = source_mock.await_args_list[0]
+        self.assertEqual(call.args[:2], ("FURY", "30m"))
+        self.assertGreater(call.kwargs["candles_limit"], market_data.MAX_CANDLES)
+        self.assertGreater(call.kwargs["_limit_cap"], market_data.MAX_CANDLES)
+
+    async def test_session_aggregation_expands_sparse_source_history_until_target_limit_is_met(self):
+        sparse_payload = {
+            "symbol": "COLA",
+            "candles": [
+                _candle(1785159000 + index * 60, 10.0 + index)
+                for index in range(2)
+            ],
+            "candles_provider": "massive",
+            "session_policy": SESSION_POLICY_TRADINGVIEW_REGULAR,
+        }
+        full_payload = {
+            "symbol": "COLA",
+            "candles": [
+                _candle(1785159000 + index * 60, 10.0 + index)
+                for index in range(6)
+            ],
+            "candles_provider": "massive",
+            "session_policy": SESSION_POLICY_TRADINGVIEW_REGULAR,
+        }
+        plan = ("1m", 1, 1)
+
+        with patch.object(
+            market_data,
+            "request_polygon_candles",
+            AsyncMock(side_effect=[sparse_payload, full_payload]),
+        ) as source_mock, patch.object(
+            market_data,
+            "_polygon_source_candle_limit",
+            return_value=20,
+        ):
+            payload = await market_data._request_polygon_session_anchored_candles(
+                "COLA",
+                "1m",
+                5,
+                plan,
+            )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(payload["candles"]), 5)
+        self.assertEqual(source_mock.await_count, 2)
+        first_call, second_call = source_mock.await_args_list
+        self.assertLess(
+            first_call.kwargs["candles_limit"],
+            second_call.kwargs["candles_limit"],
+        )
+
     async def test_request_polygon_candles_applies_tradingview_regular_filter(self):
         rows = [
             {"t": 1784574000000, "o": 31.26, "h": 31.43, "l": 30.38, "c": 30.68, "v": 100.0},

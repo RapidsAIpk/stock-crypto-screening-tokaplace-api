@@ -31,7 +31,9 @@ This document lists the files in both the backend and frontend directories of th
 * [services/market_data.py](file:///c:/Programming/Projects/02_GROWING/crypto_project/backend/services/market_data.py) - Fetches live and historical candle data from Polygon/Massive and Binance APIs.
 * [services/market_data_store.py](file:///c:/Programming/Projects/02_GROWING/crypto_project/backend/services/market_data_store.py) - Implements local SQLite database storage for caching fetched market candle data.
 * [services/market_data_worker.py](file:///c:/Programming/Projects/02_GROWING/crypto_project/backend/services/market_data_worker.py) - Periodic background worker that updates cached candles for configured universes.
-* [services/regression_channels.py](file:///c:/Programming/Projects/02_GROWING/crypto_project/backend/services/regression_channels.py) - Fits linear regression channels (DW channels, LRC channels) to asset price paths.
+* [services/linear_regression_channel.py](services/linear_regression_channel.py) - LonesomeTheBlue Linear Regression Channel (LRC).
+* [services/regression_channel_dw.py](services/regression_channel_dw.py) - Donovan Wall Regression Channel [DW].
+* [services/channel_line_rules.py](services/channel_line_rules.py) - Shared line touch/rule evaluation for LRC and DW channels.
 * [services/rsi.py](file:///c:/Programming/Projects/02_GROWING/crypto_project/backend/services/rsi.py) - Calculates the Relative Strength Index (RSI) momentum oscillator.
 * [services/screener.py](file:///c:/Programming/Projects/02_GROWING/crypto_project/backend/services/screener.py) - Orchestrates the full screening pipeline, filtering assets against custom parameters.
 * [services/trend_channels.py](file:///c:/Programming/Projects/02_GROWING/crypto_project/backend/services/trend_channels.py) - Detects dynamic trend channels, support/resistance levels, and channel breakdowns.

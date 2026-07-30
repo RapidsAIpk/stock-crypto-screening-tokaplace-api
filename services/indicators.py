@@ -5,13 +5,14 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from services.regression_channels import (
-    compute_lrc_channel,
-    compute_dw_regression_channel,
-    evaluate_regression_lines,
-    passes_r_filter,
+from services.channel_line_rules import (
     build_regression_sticker,
+    evaluate_line_rule,
+    evaluate_regression_lines,
+    _evaluation_line_value,
 )
+from services.linear_regression_channel import compute_lrc_channel, passes_r_filter
+from services.regression_channel_dw import compute_dw_regression_channel
 
 from services.rsi import (
     compute_rsi_series,
@@ -48,7 +49,8 @@ from services.wavetrend import (
 from services.trendy_adx import (
     compute_trendy_adx,
     evaluate_trendy_adx_rules,
-    build_trendy_adx_sticker
+    build_trendy_adx_sticker,
+    trendy_adx_debug_trace,
 )
 
 from services.vlr import (
@@ -92,6 +94,7 @@ from services.utils import (
     format_compact_number,
     format_decimal,
     humanize_token,
+    normalize_confirmation_config,
 )
 
 
@@ -307,30 +310,152 @@ def handle_lrc(asset, candles, config):
     )
 
 
+def _log_dw_regression_evaluation(asset, candles, channel, config, passed):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    window = max(1, int(config.get("window", 1) or 1))
+    start_index = len(candles) - int(channel["length"])
+    latest_index = len(candles) - 1
+    action = str(config.get("action") or "").strip().lower()
+    if action == "touch":
+        signal_start_index = latest_index - window + 1
+        source_indices = (
+            list(range(signal_start_index, latest_index + 1))
+            if signal_start_index >= 0
+            else []
+        )
+    else:
+        source_indices = [latest_index] if latest_index >= 0 else []
+    tolerance_pct = float(config.get("tolerance", 0) or 0)
+    tick_size = _regression_mintick(asset, config)
+    evaluations = []
+    for candle_index in source_indices:
+        regression_index = candle_index - start_index
+        candle = candles[candle_index]
+        line_values = {}
+        line_evaluations = {}
+        for line_name in config.get("lines") or []:
+            series = channel.get(line_name)
+            if series is not None and 0 <= regression_index < len(series):
+                raw_line_value = float(series[regression_index])
+                line_value = _evaluation_line_value(raw_line_value, config, line_name)
+                line_values[line_name] = {
+                    "raw": raw_line_value,
+                    "rounded": line_value,
+                }
+                tolerance = abs(line_value) * (tolerance_pct / 100)
+                lower_tolerance = line_value - tolerance
+                upper_tolerance = line_value + tolerance
+                if str(config.get("action") or "").lower() == "touch":
+                    touch_result = evaluate_line_rule(
+                        candle,
+                        lower_tolerance,
+                        upper_tolerance,
+                        config,
+                        touch_direction=None,
+                    )
+                    line_evaluations[line_name] = {
+                        "formula": "selected body or actual wick overlaps the line tolerance band",
+                        "touch_type": config.get("touch_type"),
+                        "lower_tolerance": lower_tolerance,
+                        "upper_tolerance": upper_tolerance,
+                        "result": bool(touch_result),
+                        "line_is_finite": bool(np.isfinite(line_value)),
+                    }
+        evaluations.append(
+            {
+                "candle_index": candle_index,
+                "regression_index": regression_index,
+                "timestamp": candle.get("time"),
+                "open": candle.get("open"),
+                "high": candle.get("high"),
+                "low": candle.get("low"),
+                "close": candle.get("close"),
+                "closed": not (
+                    candle.get("is_closed") is False
+                    or candle.get("is_complete") is False
+                    or candle.get("complete") is False
+                    or candle.get("closed") is False
+                    or candle.get("is_live") is True
+                ),
+                "line_values": line_values,
+                "line_evaluations": line_evaluations,
+            }
+        )
+    logger.debug(
+        "regression evaluation symbol=%s provider=%s session_policy=%s "
+        "candle_count=%s channel_length=%s channel_start_index=%s "
+        "source_indices=%s action=%s touch_type=%s tolerance=%s "
+        "tick_size=%s evaluations=%s final=%s",
+        asset.get("symbol"),
+        asset.get("candles_provider"),
+        asset.get("session_policy"),
+        len(candles),
+        channel.get("length"),
+        start_index,
+        source_indices,
+        config.get("action"),
+        config.get("touch_type"),
+        config.get("tolerance"),
+        tick_size,
+        evaluations,
+        passed,
+    )
+
+
+def _latest_candle_price(candles):
+    for candle in reversed(candles or []):
+        try:
+            value = float(candle.get("close"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if np.isfinite(value) and value > 0:
+            return value
+    return None
+
+
+def _regression_mintick(asset, config, candles=None):
+    return _trend_mintick(
+        asset,
+        config,
+        reference_price=_latest_candle_price(candles),
+    )
+
+
 def handle_regression(asset, candles, config):
+    evaluation_config = dict(config or {})
+    mintick = _regression_mintick(asset, evaluation_config, candles)
+    if mintick is not None:
+        evaluation_config.setdefault("mintick", mintick)
 
     channel = compute_dw_regression_channel(
         candles,
-        length=config.get("length", 200),
-        width_coeff=config.get("width_coeff", 1.0),
-        window_type=config.get("window_type", "continuous"),
-        interval_step=config.get("interval_step", 1),
-        filter_type=config.get("filter_type", "SMA"),
+        length=evaluation_config.get("length", 200),
+        width_coeff=evaluation_config.get("width_coeff", 1.0),
+        window_type=evaluation_config.get("window_type", "continuous"),
+        interval_step=evaluation_config.get("interval_step", 1),
+        filter_type=evaluation_config.get("filter_type", "SMA"),
     )
 
     if not channel:
         return False, None
 
-    if not evaluate_regression_lines(candles, channel, config):
+    # Retain the computed series even for a failed rule. Scan filtering is
+    # still controlled solely by `passed`, while the details/chart path can
+    # now display the exact channel that produced either PASS or FAIL.
+    asset["channels"]["regression"] = channel
+    passed = evaluate_regression_lines(candles, channel, evaluation_config)
+    _log_dw_regression_evaluation(asset, candles, channel, evaluation_config, passed)
+
+    if not passed:
         return False, None
 
-    asset["channels"]["regression"] = channel
-
-    sticker_data = build_regression_sticker("Regression Channel", channel, config)
+    sticker_data = build_regression_sticker("Regression Channel", channel, evaluation_config)
     return True, build_indicator_sticker(
         sticker_data["name"],
         sticker_data["condition"],
-        config,
+        evaluation_config,
         length=sticker_data["length"],
         window=sticker_data["window"],
         decision=sticker_data.get("decision"),
@@ -367,7 +492,7 @@ def _trend_closed_candles(candles):
     return candles
 
 
-def _trend_mintick(asset, config):
+def _trend_mintick(asset, config, reference_price=None):
     for key in ("mintick", "tick_size", "price_tick_size"):
         raw_value = config.get(key)
         if raw_value is not None:
@@ -381,6 +506,16 @@ def _trend_mintick(asset, config):
     symbol = str((asset or {}).get("symbol") or "").strip().upper()
     asset_type = str((asset or {}).get("asset_type") or "").strip().lower()
     if asset_type == "stocks" or (symbol and not symbol.endswith("-USD")):
+        try:
+            numeric_reference_price = float(reference_price)
+        except (TypeError, ValueError):
+            numeric_reference_price = None
+        if (
+            numeric_reference_price is not None
+            and np.isfinite(numeric_reference_price)
+            and 0 < numeric_reference_price < 1
+        ):
+            return 0.0001
         return 0.01
     return None
 
@@ -395,7 +530,11 @@ def handle_trend(asset, candles, config):
         length=config.get("length", 8),
         wait_for_break=True if wait_for_break is None else bool(wait_for_break),
         show_last_channel=True if show_last_channel is None else bool(show_last_channel),
-        mintick=_trend_mintick(asset, config),
+        mintick=_trend_mintick(
+            asset,
+            config,
+            reference_price=_latest_candle_price(closed_candles),
+        ),
     )
 
     if not tc:
@@ -521,9 +660,33 @@ def handle_trendy_adx(asset, candles, config):
         candles,
         config
     ):
+        if config.get("debug") or config.get("trace"):
+            return False, {
+                "sticker": None,
+                "evidence": trendy_adx_debug_trace(
+                    computed,
+                    candles,
+                    config,
+                    symbol=asset.get("symbol"),
+                    timeframe=asset.get("timeframe") or config.get("timeframe"),
+                ),
+            }
         return False, None
 
-    return True, build_trendy_adx_sticker(computed, candles, config)
+    sticker = build_trendy_adx_sticker(computed, candles, config)
+    if config.get("debug") or config.get("trace"):
+        return True, {
+            "sticker": sticker,
+            "evidence": trendy_adx_debug_trace(
+                computed,
+                candles,
+                config,
+                symbol=asset.get("symbol"),
+                timeframe=asset.get("timeframe") or config.get("timeframe"),
+            ),
+        }
+
+    return True, sticker
 
 
 def handle_vlr(asset, candles, config):
@@ -1330,7 +1493,13 @@ def _compile_selected_indicators(selected_indicators, registry):
         if not handler:
             return None
 
-        compiled.append((indicator.name.lower(), handler, indicator.config or {}))
+        compiled.append(
+            (
+                indicator.name.lower(),
+                handler,
+                normalize_confirmation_config(dict(indicator.config or {})),
+            )
+        )
 
     return compiled
 

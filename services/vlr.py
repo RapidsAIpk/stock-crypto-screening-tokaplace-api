@@ -24,6 +24,7 @@ from services.utils import (
     detect_candlestick_patterns,
     format_decimal,
     series_direction_matches,
+    _sanitize_vlr_candle_confirmation_patterns,
 )
 
 DEFAULT_SOURCE = "close"
@@ -848,7 +849,10 @@ def _evaluate_volume_confirmation(candles, config, n, window, matched_tags):
 
 
 def _evaluate_candle_confirmation(candles, config, n, window, matched_tags):
-    selected_patterns = config.get("candle_confirmation_patterns") or []
+    selected_patterns = _sanitize_vlr_candle_confirmation_patterns(
+        config.get("direction"),
+        config.get("candle_confirmation_patterns") or [],
+    )
     if not selected_patterns:
         return False
 

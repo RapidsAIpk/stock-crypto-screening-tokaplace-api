@@ -465,11 +465,11 @@ Engine behavior:
 - Evaluates volume-spike conditions.
 - Builds volume stickers.
 
-`services/regression_channels.py`:
+`services/linear_regression_channel.py`, `services/regression_channel_dw.py`, `services/channel_line_rules.py`:
 
-- Computes simple LRC and DW regression channels.
-- Evaluates line rules, touch rules, close-above/below behavior, and R-strength filters.
-- Builds regression stickers.
+- `linear_regression_channel.py`: LonesomeTheBlue LRC compute and Pearson-R filter.
+- `regression_channel_dw.py`: Donovan Wall filtered regression channel (Q1/Q3 quartiles).
+- `channel_line_rules.py`: shared line touch/close/stay rule evaluation and stickers for both channel types.
 
 `services/trend_channels.py`:
 
@@ -798,7 +798,9 @@ Other docs:
 - `services/market_data_store.py`: SQLite cache/interest/indicator-cache store.
 - `services/market_data_worker.py`: background cache warmer and refresh scheduler.
 - `services/pine_math.py`: Pine-compatible numeric functions.
-- `services/regression_channels.py`: LRC and DW regression channels.
+- `services/linear_regression_channel.py`: LRC (LonesomeTheBlue).
+- `services/regression_channel_dw.py`: Donovan Wall regression channel.
+- `services/channel_line_rules.py`: shared LRC + DW line rule evaluation.
 - `services/rsi.py`: RSI calculation and evaluation.
 - `services/screener.py`: main screening orchestration and response construction.
 - `services/stock_reference.py`: stock metadata enrichment, sector/category mapping, stock universe filters.

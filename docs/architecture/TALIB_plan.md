@@ -128,7 +128,9 @@ Reference modules must not import calculation or decision logic from:
 - `services.ema`
 - `services.wavetrend`
 - `services.linear_regression_candles`
-- `services.regression_channels`
+- `services.linear_regression_channel`
+- `services.regression_channel_dw`
+- `services.channel_line_rules`
 - `services.trend_channels`
 - `services.indicators`
 - `services.channel_respect`
