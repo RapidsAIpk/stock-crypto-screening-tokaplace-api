@@ -62,6 +62,7 @@ class ScreeningResult(ResultsBaseModel):
     # that ignore this field are unaffected; see MarketDataFreshness for the
     # is_stale/stale_age_seconds/stale_reason/data_source contract.
     market_data_freshness: Optional[MarketDataFreshness] = None
+    warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ScreeningResponse(ResultsBaseModel):
@@ -71,6 +72,7 @@ class ScreeningResponse(ResultsBaseModel):
     )
 
     gate_session_id: Optional[str] = None
+    warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class CryptoExchangeOption(ResultsBaseModel):
@@ -98,6 +100,8 @@ class IndicatorDetail(ResultsBaseModel):
     passed: bool
     sticker: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class FilterDetail(ResultsBaseModel):

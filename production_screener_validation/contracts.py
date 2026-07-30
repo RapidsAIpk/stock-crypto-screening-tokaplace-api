@@ -38,7 +38,15 @@ REQUIRED_CONFIG = {
     "current_volume": {"min_value", "max_value", "tolerance_pct"},
     "float": {"min_value", "max_value", "tolerance_pct"},
     "shares_outstanding": {"min_value", "max_value", "tolerance_pct"},
-    "volatility": {"length", "min_pct", "max_pct", "tolerance_pct"},
+    "volatility": {
+        "length", "min_pct", "max_pct", "tolerance_pct", "mode", "source", "atr_factor",
+        "htf_selection", "htf_multiple", "fixed_timeframe", "detect_breaches",
+        "repainting_htf", "trend_reversal_alert", "change_to_uptrend_alert",
+        "change_to_downtrend_alert", "chart_breach_uptrend_alert",
+        "chart_breach_downtrend_alert", "delay_minutes", "alert_frequency",
+        "rule", "window", "min_atr", "max_atr",
+        "min_stop_distance_pct", "max_stop_distance_pct",
+    },
 }
 ALLOWED_RULES = {
     "rsi.location": {None, "oversold", "neutral", "overbought"},
