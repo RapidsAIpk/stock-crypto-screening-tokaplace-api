@@ -16,6 +16,11 @@ from .custom_engine import (
 )
 from .talib_engine import calculate, finite_at, last_finite_index
 from services.volatility import compute_volatility as compute_backend_volatility
+from services.trendy_adx import (
+    compute_trendy_adx as compute_backend_trendy_adx,
+    evaluate_trendy_adx_rules as evaluate_backend_trendy_adx_rules,
+    trendy_adx_debug_trace as backend_trendy_adx_debug_trace,
+)
 
 
 class InsufficientReferenceData(ValueError):
@@ -237,6 +242,13 @@ def evaluate_standard(name: str, candles: list[dict[str, Any]], config: dict[str
         if passed is None: raise ValueError(f"unknown {name.upper()} rule '{rule}'")
         return _evidence(name, passed, index, dates, {"price": price, key: average})
     if name == "adx":
+        if config.get("mode") or config.get("conditions") or config.get("condition"):
+            computed = compute_backend_trendy_adx(candles, length=config.get("length", 11))
+            if computed is None:
+                raise InsufficientReferenceData("Trendy ADX has insufficient history")
+            passed = evaluate_backend_trendy_adx_rules(computed, candles, config)
+            trace = backend_trendy_adx_debug_trace(computed, candles, config)
+            return _evidence(name, passed, trace["latest_index"], dates, trace.get("latest", {}))
         series = output["adx"]; index = last_finite_index(series)
         if index is None: raise InsufficientReferenceData("ADX has no finite output")
         value = float(series[index]); threshold = float(config.get("threshold", 25)); rule = config.get("rule")

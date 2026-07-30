@@ -3626,8 +3626,8 @@ class TrendyAdxTests(unittest.TestCase):
         computed = trendy_adx.compute_trendy_adx(candles, length=length)
         self.assertIsNotNone(computed)
 
-        # Independent from-scratch reference implementation of the same sourced
-        # formula (Wilder-smoothed TR/DM+/DM-, DI+/DI-, DX, ADX = SMA(DX, length)) —
+        # Independent from-scratch reference implementation of the same Pine
+        # formula (0-seeded recursive smoothed TR/DM+/DM-, DI+/DI-, DX, ADX = SMA(DX, length)) —
         # written separately here so this test can actually catch a wrong
         # implementation, not just confirm the code agrees with itself.
         n = len(candles)
@@ -3639,32 +3639,26 @@ class TrendyAdxTests(unittest.TestCase):
         dm_plus = [0.0] * n
         dm_minus = [0.0] * n
         for i in range(n):
-            if i == 0:
-                tr[i] = highs[i] - lows[i]
-                continue
-            tr[i] = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
-            up = highs[i] - highs[i - 1]
-            down = lows[i - 1] - lows[i]
+            prev_close = closes[i - 1] if i > 0 else 0.0
+            prev_high = highs[i - 1] if i > 0 else 0.0
+            prev_low = lows[i - 1] if i > 0 else 0.0
+            tr[i] = max(highs[i] - lows[i], abs(highs[i] - prev_close), abs(lows[i] - prev_close))
+            up = highs[i] - prev_high
+            down = prev_low - lows[i]
             dm_plus[i] = up if (up > down and up > 0) else 0.0
             dm_minus[i] = down if (down > up and down > 0) else 0.0
 
-        def wilder_rma(values, length):
-            # Mirrors pine_rma's actual behavior (services/pine_math.py): a partial
-            # running mean during warm-up (index < length-1), not NaN/skip.
-            out = [None] * len(values)
+        def recursive_sum(values, length):
+            out = [0.0] * len(values)
+            previous = 0.0
             for i in range(len(values)):
-                if i < length - 1:
-                    out[i] = sum(values[: i + 1]) / (i + 1)
-                    continue
-                if i == length - 1:
-                    out[i] = sum(values[:length]) / length
-                    continue
-                out[i] = (out[i - 1] * (length - 1) + values[i]) / length
+                previous = previous - previous / length + values[i]
+                out[i] = previous
             return out
 
-        smoothed_tr = wilder_rma(tr, length)
-        smoothed_dm_plus = wilder_rma(dm_plus, length)
-        smoothed_dm_minus = wilder_rma(dm_minus, length)
+        smoothed_tr = recursive_sum(tr, length)
+        smoothed_dm_plus = recursive_sum(dm_plus, length)
+        smoothed_dm_minus = recursive_sum(dm_minus, length)
 
         di_plus_ref = [None] * n
         di_minus_ref = [None] * n
@@ -3691,6 +3685,17 @@ class TrendyAdxTests(unittest.TestCase):
                 self.assertAlmostEqual(float(computed["di_minus"][i]), di_minus_ref[i], places=6)
             if adx_ref[i] is not None:
                 self.assertAlmostEqual(float(computed["adx"][i]), adx_ref[i], places=6)
+                self.assertAlmostEqual(float(computed["trend_value"][i]), di_plus_ref[i] - di_minus_ref[i], places=6)
+
+    def test_trendy_adx_simple_rules_support_pine_buy_sell_and_trend_state(self):
+        computed = self._fake_computed([10, 9, 12, 18, 22], [20, 18, 11, 8, 5], [15, 18, 21, 24, 28])
+        computed["trend_value"] = computed["di_plus"] - computed["di_minus"]
+        candles = self._fake_candles(5)
+
+        self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, {"rule": "buy_signal", "window": 3}))
+        self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, {"rule": "strong_trend", "threshold": 20}))
+        self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, {"rule": "bullish_trend", "up_level": 4}))
+        self.assertFalse(trendy_adx.evaluate_trendy_adx_rules(computed, candles, {"rule": "sell_signal", "window": 1}))
 
     def test_unclosed_last_candle_is_excluded_from_compute_evaluate_and_sticker(self):
         # A live/in-progress candle (is_closed=False) must never move the reported
@@ -3721,12 +3726,14 @@ class TrendyAdxTests(unittest.TestCase):
         self.assertEqual(sticker_baseline, sticker_with_live)
 
     def test_di_crossed_above_detects_the_flip_and_reports_candles_since(self):
-        down = self._trend_candles(30, 200.0, -1.0)
-        up = self._trend_candles(20, down[-1]["close"], 1.5)
-        candles = down + up
-        computed = trendy_adx.compute_trendy_adx(candles, length=11)
+        candles = self._fake_candles(10)
+        computed = self._fake_computed(
+            [10, 10, 10, 10, 10, 12, 18, 25, 30, 35],
+            [30, 30, 30, 30, 30, 28, 20, 15, 12, 10],
+            [15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
+        )
 
-        found_cfg = {"mode": "bullish", "threshold": 20, "conditions": [{"id": "di_crossed_above", "candles_since": 15}]}
+        found_cfg = {"mode": "bullish", "threshold": 20, "conditions": [{"id": "di_crossed_above", "candles_since": 5}]}
         self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, found_cfg))
 
         too_tight_cfg = {"mode": "bullish", "threshold": 20, "conditions": [{"id": "di_crossed_above", "candles_since": 0}]}

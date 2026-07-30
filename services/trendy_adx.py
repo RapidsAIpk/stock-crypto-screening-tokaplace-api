@@ -1,21 +1,24 @@
 # services/trendy_adx.py
 #
-# Trendy ADX DI+/DI- Trend (Bonavest reference) — site update/indicator trendy ADX/Indicator Trendy ADX.pdf
+# Trendy ADX DI+/DI- Trend (TradingView Pine v6)
 #
-# DI+/DI-/ADX formula sourced from the open "ADX and DI" script (c) BeikabuOyaji, which the closed-source
-# Bonavest indicator's own description credits as a shared origin ("based off of the original code from
-# @MasaNakamura"). Smoothing uses this codebase's existing pine_rma (SMA-seeded Wilder smoothing, the
-# same convention already used correctly for RSI) instead of the source script's 0-seeded accumulator —
-# mathematically the same Wilder-smoothing family, just seeded consistently with every other Wilder-based
-# indicator here. The final ADX = SMA(DX, length) step is taken exactly as sourced (SMA, not RMA).
+# The Pine script uses a 0-seeded recursive accumulator:
+# smoothed := nz(smoothed[1]) - nz(smoothed[1]) / length + current
+# Keep that literal instead of replacing it with a conventional SMA-seeded RMA.
 
 import numpy as np
 
-from services.pine_math import NAN, pine_rma, pine_sma
+from services.pine_math import NAN, pine_sma
 from services.utils import build_indicator_sticker, format_decimal
 
 DEFAULT_LENGTH = 11
 DEFAULT_THRESHOLD = 20.0
+DEFAULT_TOP_LEVEL = 19.0
+DEFAULT_RISING_LEVEL = 10.0
+DEFAULT_UP_LEVEL = 4.0
+DEFAULT_DOWN_LEVEL = -4.0
+DEFAULT_FALLING_LEVEL = -10.0
+DEFAULT_BOTTOM_LEVEL = -19.0
 STRONG_ADX = 25.0
 EXHAUSTION_ADX = 40.0
 
@@ -35,9 +38,18 @@ WEAK_FLIP_THRESHOLD = 3            # background flips within WEAK_LOOKBACK to ca
 # =========================================================
 
 def _closed_candles(candles):
-    if candles and candles[-1].get("is_closed") is False:
-        return candles[:-1]
-    return candles
+    selected = []
+    for candle in candles or []:
+        if (
+            candle.get("is_closed") is False
+            or candle.get("is_complete") is False
+            or candle.get("complete") is False
+            or candle.get("closed") is False
+            or candle.get("is_live") is True
+        ):
+            continue
+        selected.append(candle)
+    return selected
 
 
 def compute_trendy_adx(candles, length=DEFAULT_LENGTH):
@@ -52,9 +64,9 @@ def compute_trendy_adx(candles, length=DEFAULT_LENGTH):
     low = np.array([float(c["low"]) for c in candles], dtype=float)
     close = np.array([float(c["close"]) for c in candles], dtype=float)
 
-    prev_high = np.concatenate(([high[0]], high[:-1]))
-    prev_low = np.concatenate(([low[0]], low[:-1]))
-    prev_close = np.concatenate(([close[0]], close[:-1]))
+    prev_high = np.concatenate(([0.0], high[:-1]))
+    prev_low = np.concatenate(([0.0], low[:-1]))
+    prev_close = np.concatenate(([0.0], close[:-1]))
 
     true_range = np.maximum(
         high - low,
@@ -67,20 +79,47 @@ def compute_trendy_adx(candles, length=DEFAULT_LENGTH):
     dm_plus = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
     dm_minus = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
 
-    smoothed_tr = pine_rma(true_range, length)
-    smoothed_dm_plus = pine_rma(dm_plus, length)
-    smoothed_dm_minus = pine_rma(dm_minus, length)
+    smoothed_tr = _pine_recursive_sum(true_range, length)
+    smoothed_dm_plus = _pine_recursive_sum(dm_plus, length)
+    smoothed_dm_minus = _pine_recursive_sum(dm_minus, length)
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        di_plus = np.where(smoothed_tr > 0, smoothed_dm_plus / smoothed_tr * 100.0, NAN)
-        di_minus = np.where(smoothed_tr > 0, smoothed_dm_minus / smoothed_tr * 100.0, NAN)
+        di_plus = np.where(smoothed_tr != 0.0, smoothed_dm_plus / smoothed_tr * 100.0, 0.0)
+        di_minus = np.where(smoothed_tr != 0.0, smoothed_dm_minus / smoothed_tr * 100.0, 0.0)
 
         di_sum = di_plus + di_minus
-        dx = np.where(np.isfinite(di_sum) & (di_sum > 0), np.abs(di_plus - di_minus) / di_sum * 100.0, 0.0)
+        dx = np.where(di_sum != 0.0, np.abs(di_plus - di_minus) / di_sum * 100.0, 0.0)
 
     adx = pine_sma(dx, length)
+    trend_value = di_plus - di_minus
+    buy_signal = _crossed_above_series(di_plus, di_minus)
+    sell_signal = _crossed_above_series(di_minus, di_plus)
 
-    return {"di_plus": di_plus, "di_minus": di_minus, "adx": adx}
+    return {
+        "true_range": true_range,
+        "dm_plus": dm_plus,
+        "dm_minus": dm_minus,
+        "smoothed_true_range": smoothed_tr,
+        "smoothed_dm_plus": smoothed_dm_plus,
+        "smoothed_dm_minus": smoothed_dm_minus,
+        "di_plus": di_plus,
+        "di_minus": di_minus,
+        "dx": dx,
+        "adx": adx,
+        "trend_value": trend_value,
+        "buy_signal": buy_signal,
+        "sell_signal": sell_signal,
+    }
+
+
+def _pine_recursive_sum(values, length):
+    output = np.full(len(values), NAN, dtype=float)
+    previous = 0.0
+    for index, value in enumerate(values):
+        current = float(value) if np.isfinite(value) else 0.0
+        previous = previous - previous / length + current
+        output[index] = previous
+    return output
 
 
 # =========================================================
@@ -102,6 +141,23 @@ def _crossed_above(a, b, idx):
     if None in (a_prev, b_prev, a_cur, b_cur):
         return False
     return a_prev <= b_prev and a_cur > b_cur
+
+
+def _crossed_below(a, b, idx):
+    if idx <= 0:
+        return False
+    a_prev, b_prev = _v(a, idx - 1), _v(b, idx - 1)
+    a_cur, b_cur = _v(a, idx), _v(b, idx)
+    if None in (a_prev, b_prev, a_cur, b_cur):
+        return False
+    return a_prev >= b_prev and a_cur < b_cur
+
+
+def _crossed_above_series(a, b):
+    output = np.zeros(len(a), dtype=bool)
+    for idx in range(1, len(a)):
+        output[idx] = _crossed_above(a, b, idx)
+    return output
 
 
 def _crossed_above_both(adx, dominant, opposing, idx):
@@ -145,6 +201,112 @@ def _resolve_distance(condition_cfg, default=1.0):
     value = (condition_cfg or {}).get("distance")
     if value is None:
         return default
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _latest_index(candles, computed):
+    return min(len(_closed_candles(candles)), len(computed.get("adx", []))) - 1
+
+
+def _trend_value(computed):
+    if "trend_value" in computed:
+        return computed["trend_value"]
+    return np.asarray(computed["di_plus"], dtype=float) - np.asarray(computed["di_minus"], dtype=float)
+
+
+def _level_config(config):
+    return {
+        "top_level": float(config.get("top_level", DEFAULT_TOP_LEVEL) or DEFAULT_TOP_LEVEL),
+        "rising_level": float(config.get("rising_level", DEFAULT_RISING_LEVEL) or DEFAULT_RISING_LEVEL),
+        "up_level": float(config.get("up_level", DEFAULT_UP_LEVEL) or DEFAULT_UP_LEVEL),
+        "down_level": float(config.get("down_level", DEFAULT_DOWN_LEVEL) or DEFAULT_DOWN_LEVEL),
+        "falling_level": float(config.get("falling_level", DEFAULT_FALLING_LEVEL) or DEFAULT_FALLING_LEVEL),
+        "bottom_level": float(config.get("bottom_level", DEFAULT_BOTTOM_LEVEL) or DEFAULT_BOTTOM_LEVEL),
+    }
+
+
+def trend_state_series(computed, config=None):
+    levels = _level_config(config or {})
+    trend = _trend_value(computed)
+    states = np.full(len(trend), "neutral", dtype=object)
+    finite = np.isfinite(trend)
+    states[finite & (trend >= levels["up_level"])] = "up"
+    states[finite & (trend >= levels["rising_level"])] = "rising"
+    states[finite & (trend >= levels["top_level"])] = "top"
+    states[finite & (trend <= levels["down_level"])] = "down"
+    states[finite & (trend <= levels["falling_level"])] = "falling"
+    states[finite & (trend <= levels["bottom_level"])] = "bottom"
+    return states
+
+
+def _background_condition(condition_id, computed, config, idx):
+    state = trend_state_series(computed, config)
+    if idx < 0 or idx >= len(state):
+        return False
+    current = str(state[idx])
+    if condition_id == "bullish_trend":
+        return current in {"up", "rising", "top"}
+    if condition_id == "bearish_trend":
+        return current in {"down", "falling", "bottom"}
+    if condition_id == "strong_bullish_trend":
+        return current == "top"
+    if condition_id == "strong_bearish_trend":
+        return current == "bottom"
+    if condition_id == "compression":
+        return current == "neutral"
+    return False
+
+
+def _evaluate_simple_rule(computed, candles, config):
+    n = len(_closed_candles(candles))
+    idx = min(n, len(computed["adx"])) - 1
+    if idx < 0:
+        return False
+
+    rule = str(config.get("rule") or config.get("condition") or "").strip().lower()
+    threshold = float(config.get("threshold", DEFAULT_THRESHOLD) or DEFAULT_THRESHOLD)
+    window = max(1, int(config.get("window", config.get("candles_since", 1)) or 1))
+    adx = computed["adx"]
+    di_plus = computed["di_plus"]
+    di_minus = computed["di_minus"]
+    trend_value = _trend_value(computed)
+
+    if rule in {"above", "adx_above", "strong_trend"}:
+        value = _v(adx, idx)
+        return value is not None and value > threshold
+    if rule in {"below", "adx_below", "weak_trend"}:
+        value = _v(adx, idx)
+        return value is not None and value < threshold
+    if rule in {"adx_rising", "rising"}:
+        return idx > 0 and _v(adx, idx) is not None and _v(adx, idx - 1) is not None and _v(adx, idx) > _v(adx, idx - 1)
+    if rule in {"adx_falling", "falling"}:
+        return idx > 0 and _v(adx, idx) is not None and _v(adx, idx - 1) is not None and _v(adx, idx) < _v(adx, idx - 1)
+    if rule in {"di_plus_above", "di_plus_above_di_minus", "bullish"}:
+        plus, minus = _v(di_plus, idx), _v(di_minus, idx)
+        return plus is not None and minus is not None and plus > minus
+    if rule in {"di_minus_above", "di_minus_above_di_plus", "bearish"}:
+        plus, minus = _v(di_plus, idx), _v(di_minus, idx)
+        return plus is not None and minus is not None and minus > plus
+    if rule in {"buy_signal", "di_plus_crossed_above", "di_plus_cross_above_di_minus", "bullish_cross"}:
+        return _find_recent_event(n, window, lambda i: _crossed_above(di_plus, di_minus, i))[0]
+    if rule in {"sell_signal", "di_minus_crossed_above", "di_minus_cross_above_di_plus", "bearish_cross"}:
+        return _find_recent_event(n, window, lambda i: _crossed_above(di_minus, di_plus, i))[0]
+    if rule in {"trend_strength_increasing", "trend_value_rising"}:
+        return idx > 0 and np.isfinite(trend_value[idx]) and np.isfinite(trend_value[idx - 1]) and trend_value[idx] > trend_value[idx - 1]
+    if rule in {"trend_strength_decreasing", "trend_value_falling"}:
+        return idx > 0 and np.isfinite(trend_value[idx]) and np.isfinite(trend_value[idx - 1]) and trend_value[idx] < trend_value[idx - 1]
+    if rule in {"bullish_trend", "bearish_trend", "strong_bullish_trend", "strong_bearish_trend", "compression"}:
+        return _background_condition(rule, computed, config, idx)
+    if rule in {"trend_reversal", "di_crossover"}:
+        return _find_recent_event(
+            n,
+            window,
+            lambda i: _crossed_above(di_plus, di_minus, i) or _crossed_above(di_minus, di_plus, i),
+        )[0]
+    return False
     try:
         return max(0.0, float(value))
     except (TypeError, ValueError):
@@ -477,6 +639,9 @@ def evaluate_trendy_adx_rules(computed, candles, config):
     conditions = config.get("conditions") or []
     threshold = float(config.get("threshold", DEFAULT_THRESHOLD) or DEFAULT_THRESHOLD)
 
+    if not conditions and (config.get("rule") or config.get("condition")):
+        return _evaluate_simple_rule(computed, candles, config)
+
     if not mode or not conditions:
         return False
 
@@ -586,3 +751,43 @@ def build_trendy_adx_sticker(computed, candles, config):
         window=1,
         decision=label,
     )
+
+
+def trendy_adx_debug_trace(computed, candles, config, symbol=None, timeframe=None):
+    candles = _closed_candles(candles)
+    idx = _latest_index(candles, computed)
+    states = trend_state_series(computed, config)
+    trend = _trend_value(computed)
+    latest = {}
+    if idx >= 0:
+        latest = {
+            "time": candles[idx].get("time") if idx < len(candles) and isinstance(candles[idx], dict) else None,
+            "true_range": _v(computed.get("true_range", []), idx),
+            "directional_movement_plus": _v(computed.get("dm_plus", []), idx),
+            "directional_movement_minus": _v(computed.get("dm_minus", []), idx),
+            "smoothed_true_range": _v(computed.get("smoothed_true_range", []), idx),
+            "smoothed_directional_movement_plus": _v(computed.get("smoothed_dm_plus", []), idx),
+            "smoothed_directional_movement_minus": _v(computed.get("smoothed_dm_minus", []), idx),
+            "di_plus": _v(computed["di_plus"], idx),
+            "di_minus": _v(computed["di_minus"], idx),
+            "dx": _v(computed.get("dx", []), idx),
+            "adx": _v(computed["adx"], idx),
+            "trend_value": _v(trend, idx),
+            "buy_signal": bool(computed.get("buy_signal", np.zeros(len(computed["adx"]), dtype=bool))[idx]),
+            "sell_signal": bool(computed.get("sell_signal", np.zeros(len(computed["adx"]), dtype=bool))[idx]),
+            "trend_state": str(states[idx]) if idx < len(states) else None,
+            "final_signal": evaluate_trendy_adx_rules(computed, candles, config),
+        }
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candle_count": len(candles),
+        "latest_index": idx,
+        "requested_config": dict(config or {}),
+        "effective_config": {
+            "length": int(config.get("length", DEFAULT_LENGTH) or DEFAULT_LENGTH),
+            "threshold": float(config.get("threshold", DEFAULT_THRESHOLD) or DEFAULT_THRESHOLD),
+            **_level_config(config or {}),
+        },
+        "latest": latest,
+    }
