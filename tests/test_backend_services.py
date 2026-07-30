@@ -1094,13 +1094,49 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertTrue(passed)
         self.assertIsNotNone(sticker)
 
-    def test_confirm_if_needed_without_type_does_not_fail(self):
+    def test_confirm_if_needed_without_type_or_pattern_fails(self):
         candles = [{"open": 1.0, "close": 1.1, "high": 1.2, "low": 0.9}]
-        self.assertTrue(
+        self.assertFalse(
             utils.confirm_if_needed(
                 candles,
                 0,
                 {"confirmation": True, "confirmation_window": 1, "confirmation_type": None},
+            )
+        )
+
+    def test_confirm_if_needed_type_only_ignores_opposite_pattern_selection(self):
+        candles = [
+            {"open": 10.0, "close": 10.05, "high": 10.1, "low": 9.95},
+            {"open": 10.05, "close": 10.08, "high": 10.15, "low": 10.0},
+        ]
+        self.assertFalse(
+            utils.confirm_if_needed(
+                candles,
+                0,
+                {
+                    "confirmation": True,
+                    "confirmation_window": 1,
+                    "confirmation_types": ["bearish"],
+                    "confirmation_patterns": ["bullish_engulfing"],
+                },
+            )
+        )
+
+    def test_confirm_if_needed_type_and_pattern_union(self):
+        candles = [
+            {"open": 10.0, "close": 9.2, "high": 10.1, "low": 9.1},
+            {"open": 9.1, "close": 10.4, "high": 10.5, "low": 9.0},
+        ]
+        self.assertTrue(
+            utils.confirm_if_needed(
+                candles,
+                0,
+                {
+                    "confirmation": True,
+                    "confirmation_window": 1,
+                    "confirmation_types": ["bullish"],
+                    "confirmation_patterns": ["bullish_engulfing"],
+                },
             )
         )
 
@@ -3099,9 +3135,16 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertTrue(
+        self.assertFalse(
             channel_line_rules.evaluate_regression_lines(
                 [previous_touch, {"open": 0.530, "high": 0.539, "low": 0.520, "close": 0.530}],
+                channel,
+                config,
+            )
+        )
+        self.assertTrue(
+            channel_line_rules.evaluate_regression_lines(
+                [previous_touch, latest_touch],
                 channel,
                 config,
             )
@@ -3114,7 +3157,7 @@ class IndicatorMathTests(unittest.TestCase):
             )
         )
 
-    def test_regression_lower_wick_touch_rejects_candle_using_line_as_resistance(self):
+    def test_regression_lower_line_accepts_an_actual_upper_wick_touch(self):
         candles = [
             {"open": 98.0, "high": 100.5, "low": 97.5, "close": 99.0},
         ]
@@ -3131,7 +3174,7 @@ class IndicatorMathTests(unittest.TestCase):
             "confirmation": False,
         }
 
-        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, config))
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(candles, channel, config))
 
     def test_regression_lower_wick_touch_accepts_support_reaction(self):
         candles = [
@@ -3312,13 +3355,13 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertEqual(channel["line_x1"], 2)
         self.assertEqual(channel["line_x2"], 13)
 
-        # TradingView-parity geometry projects the visible/evaluated channel
-        # directly from the two confirmed pivot anchors at each candle index.
+        # Pine advances y2 by one slope step per confirmed bar even though x2
+        # initially jumps forward by `length` bars from the pivot anchor.
         self.assertAlmostEqual(float(channel["top"][0]), 12.457142857142857)
-        self.assertAlmostEqual(float(channel["top"][-1]), 11.797142857142859)
+        self.assertAlmostEqual(float(channel["top"][-1]), 11.857142857142856)
         self.assertAlmostEqual(float(channel["bottom"][0]), 4.742857142857143)
-        self.assertAlmostEqual(float(channel["bottom"][-1]), 4.0828571428571445)
-        self.assertAlmostEqual(float(channel["middle"][-1]), 7.940000000000001)
+        self.assertAlmostEqual(float(channel["bottom"][-1]), 4.142857142857146)
+        self.assertAlmostEqual(float(channel["middle"][-1]), 7.999999999999999)
 
     def test_compute_trend_channel_freezes_broken_channel_line_endpoints(self):
         bases = self._chartprime_fixture_bases() + [13.0, 12.5, 12.0, 11.5, 11.0, 10.5]
@@ -3336,11 +3379,18 @@ class IndicatorMathTests(unittest.TestCase):
         break_regression_index = channel["break_index"] - channel["start_index"]
         bottom_at_break = float(channel["bottom"][break_regression_index])
 
-        # The endpoint freezes at the break bar for break eligibility, while
-        # the rendered segment remains the same straight pivot projection.
+        # The endpoint freezes at the break bar for break eligibility.
         self.assertNotAlmostEqual(float(channel["bottom"][-1]), bottom_at_break)
 
-        closed_form_bottom_at_latest = bottom_at_break + (latest_index - 14) * (-0.06)
+        # Rendering continues the slope represented by the frozen Pine
+        # endpoint. That rendered slope differs from the raw pivot slope
+        # because Pine's y2 intentionally lags its x2.
+        rendered_slope = (
+            bottom_at_break - float(channel["bottom"][0])
+        ) / (channel["break_index"] - channel["start_index"])
+        closed_form_bottom_at_latest = bottom_at_break + (
+            latest_index - channel["break_index"]
+        ) * rendered_slope
         self.assertAlmostEqual(float(channel["bottom"][-1]), closed_form_bottom_at_latest)
 
     def test_evaluate_single_area_rejects_post_break_extrapolated_touch(self):

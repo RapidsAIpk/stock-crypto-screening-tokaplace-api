@@ -9,7 +9,6 @@ from services.utils import confirm_if_needed, detect_touch, humanize_token
 def evaluate_regression_lines(candles, channel, config):
     selected_lines = config.get("lines", [])
     window = max(1, int(config.get("window", 1) or 1))
-    tolerance_pct = float(config.get("tolerance", 0) or 0)
 
     if not selected_lines:
         return False
@@ -25,19 +24,18 @@ def evaluate_regression_lines(candles, channel, config):
 
     for line_name in selected_lines:
         line_series = channel.get(line_name)
-        touch_direction = _line_touch_direction(line_name)
 
         if line_series is None:
             return False
 
-        if action in {"close_above", "close_below", "stay_above", "stay_below"}:
+        if action in {"touch", "close_above", "close_below", "stay_above", "stay_below"}:
             signal_start_index = _current_signal_start_index(
                 candles,
                 line_series,
                 start_index,
                 config,
                 line_name,
-                touch_direction,
+                None,
             )
             if signal_start_index is None:
                 return False
@@ -51,30 +49,7 @@ def evaluate_regression_lines(candles, channel, config):
 
             continue
 
-        candle_index = latest_index - window + 1
-        if candle_index < 0:
-            return False
-
-        regression_index = candle_index - start_index
-        if regression_index < 0 or regression_index >= len(line_series):
-            return False
-
-        line_value = _evaluation_line_value(line_series[regression_index], config, line_name)
-        tolerance = abs(line_value) * (tolerance_pct / 100)
-        tol_upper = line_value + tolerance
-        tol_lower = line_value - tolerance
-
-        if not evaluate_line_rule(
-            candles[candle_index],
-            tol_lower,
-            tol_upper,
-            config,
-            touch_direction=touch_direction,
-        ):
-            return False
-
-        if not confirm_if_needed(candles, candle_index, config):
-            return False
+        return False
 
     return True
 
@@ -149,18 +124,6 @@ def _line_rule_matches_index(
     )
 
 
-def _line_touch_direction(line_name):
-    normalized = str(line_name or "").strip().lower()
-
-    if normalized in {"upper", "top", "q3"}:
-        return "up"
-
-    if normalized in {"lower", "bottom", "q1"}:
-        return "down"
-
-    return None
-
-
 def _normalize_mintick(config):
     for key in ("mintick", "tick_size", "price_tick_size"):
         if key not in config:
@@ -230,10 +193,10 @@ def evaluate_line_rule(candle, lower_tol, upper_tol, config, touch_direction=Non
         return candle["close"] < lower_tol
 
     if action == "stay_above":
-        return candle["close"] > lower_tol
+        return candle["low"] > lower_tol
 
     if action == "stay_below":
-        return candle["close"] < upper_tol
+        return candle["high"] < upper_tol
 
     return False
 

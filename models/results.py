@@ -1,6 +1,6 @@
 # models/results.py
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -100,7 +100,7 @@ class IndicatorDetail(ResultsBaseModel):
     passed: bool
     sticker: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
-    evidence: Dict[str, Any] = Field(default_factory=dict)
+    evidence: Union[Dict[str, Any], List[Dict[str, Any]]] = Field(default_factory=dict)
     warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
 

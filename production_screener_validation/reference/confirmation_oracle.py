@@ -51,9 +51,43 @@ def confirmation_matches(candles: list[dict[str, Any]], signal_index: int, confi
     types = list(config.get("confirmation_types") or [])
     if config.get("confirmation_type") and config["confirmation_type"] not in types:
         types.insert(0, config["confirmation_type"])
+
+    bullish_types = {"bullish", "strong_bullish"}
+    bearish_types = {"bearish", "strong_bearish"}
+    allowed_patterns: set[str] | None = None
+    if types:
+        allowed_patterns = set()
+        for item in types:
+            if item in bullish_types:
+                allowed_patterns.update(
+                    {
+                        "bullish_engulfing",
+                        "hammer",
+                        "bullish_pin_bar",
+                        "bullish_marubozu",
+                        "strong_breakout_candle",
+                    }
+                )
+            elif item in bearish_types:
+                allowed_patterns.update(
+                    {
+                        "bearish_engulfing",
+                        "shooting_star",
+                        "bearish_pin_bar",
+                        "bearish_marubozu",
+                        "strong_breakdown_candle",
+                    }
+                )
+
     requested_patterns = set(config.get("confirmation_patterns") or [])
-    if not types and not requested_patterns:
-        return True, signal_index
+    if allowed_patterns is not None:
+        requested_patterns = {pattern for pattern in requested_patterns if pattern in allowed_patterns}
+
+    has_types = bool(types)
+    has_patterns = bool(requested_patterns)
+    if not has_types and not has_patterns:
+        return False, None
+
     allowed_types = {"bullish", "bearish", "strong_bullish", "strong_bearish"}
     if any(item not in allowed_types for item in types):
         raise ValueError("unknown confirmation type")
@@ -64,13 +98,16 @@ def confirmation_matches(candles: list[dict[str, Any]], signal_index: int, confi
         found = patterns(candles, index)
         span = max(_number(candle, "high") - _number(candle, "low"), 1e-12)
         body_ratio = abs(_number(candle, "close") - _number(candle, "open")) / span
-        type_match = any(
-            (item == "bullish" and _bullish(candle))
-            or (item == "bearish" and _bearish(candle))
-            or (item == "strong_bullish" and _bullish(candle) and body_ratio > 0.6)
-            or (item == "strong_bearish" and _bearish(candle) and body_ratio > 0.6)
-            for item in types
-        )
-        if type_match or requested_patterns.intersection(found):
+        type_match = False
+        if has_types:
+            type_match = any(
+                (item == "bullish" and _bullish(candle))
+                or (item == "bearish" and _bearish(candle))
+                or (item == "strong_bullish" and _bullish(candle) and body_ratio > 0.6)
+                or (item == "strong_bearish" and _bearish(candle) and body_ratio > 0.6)
+                for item in types
+            )
+        pattern_match = bool(has_patterns and requested_patterns.intersection(found))
+        if type_match or pattern_match:
             return True, index
     return False, None

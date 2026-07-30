@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 from services.channel_line_rules import (
     build_regression_sticker,
+    evaluate_line_rule,
     evaluate_regression_lines,
     _evaluation_line_value,
 )
@@ -92,6 +93,7 @@ from services.utils import (
     format_compact_number,
     format_decimal,
     humanize_token,
+    normalize_confirmation_config,
 )
 
 
@@ -316,8 +318,12 @@ def _log_dw_regression_evaluation(asset, candles, channel, config, passed):
     latest_index = len(candles) - 1
     action = str(config.get("action") or "").strip().lower()
     if action == "touch":
-        signal_index = latest_index - window + 1
-        source_indices = [signal_index] if signal_index >= 0 else []
+        signal_start_index = latest_index - window + 1
+        source_indices = (
+            list(range(signal_start_index, latest_index + 1))
+            if signal_start_index >= 0
+            else []
+        )
     else:
         source_indices = [latest_index] if latest_index >= 0 else []
     tolerance_pct = float(config.get("tolerance", 0) or 0)
@@ -341,41 +347,19 @@ def _log_dw_regression_evaluation(asset, candles, channel, config, passed):
                 lower_tolerance = line_value - tolerance
                 upper_tolerance = line_value + tolerance
                 if str(config.get("action") or "").lower() == "touch":
-                    low_at_or_below = (
-                        np.isfinite(line_value)
-                        and float(candle["low"]) <= upper_tolerance
-                    )
-                    high_at_or_above = (
-                        np.isfinite(line_value)
-                        and float(candle["high"]) >= lower_tolerance
-                    )
-                    body_high_at_or_below = (
-                        np.isfinite(line_value)
-                        and max(float(candle["open"]), float(candle["close"])) <= line_value
-                    )
-                    body_low_at_or_above = (
-                        np.isfinite(line_value)
-                        and min(float(candle["open"]), float(candle["close"])) >= line_value
+                    touch_result = evaluate_line_rule(
+                        candle,
+                        lower_tolerance,
+                        upper_tolerance,
+                        config,
+                        touch_direction=None,
                     )
                     line_evaluations[line_name] = {
-                        "formula": "low <= line + tolerance and high >= line - tolerance",
+                        "formula": "selected body or actual wick overlaps the line tolerance band",
+                        "touch_type": config.get("touch_type"),
                         "lower_tolerance": lower_tolerance,
                         "upper_tolerance": upper_tolerance,
-                        "low_at_or_below": bool(low_at_or_below),
-                        "high_at_or_above": bool(high_at_or_above),
-                        "body_high_at_or_below_line": bool(body_high_at_or_below),
-                        "body_low_at_or_above_line": bool(body_low_at_or_above),
-                        "result": bool(
-                            high_at_or_above
-                            and (
-                                str(line_name).lower() != "upper"
-                                or body_high_at_or_below
-                            )
-                            and (
-                                str(line_name).lower() != "lower"
-                                or body_low_at_or_above
-                            )
-                        ),
+                        "result": bool(touch_result),
                         "line_is_finite": bool(np.isfinite(line_value)),
                     }
         evaluations.append(
@@ -419,13 +403,28 @@ def _log_dw_regression_evaluation(asset, candles, channel, config, passed):
     )
 
 
-def _regression_mintick(asset, config):
-    return _trend_mintick(asset, config)
+def _latest_candle_price(candles):
+    for candle in reversed(candles or []):
+        try:
+            value = float(candle.get("close"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if np.isfinite(value) and value > 0:
+            return value
+    return None
+
+
+def _regression_mintick(asset, config, candles=None):
+    return _trend_mintick(
+        asset,
+        config,
+        reference_price=_latest_candle_price(candles),
+    )
 
 
 def handle_regression(asset, candles, config):
     evaluation_config = dict(config or {})
-    mintick = _regression_mintick(asset, evaluation_config)
+    mintick = _regression_mintick(asset, evaluation_config, candles)
     if mintick is not None:
         evaluation_config.setdefault("mintick", mintick)
 
@@ -492,7 +491,7 @@ def _trend_closed_candles(candles):
     return candles
 
 
-def _trend_mintick(asset, config):
+def _trend_mintick(asset, config, reference_price=None):
     for key in ("mintick", "tick_size", "price_tick_size"):
         raw_value = config.get(key)
         if raw_value is not None:
@@ -506,6 +505,16 @@ def _trend_mintick(asset, config):
     symbol = str((asset or {}).get("symbol") or "").strip().upper()
     asset_type = str((asset or {}).get("asset_type") or "").strip().lower()
     if asset_type == "stocks" or (symbol and not symbol.endswith("-USD")):
+        try:
+            numeric_reference_price = float(reference_price)
+        except (TypeError, ValueError):
+            numeric_reference_price = None
+        if (
+            numeric_reference_price is not None
+            and np.isfinite(numeric_reference_price)
+            and 0 < numeric_reference_price < 1
+        ):
+            return 0.0001
         return 0.01
     return None
 
@@ -520,7 +529,11 @@ def handle_trend(asset, candles, config):
         length=config.get("length", 8),
         wait_for_break=True if wait_for_break is None else bool(wait_for_break),
         show_last_channel=True if show_last_channel is None else bool(show_last_channel),
-        mintick=_trend_mintick(asset, config),
+        mintick=_trend_mintick(
+            asset,
+            config,
+            reference_price=_latest_candle_price(closed_candles),
+        ),
     )
 
     if not tc:
@@ -1455,7 +1468,13 @@ def _compile_selected_indicators(selected_indicators, registry):
         if not handler:
             return None
 
-        compiled.append((indicator.name.lower(), handler, indicator.config or {}))
+        compiled.append(
+            (
+                indicator.name.lower(),
+                handler,
+                normalize_confirmation_config(dict(indicator.config or {})),
+            )
+        )
 
     return compiled
 

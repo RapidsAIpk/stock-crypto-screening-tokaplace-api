@@ -10,6 +10,8 @@
 
 import unittest
 
+import numpy as np
+
 from services import indicators, trend_channels
 
 
@@ -167,17 +169,16 @@ class ChannelConstructionTests(unittest.TestCase):
         next_bar_value = value_at(10)
         five_bars_later_value = value_at(14)
 
-        # Each bar's top must be strictly declining (down channel, negative
-        # slope) and monotonic bar-over-bar. The creation bar is several bars
-        # after the second pivot, so the rendered/evaluated line must be the
-        # direct pivot projection at that bar, not a one-step-lagged endpoint.
+        # Pine advances y2 by one raw slope step per bar even when x2 jumps
+        # across the pivot-confirmation delay. The final rendered line is the
+        # straight interpolation from the first pivot to that lagged endpoint.
         self.assertLess(next_bar_value, creation_bar_value)
         self.assertLess(five_bars_later_value, next_bar_value)
-        self.assertAlmostEqual(creation_bar_value, 12.03714285714286)
-        self.assertAlmostEqual(next_bar_value, 11.977142857142859)
-        self.assertAlmostEqual(five_bars_later_value, 11.73714285714286)
+        self.assertAlmostEqual(creation_bar_value, 12.063392857142855)
+        self.assertAlmostEqual(next_bar_value, 12.007142857142856)
+        self.assertAlmostEqual(five_bars_later_value, 11.782142857142855)
 
-    def test_mintick_rounds_projected_extended_values_at_each_bar(self):
+    def test_mintick_rounds_endpoints_but_keeps_rendered_line_continuous(self):
         bases = DOWN_BASES + [10.0, 9.7, 9.4, 9.1, 8.8]
         candles = _candles_from_bases(bases)
         channel = trend_channels.compute_trend_channel(candles, length=2, mintick=0.01)
@@ -187,10 +188,65 @@ class ChannelConstructionTests(unittest.TestCase):
         def value_at(series, bar_index):
             return float(channel[series][bar_index - start_index])
 
-        self.assertAlmostEqual(value_at("top", 9), 12.04)
-        self.assertAlmostEqual(value_at("middle", 9), 8.18)
-        self.assertAlmostEqual(value_at("top", 14), 11.74)
-        self.assertAlmostEqual(value_at("middle", 14), 7.88)
+        self.assertAlmostEqual(value_at("top", 9), 12.06625)
+        self.assertAlmostEqual(value_at("middle", 9), 8.20625)
+        self.assertAlmostEqual(value_at("top", 14), 11.785)
+        self.assertAlmostEqual(value_at("middle", 14), 7.925)
+        self.assertNotEqual(value_at("top", 9), round(value_at("top", 9), 2))
+        self.assertAlmostEqual(
+            value_at("top", 10) - value_at("top", 9),
+            value_at("top", 14) - value_at("top", 13),
+        )
+
+    def test_gct_matches_pine_one_step_endpoint_advancement(self):
+        first_pivot = {"index": 429, "price": 51.86}
+        second_pivot = {"index": 443, "price": 49.458}
+        confirmation_index = 451
+        latest_index = 499
+        atr = np.full(latest_index + 1, 15.706581957207788 / 6.0)
+
+        state = trend_channels._build_channel_state(
+            "down",
+            first_pivot,
+            second_pivot,
+            confirmation_index,
+            atr,
+            mintick=0.01,
+        )
+        for bar_index in range(confirmation_index, latest_index + 1):
+            trend_channels._advance_channel_line_endpoints(state, bar_index)
+
+        channel = trend_channels._build_rendered_channel(state, latest_index)
+
+        self.assertAlmostEqual(float(channel["top"][-1]), 43.293)
+        self.assertAlmostEqual(float(channel["middle"][-1]), 33.193)
+        self.assertAlmostEqual(float(channel["bottom"][-1]), 23.103)
+        direct_projection = (
+            second_pivot["price"]
+            + state["slope"] * (latest_index - second_pivot["index"])
+        )
+        pine_endpoint = state["line_y2_top"] - state["offset"] / 7.0
+        self.assertAlmostEqual(
+            pine_endpoint - direct_projection,
+            (8 - 1) * abs(state["slope"]),
+            places=2,
+        )
+
+    def test_mintick_rounding_uses_pine_ties_up_semantics(self):
+        self.assertAlmostEqual(trend_channels._round_to_mintick(1.005, 0.01), 1.01)
+        self.assertAlmostEqual(trend_channels._round_to_mintick(1.025, 0.01), 1.03)
+
+    def test_zone_midlines_are_returned_from_pine_endpoints(self):
+        channel = trend_channels.compute_trend_channel(
+            _candles_from_bases(DOWN_BASES),
+            length=2,
+            mintick=0.01,
+        )
+
+        self.assertIn("top_zone_mid", channel)
+        self.assertIn("bottom_zone_mid", channel)
+        self.assertEqual(len(channel["top_zone_mid"]), channel["length"])
+        self.assertEqual(len(channel["bottom_zone_mid"]), channel["length"])
 
     def test_no_fallback_channel_without_confirmed_pivots(self):
         candles = [
@@ -376,6 +432,16 @@ class TrendMintickSelectionTests(unittest.TestCase):
             0.01,
         )
 
+    def test_sub_dollar_stock_uses_ten_thousandth_mintick(self):
+        self.assertEqual(
+            indicators._trend_mintick(
+                {"symbol": "EDTK", "asset_type": "stocks"},
+                {},
+                reference_price=0.94,
+            ),
+            0.0001,
+        )
+
     def test_crypto_assets_do_not_get_stock_mintick_by_default(self):
         self.assertIsNone(
             indicators._trend_mintick({"symbol": "BTC-USD", "asset_type": "crypto"}, {})
@@ -479,8 +545,13 @@ class WindowAndConfirmationTests(unittest.TestCase):
         rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 2, "tolerance": 0, "confirmation": False}
         self.assertFalse(trend_channels.evaluate_single_area(candles, self._channel(4), rule))
 
-    def test_window_n_includes_the_last_n_completed_candles(self):
+    def test_window_exact_run_requires_latest_candle_to_match(self):
         candles = [self.TOUCH_CANDLE, self.NO_TOUCH_CANDLE, self.NO_TOUCH_CANDLE, self.NO_TOUCH_CANDLE]
+        rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 4, "tolerance": 0, "confirmation": False}
+        self.assertFalse(trend_channels.evaluate_single_area(candles, self._channel(4), rule))
+
+    def test_window_exact_run_passes_when_all_window_bars_match(self):
+        candles = [self.TOUCH_CANDLE, self.TOUCH_CANDLE, self.TOUCH_CANDLE, self.TOUCH_CANDLE]
         rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 4, "tolerance": 0, "confirmation": False}
         self.assertTrue(trend_channels.evaluate_single_area(candles, self._channel(4), rule))
 
@@ -550,8 +621,8 @@ class WindowAndConfirmationTests(unittest.TestCase):
         self.assertFalse(trend_channels.evaluate_single_area(candles, channel, rule))
 
     def test_confirmation_disabled_ignores_pattern_requirement(self):
-        neutral = {"open": 100.0, "high": 101.0, "low": 99.5, "close": 100.5}
-        candles = [self.TOUCH_CANDLE, neutral]
+        touch = self.TOUCH_CANDLE
+        candles = [touch, touch]
         channel = self._channel(2)
         rule = {
             "area": "top_line",
@@ -744,21 +815,25 @@ class WindowOneCompletedCandleOnlyTests(unittest.TestCase):
         )
         self.assertTrue(passed)
 
-    def test_window_2_includes_the_latest_two_completed_candles_only(self):
+    def test_window_2_requires_two_consecutive_matching_candles(self):
         rule_window_2 = {**self.RULE_WINDOW_1, "window": 2}
 
-        # The touch sits on the second-to-last completed bar - still inside
-        # a window of 2.
         candles_in_window = self._build_trailing_pair(
-            self._touch_candle, self._no_touch_candle, bar_b_closed=True
+            self._touch_candle, self._touch_candle, bar_b_closed=True
         )
         passed_in_window, _ = indicators.handle_trend(
             {"channels": {}}, candles_in_window, self._config(rule_window_2)
         )
         self.assertTrue(passed_in_window)
 
-        # The only touch is three bars back (outside a window of 2) - both
-        # in-window bars stay clean, so this must fail.
+        candles_partial_run = self._build_trailing_pair(
+            self._touch_candle, self._no_touch_candle, bar_b_closed=True
+        )
+        passed_partial_run, _ = indicators.handle_trend(
+            {"channels": {}}, candles_partial_run, self._config(rule_window_2)
+        )
+        self.assertFalse(passed_partial_run)
+
         base = _candles_from_bases(DOWN_BASES)
         probe = base + _candles_from_bases([10.0, 10.0, 10.0])
         probe_channel = trend_channels.compute_trend_channel(probe, length=2)

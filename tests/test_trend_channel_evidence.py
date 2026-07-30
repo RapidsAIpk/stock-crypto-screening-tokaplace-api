@@ -1,22 +1,9 @@
-"""Focused regression tests for the Trend Channel evidence/window fix.
+"""Focused regression tests for Trend Channel evidence and exact-window logic.
 
-Root cause under test: for window > 1, evidence previously always reported
-`candles[-1]` (the latest candle) regardless of which candle inside the
-window actually satisfied the rule - so a match on an earlier candle in the
-window was reported with the wrong OHLC/line-value, and a genuine "no
-match" carried no diagnostic explanation. `evaluate_single_area` now builds
-full per-candidate diagnostics (`checked_candidates`) and reports the real
-`matched_candle_index`, sourced from the same evaluation pass that decides
-pass/fail (not re-derived separately), for both the window-scan actions
-(touched/entered/rejected/breach) and the run-based actions
-(closed_above/closed_below/on_line).
-
-Also covers: top/bottom line and zone wick touches, broken-channel
-eligibility, forming-candle exclusion, exact boundary touches, and
-tolerance null/0/positive - reproduced with synthetic fixtures labeled for
-AIXC, AFYA, AKAM, GOOG, KYTX and TKO (no live market-data access is
-available in this environment, so these are hand-built OHLCV series that
-exercise the identical evaluation code path a real fetch would drive).
+Trend Channel now shares regression/LRC window semantics: the current
+consecutive matching run must end on the latest candle and be exactly
+`window` bars long. Evidence reports the run-start candle that decided
+pass/fail, plus per-candidate diagnostics in `checked_candidates`.
 """
 
 from __future__ import annotations
@@ -133,35 +120,41 @@ class WindowOneTests(unittest.TestCase):
         matched = trend_channels.evaluate_single_area([NO_TOUCH, TOUCH_TOP], channel, rule, evidence=evidence)
 
         self.assertTrue(matched)
-        self.assertEqual(len(evidence[0]["checked_candidates"]), 1)
         self.assertEqual(evidence[0]["matched_candle_index"], 1)
+        self.assertEqual(len(evidence[0]["checked_candidates"]), 2)
 
 
 class WindowTwoAndLargerTests(unittest.TestCase):
-    """The core regression: the match is NOT on the latest candle."""
+    """Exact-window semantics require a consecutive run ending at latest."""
 
-    def test_window_2_matches_on_the_older_candle_evidence_reports_it_correctly(self):
+    def test_window_2_requires_two_consecutive_matches_ending_at_latest(self):
         channel = _flat_channel(2)
         rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 2, "tolerance": 0, "confirmation": False}
-        candles = [TOUCH_TOP, NO_TOUCH]  # match at index 0, latest (index 1) does NOT touch
+        candles = [TOUCH_TOP, TOUCH_TOP]
         evidence = []
 
         matched = trend_channels.evaluate_single_area(candles, channel, rule, evidence=evidence)
 
         self.assertTrue(matched)
-        # Before the fix this always reported index len(candles)-1 == 1.
         self.assertEqual(evidence[0]["matched_candle_index"], 0)
         self.assertEqual(evidence[0]["matched_candle_time"], 1000)
-        self.assertEqual(evidence[0]["checked_candle_index"], 0)
-        self.assertEqual(evidence[0]["checked_candle_time"], 1000)
-        # First-match-wins scanning oldest-to-newest: the loop stops at the
-        # match, so the newer (never-examined) candle isn't in the list.
-        self.assertEqual([c["candle_index"] for c in evidence[0]["checked_candidates"]], [0])
 
-    def test_window_larger_than_two_still_finds_and_reports_the_true_match(self):
+    def test_window_2_fails_when_only_older_candle_matches(self):
+        channel = _flat_channel(2)
+        rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 2, "tolerance": 0, "confirmation": False}
+        candles = [TOUCH_TOP, NO_TOUCH]
+        evidence = []
+
+        matched = trend_channels.evaluate_single_area(candles, channel, rule, evidence=evidence)
+
+        self.assertFalse(matched)
+        self.assertIsNone(evidence[0]["matched_candle_index"])
+        self.assertEqual(evidence[0]["failure_reason"], "no_candidate_matched")
+
+    def test_window_larger_than_two_requires_full_consecutive_run(self):
         channel = _flat_channel(4)
         rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 4, "tolerance": 0, "confirmation": False}
-        candles = [TOUCH_TOP, NO_TOUCH, NO_TOUCH, NO_TOUCH]
+        candles = [TOUCH_TOP, TOUCH_TOP, TOUCH_TOP, TOUCH_TOP]
         evidence = []
 
         matched = trend_channels.evaluate_single_area(candles, channel, rule, evidence=evidence)
@@ -169,7 +162,7 @@ class WindowTwoAndLargerTests(unittest.TestCase):
         self.assertTrue(matched)
         self.assertEqual(evidence[0]["matched_candle_index"], 0)
 
-    def test_window_2_no_touch_anywhere_reports_both_candidates_and_a_reason(self):
+    def test_window_2_no_touch_anywhere_reports_latest_candidate_reason(self):
         channel = _flat_channel(2)
         rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 2, "tolerance": 0, "confirmation": False}
         candles = [NO_TOUCH, NO_TOUCH]
@@ -179,17 +172,12 @@ class WindowTwoAndLargerTests(unittest.TestCase):
 
         self.assertFalse(matched)
         self.assertIsNone(evidence[0]["matched_candle_index"])
-        self.assertEqual(len(evidence[0]["checked_candidates"]), 2)
-        for candidate in evidence[0]["checked_candidates"]:
-            self.assertEqual(candidate["failure_reason"], "no_geometry_overlap")
-            self.assertFalse(candidate["geometry_overlap"])
+        self.assertEqual(len(evidence[0]["checked_candidates"]), 1)
+        self.assertEqual(evidence[0]["checked_candidates"][0]["failure_reason"], "no_geometry_overlap")
         self.assertEqual(evidence[0]["failure_reason"], "no_candidate_matched")
 
-    def test_end_to_end_through_handle_trend_reports_the_matched_candle_not_the_latest(self):
-        """Same regression, exercised through the real screener entry point
-        (handle_trend), not just the isolated evaluate_single_area unit.
-        """
-        candles = [TOUCH_TOP, NO_TOUCH]
+    def test_end_to_end_through_handle_trend_reports_run_start_candle(self):
+        candles = [TOUCH_TOP, TOUCH_TOP]
         channel = _flat_channel(2)
         config = {"length": 2, "areas": [
             {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 2, "tolerance": 0, "confirmation": False},
@@ -214,7 +202,7 @@ class RunBasedActionEvidenceTests(unittest.TestCase):
         above = _candle(112.0, 113.0, 111.5, 112.5, time=100)
         also_above = _candle(112.5, 113.5, 112.0, 113.0, time=200)
         candles = [NO_TOUCH, above, also_above]
-        rule = {"area": "top_line", "action": "closed_above", "window": 3, "tolerance": 0, "confirmation": False}
+        rule = {"area": "top_line", "action": "closed_above", "window": 2, "tolerance": 0, "confirmation": False}
         evidence = []
 
         matched = trend_channels.evaluate_single_area(candles, channel, rule, evidence=evidence)
@@ -264,7 +252,7 @@ class BrokenVisibleChannelEvidenceTests(unittest.TestCase):
 
     def test_bar_at_or_before_break_index_remains_eligible(self):
         channel = _flat_channel(2, broken=True, break_index=1)
-        rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 2, "tolerance": 0, "confirmation": False}
+        rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 1, "tolerance": 0, "confirmation": False}
         evidence = []
 
         matched = trend_channels.evaluate_single_area([NO_TOUCH, TOUCH_TOP], channel, rule, evidence=evidence)
@@ -332,9 +320,9 @@ class MultiAssetMultiTimeframeReproductionTests(unittest.TestCase):
         top = 100.0 * price_scale
         channel = _flat_channel(3, top=top)
         touch = _candle(top - 2 * price_scale, top + 0.1 * price_scale, top - 3 * price_scale, top - 1.5 * price_scale, time=42)
-        no_touch_a = _candle(top - 5 * price_scale, top - 4 * price_scale, top - 6 * price_scale, top - 4.5 * price_scale, time=43)
-        no_touch_b = _candle(top - 5 * price_scale, top - 4 * price_scale, top - 6 * price_scale, top - 4.5 * price_scale, time=44)
-        candles = [touch, no_touch_a, no_touch_b]
+        touch_b = _candle(top - 2 * price_scale, top + 0.1 * price_scale, top - 3 * price_scale, top - 1.5 * price_scale, time=43)
+        touch_c = _candle(top - 2 * price_scale, top + 0.1 * price_scale, top - 3 * price_scale, top - 1.5 * price_scale, time=44)
+        candles = [touch, touch_b, touch_c]
         rule = {"area": "top_line", "action": "touched", "touch_type": "wick", "window": 3, "tolerance": 0, "confirmation": False}
         evidence = []
 
@@ -357,3 +345,39 @@ class MultiAssetMultiTimeframeReproductionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TrendEvidenceResponseModelTests(unittest.TestCase):
+    def test_screening_detail_response_accepts_trend_evidence_list(self):
+        from models.results import ScreeningDetailResponse
+
+        detail = {
+            "symbol": "TEST",
+            "price": 42.0,
+            "asset_type": "stocks",
+            "data_source": "zoya",
+            "timeframe": "1day",
+            "indicator_details": [
+                {
+                    "name": "trend",
+                    "passed": True,
+                    "config": {},
+                    "evidence": [
+                        {
+                            "area": "top_line",
+                            "action": "touched",
+                            "touch_type": "wick",
+                            "window": 1,
+                            "matched": True,
+                            "checked_candidates": [],
+                        }
+                    ],
+                }
+            ],
+        }
+
+        response = ScreeningDetailResponse(detail=detail)
+        evidence = response.detail.indicator_details[0].evidence
+
+        self.assertIsInstance(evidence, list)
+        self.assertEqual(evidence[0]["area"], "top_line")
