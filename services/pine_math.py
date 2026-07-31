@@ -501,7 +501,15 @@ def dw_channel_series(
     q3 = middle + std_dev / 2.0
     q1 = middle - std_dev / 2.0
 
-    return {"middle": middle, "upper": upper, "lower": lower, "q3": q3, "q1": q1}
+    return {
+        "middle": middle,
+        "upper": upper,
+        "lower": lower,
+        "q3": q3,
+        "q1": q1,
+        "standard_deviation": std_dev,
+        "slope": calculated["slope"],
+    }
 
 
 def pine_range_volatility(candles: list[dict], length: int) -> float:
