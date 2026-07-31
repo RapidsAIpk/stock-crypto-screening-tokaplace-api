@@ -95,7 +95,11 @@ def evaluate_channel_respect_detail(asset, config):
             "details": details,
         }
 
-    respect_count = count_respects(candles, channel, config)
+    respect_count, counted_respect_indexes, matched_candle_indexes = count_respects_with_evidence(
+        candles,
+        channel,
+        config,
+    )
     passed = True
     min_respect = getattr(config, "min_respect", None)
     max_respect = getattr(config, "max_respect", None)
@@ -118,6 +122,18 @@ def evaluate_channel_respect_detail(asset, config):
         decision=_channel_respect_decision(line),
     )
     details["respect_count"] = respect_count
+    details["counted_respect_candle_indexes"] = counted_respect_indexes
+    details["counted_respect_candle_times"] = [
+        candles[index].get("time")
+        for index in counted_respect_indexes
+        if 0 <= index < len(candles) and candles[index].get("time") is not None
+    ]
+    details["matched_candle_indexes"] = matched_candle_indexes
+    details["matched_candle_times"] = [
+        candles[index].get("time")
+        for index in matched_candle_indexes
+        if 0 <= index < len(candles) and candles[index].get("time") is not None
+    ]
     return {
         "name": "channel_respect",
         "passed": passed,
@@ -132,28 +148,38 @@ def evaluate_channel_respect_detail(asset, config):
 # =========================================================
 
 def count_respects(candles, channel, config):
+    respects, _, _ = count_respects_with_evidence(candles, channel, config)
+    return respects
+
+
+def count_respects_with_evidence(candles, channel, config):
 
     line_names = normalize_line_names(config.line, channel)
     tolerance_pct = config.tolerance_pct
     cluster_gap = _normalize_cluster_gap(getattr(config, "cluster_gap", 3))
     touch_config = {"touch_type": getattr(config, "touch_type", "wick")}
 
-    respects = 0
+    counted_respect_indexes = []
+    matched_candle_indexes = []
+    respect_count = 0
     for line_name in line_names:
         line = channel.get(line_name)
         if line is None:
             continue
-        touch_direction = _touch_direction_for_line(line_name)
-        respects += _count_respects_for_line(
+        line_respect_indexes, line_touch_indexes = _respect_evidence_for_line(
             candles,
             line,
             tolerance_pct=tolerance_pct,
             cluster_gap=cluster_gap,
             touch_config=touch_config,
-            touch_direction=touch_direction,
         )
+        respect_count += len(line_respect_indexes)
+        counted_respect_indexes.extend(line_respect_indexes)
+        matched_candle_indexes.extend(line_touch_indexes)
 
-    return respects
+    counted_respect_indexes = sorted(set(counted_respect_indexes))
+    matched_candle_indexes = sorted(set(matched_candle_indexes))
+    return respect_count, counted_respect_indexes, matched_candle_indexes
 
 
 def _channel_respect_condition(channel_type, line, respect_count):
@@ -174,8 +200,9 @@ def _channel_respect_decision(line):
     return "Structure Respect Match"
 
 
-def _count_respects_for_line(candles, line, tolerance_pct, cluster_gap, touch_config, touch_direction=None):
-    respects = 0
+def _respect_evidence_for_line(candles, line, tolerance_pct, cluster_gap, touch_config):
+    respect_indexes = []
+    touch_indexes = []
     last_touch_index = None
     separated_since_last_touch = False
 
@@ -190,11 +217,12 @@ def _count_respects_for_line(candles, line, tolerance_pct, cluster_gap, touch_co
         if line_value is None:
             continue
 
-        if detect_channel_touch(candle, line_value, tolerance_pct, touch_config, touch_direction):
+        if detect_channel_touch(candle, line_value, tolerance_pct, touch_config):
+            touch_indexes.append(candle_index)
             if last_touch_index is None:
-                respects += 1
+                respect_indexes.append(candle_index)
             elif candle_index - last_touch_index > cluster_gap and separated_since_last_touch:
-                respects += 1
+                respect_indexes.append(candle_index)
             last_touch_index = candle_index
             separated_since_last_touch = False
             continue
@@ -202,10 +230,10 @@ def _count_respects_for_line(candles, line, tolerance_pct, cluster_gap, touch_co
         if last_touch_index is None:
             continue
 
-        if _has_distinct_separation(candle, line_value, tolerance_pct, touch_config, touch_direction):
+        if _has_distinct_separation(candle, line_value, tolerance_pct, touch_config):
             separated_since_last_touch = True
 
-    return respects
+    return respect_indexes, touch_indexes
 
 
 def normalize_line_names(line_name, channel):
@@ -227,22 +255,6 @@ def normalize_line_names(line_name, channel):
     if line_name == "all":
         return [upper_name, "middle", lower_name]
     return ["middle"]
-
-
-# =========================================================
-# TOUCH DETECTION
-# =========================================================
-
-def _touch_direction_for_line(line_name):
-    normalized = str(line_name or "").strip().lower()
-
-    if normalized in {"upper", "top"}:
-        return "up"
-
-    if normalized in {"lower", "bottom"}:
-        return "down"
-
-    return None
 
 
 def detect_channel_touch(candle, line_value, tolerance_pct, touch_config=None, touch_direction=None):

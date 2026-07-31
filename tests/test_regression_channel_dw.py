@@ -531,8 +531,34 @@ class DWRegressionChannelTests(unittest.TestCase):
         self.assertEqual(step_two["interval_step"], 2)
         np.testing.assert_allclose(step_two["middle"], step_two_changed["middle"])
         self.assertFalse(np.allclose(step_one["middle"], step_two["middle"]))
-        self.assertAlmostEqual(float(step_two["middle"][0]), float(step_two["middle"][1]))
-        self.assertAlmostEqual(float(step_two["middle"][2]), float(step_two["middle"][3]))
+        self.assertAlmostEqual(float(step_two["tracer"][0]), float(step_two["tracer"][1]))
+        self.assertAlmostEqual(float(step_two["tracer"][2]), float(step_two["tracer"][3]))
+
+    def test_continuous_channel_is_latest_static_model_and_tracer_remains_rolling(self):
+        candles = [
+            _candle(close, timestamp=_ts(2026, 1, index + 1))
+            for index, close in enumerate((10, 10, 10, 10, 12, 14, 16))
+        ]
+
+        channel = regression_channel_dw.compute_dw_regression_channel(
+            candles,
+            length=4,
+            width_coeff=1,
+            window_type="continuous",
+            filter_type="SMA",
+        )
+
+        self.assertIsNotNone(channel)
+        middle = np.asarray(channel["middle"], dtype=float)
+        tracer = np.asarray(channel["tracer"], dtype=float)
+        upper = np.asarray(channel["upper"], dtype=float)
+        lower = np.asarray(channel["lower"], dtype=float)
+
+        np.testing.assert_allclose(np.diff(middle), np.full(3, np.diff(middle)[0]))
+        np.testing.assert_allclose(upper - middle, middle - lower)
+        np.testing.assert_allclose(upper - middle, np.full(4, upper[-1] - middle[-1]))
+        self.assertAlmostEqual(float(middle[-1]), float(tracer[-1]))
+        self.assertFalse(np.allclose(middle, tracer))
 
     def test_interval_step_sampling_restarts_on_each_utc_day(self):
         candles = [
