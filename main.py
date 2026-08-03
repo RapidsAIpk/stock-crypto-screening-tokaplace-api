@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api import screening
+from api import auth, screening
 from core.config import settings
 from core.logging_config import configure_logging
 from services.market_data import (
@@ -86,6 +86,11 @@ def create_app() -> FastAPI:
         screening.router,
         prefix="/screen",
         tags=["Screening"],
+    )
+    app.include_router(
+        auth.router,
+        prefix="/auth",
+        tags=["Auth"],
     )
 
     @app.exception_handler(Exception)
