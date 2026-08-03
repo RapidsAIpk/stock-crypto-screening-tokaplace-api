@@ -5884,6 +5884,15 @@ class ScreeningApiSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(stop_response.status_code, 200)
                 self.assertFalse(stop_response.json()["worker"]["running"])
 
+                screening_cfg_response = await client.post(
+                    "/screen/ops/screening/config",
+                    json={"screening_max_symbols": 150},
+                )
+                self.assertEqual(screening_cfg_response.status_code, 200)
+                self.assertEqual(
+                    screening_cfg_response.json()["screening"]["screening_max_symbols"], 150
+                )
+
     async def test_worker_ops_require_admin_token_when_configured(self):
         with patch.object(main.settings, "ADMIN_API_TOKEN", "secret"), patch.object(
             main.settings,
