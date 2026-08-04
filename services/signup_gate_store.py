@@ -8,7 +8,6 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "data" / "auth.db"
 
-MAX_ACCOUNTS = 2
 PBKDF2_ITERATIONS = 260_000
 
 
@@ -18,12 +17,13 @@ def _hash_key(plaintext: str, salt: bytes) -> str:
 
 
 class SignupGateStore:
-    """Gates Firebase account creation behind a single shared invite key and
-    a hard cap of MAX_ACCOUNTS registered Firebase UIDs.
+    """Gates Firebase account creation behind a single shared invite key.
 
     Firebase Auth remains the actual identity provider - this store never
-    sees passwords. It only holds the hashed invite key and the list of
-    Firebase UIDs that have been allowed to register.
+    sees passwords. It only holds the hashed invite key and a record of
+    which Firebase UIDs have registered through it (kept for visibility,
+    no longer used to cap account count - the invite key itself is the
+    access control).
     """
 
     def __init__(self, path: Path = DB_PATH):
@@ -97,11 +97,7 @@ class SignupGateStore:
             row = conn.execute("SELECT COUNT(*) AS c FROM registered_accounts").fetchone()
         return row["c"]
 
-    def slot_available(self) -> bool:
-        return self.account_count() < MAX_ACCOUNTS
-
     def register_account(self, uid: str, email: str | None) -> None:
-        """Raises ValueError if the account cap has been reached."""
         now = int(time.time())
 
         with self._lock, self._connect() as conn:
@@ -110,12 +106,6 @@ class SignupGateStore:
             ).fetchone()
             if existing:
                 return  # already registered - idempotent on retry
-
-            count = conn.execute(
-                "SELECT COUNT(*) AS c FROM registered_accounts"
-            ).fetchone()["c"]
-            if count >= MAX_ACCOUNTS:
-                raise ValueError(f"Account limit reached ({MAX_ACCOUNTS} max).")
 
             conn.execute(
                 "INSERT INTO registered_accounts (uid, email, created_at) VALUES (?, ?, ?)",

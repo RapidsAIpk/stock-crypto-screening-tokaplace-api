@@ -44,27 +44,16 @@ async def save_settings(body: SaveSettingsRequest, user_id: str = Depends(requir
     return {"data": merged}
 
 
-@router.get("/account-slot")
-async def account_slot():
-    """Lets the frontend hide/disable Create Account before wasting a
-    Firebase signup attempt once the 2-account cap is already reached."""
-    return {"available": signup_gate_store.slot_available()}
-
-
 @router.post("/register-account")
 async def register_account(body: RegisterAccountRequest):
     """Called right after a successful Firebase createUserWithEmailAndPassword.
 
-    Gates on a shared invite key plus a hard cap of 2 registered UIDs. If
-    this rejects, the frontend deletes the just-created Firebase account so
-    no orphan account is left behind.
+    Gates on the shared invite key only. If this rejects, the frontend
+    deletes the just-created Firebase account so no orphan account is left
+    behind.
     """
     if not signup_gate_store.verify_invite_key(body.invite_key):
         raise HTTPException(status_code=403, detail="Invalid invite key.")
 
-    try:
-        signup_gate_store.register_account(body.uid, body.email)
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-
+    signup_gate_store.register_account(body.uid, body.email)
     return {"ok": True}
