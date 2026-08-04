@@ -63,6 +63,12 @@ ComplianceStatus = Literal[
     "questionable"
 ]
 
+# Zoya's basicCompliance feed only returns a single aggregate status per
+# stock today, which we grade against AAOIFI. Other rulebooks (Dow Jones
+# Islamic, MSCI Islamic, S&P Shariah, FTSE Shariah) stay unsupported until
+# Zoya exposes per-standard reports.
+SUPPORTED_COMPLIANCE_STANDARDS = {"AAOIFI"}
+
 ConfluenceType = Literal[
     "bullish",
     "bearish",
@@ -465,9 +471,18 @@ class ScreeningRequest(BaseModel):
                 )
 
             if self.compliance_standards:
-                raise ValueError(
-                    "compliance_standards are not supported by the current Zoya universe data"
-                )
+                requested_standards = {
+                    standard.strip().upper()
+                    for standard in self.compliance_standards
+                    if standard
+                }
+                unsupported_standards = requested_standards - SUPPORTED_COMPLIANCE_STANDARDS
+
+                if unsupported_standards:
+                    raise ValueError(
+                        f"Unsupported compliance_standards: {sorted(unsupported_standards)}. "
+                        f"Only {sorted(SUPPORTED_COMPLIANCE_STANDARDS)} are currently supported by the Zoya integration."
+                    )
 
         if self.asset_type != "stocks":
             if self.asset_categories:

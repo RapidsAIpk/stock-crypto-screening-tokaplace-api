@@ -43,6 +43,7 @@ class ScreeningResult(ResultsBaseModel):
     cmc_id: Optional[int] = None
     rank: Optional[int] = None
     compliance_status: Optional[str] = None
+    compliance_standard: Optional[str] = None
     report_date: Optional[str] = None
     purification_ratio: Optional[float] = None
     candles_count: Optional[int] = None

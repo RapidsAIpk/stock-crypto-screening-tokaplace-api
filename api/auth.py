@@ -1,131 +1,70 @@
 # api/auth.py
+#
+# Login/signup/password-reset live entirely in Firebase Auth on the
+# frontend now - this backend does not authenticate users. It only stores
+# each user's settings/presets/watchlist blob, identified by the Firebase
+# UID the frontend sends after a successful Firebase sign-in. That UID is
+# trusted as-is (no server-side Firebase ID token verification) - this is
+# a pragmatic, low-stakes trust model for a small private tool, not a
+# hardened multi-tenant auth boundary.
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from core.config import settings
-from services.auth_store import AccountLimitError, AuthError, store as auth_store
+from services.signup_gate_store import store as signup_gate_store
 from services.user_data_store import store as user_data_store
 
 router = APIRouter()
-
-
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    security_question: str
-    security_answer: str
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
-class ResetPasswordRequest(BaseModel):
-    email: str
-    security_answer: str
-    new_password: str
-
-
-class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
 
 
 class SaveSettingsRequest(BaseModel):
     data: dict = Field(default_factory=dict)
 
 
-def _extract_token(authorization: str | None) -> str:
-    if not authorization:
-        return ""
-
-    parts = authorization.split(" ", 1)
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1].strip()
-
-    return authorization.strip()
+class RegisterAccountRequest(BaseModel):
+    uid: str
+    email: str | None = None
+    invite_key: str
 
 
-def require_user(authorization: str | None = Header(default=None)) -> dict:
-    token = _extract_token(authorization)
-    session = auth_store.resolve_session(token)
-    if session is None:
-        raise HTTPException(status_code=401, detail="Not authenticated.")
-    return session
-
-
-@router.post("/register")
-async def register(body: RegisterRequest):
-    try:
-        user = auth_store.register(
-            body.email, body.password, body.security_question, body.security_answer
-        )
-    except AccountLimitError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except AuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    token = auth_store.create_session(user["user_id"], settings.AUTH_SESSION_TTL_SECONDS)
-    return {"token": token, "user": user}
-
-
-@router.post("/login")
-async def login(body: LoginRequest):
-    try:
-        user = auth_store.verify_login(body.email, body.password)
-    except AuthError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-    token = auth_store.create_session(user["user_id"], settings.AUTH_SESSION_TTL_SECONDS)
-    return {"token": token, "user": user}
-
-
-@router.post("/logout")
-async def logout(authorization: str | None = Header(default=None)):
-    token = _extract_token(authorization)
-    if token:
-        auth_store.delete_session(token)
-    return {"ok": True}
-
-
-@router.get("/me")
-async def me(user: dict = Depends(require_user)):
-    return {"user": user}
-
-
-@router.get("/security-question")
-async def security_question(email: str):
-    try:
-        return auth_store.get_security_question(email)
-    except AuthError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.post("/reset-password")
-async def reset_password(body: ResetPasswordRequest):
-    try:
-        auth_store.reset_password(body.email, body.security_answer, body.new_password)
-    except AuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True}
-
-
-@router.post("/change-password")
-async def change_password(body: ChangePasswordRequest, user: dict = Depends(require_user)):
-    try:
-        auth_store.change_password(user["user_id"], body.current_password, body.new_password)
-    except AuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True}
+def require_user_id(x_user_id: str | None = Header(default=None)) -> str:
+    user_id = (x_user_id or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing X-User-Id header.")
+    return user_id
 
 
 @router.get("/settings")
-async def get_settings(user: dict = Depends(require_user)):
-    return {"data": user_data_store.get(user["user_id"])}
+async def get_settings(user_id: str = Depends(require_user_id)):
+    return {"data": user_data_store.get(user_id)}
 
 
 @router.post("/settings")
-async def save_settings(body: SaveSettingsRequest, user: dict = Depends(require_user)):
-    merged = user_data_store.save(user["user_id"], body.data)
+async def save_settings(body: SaveSettingsRequest, user_id: str = Depends(require_user_id)):
+    merged = user_data_store.save(user_id, body.data)
     return {"data": merged}
+
+
+@router.get("/account-slot")
+async def account_slot():
+    """Lets the frontend hide/disable Create Account before wasting a
+    Firebase signup attempt once the 2-account cap is already reached."""
+    return {"available": signup_gate_store.slot_available()}
+
+
+@router.post("/register-account")
+async def register_account(body: RegisterAccountRequest):
+    """Called right after a successful Firebase createUserWithEmailAndPassword.
+
+    Gates on a shared invite key plus a hard cap of 2 registered UIDs. If
+    this rejects, the frontend deletes the just-created Firebase account so
+    no orphan account is left behind.
+    """
+    if not signup_gate_store.verify_invite_key(body.invite_key):
+        raise HTTPException(status_code=403, detail="Invalid invite key.")
+
+    try:
+        signup_gate_store.register_account(body.uid, body.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return {"ok": True}

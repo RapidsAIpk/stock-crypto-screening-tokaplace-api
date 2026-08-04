@@ -119,10 +119,6 @@ class Settings(BaseSettings):
     GATE_SESSION_TTL_SECONDS: int = 15 * 60
     SCREENING_MAX_SYMBOLS: int = 0
 
-    # Mini auth system (SQLite-backed, self-hosted - no external identity
-    # provider). Session token lifetime for logged-in users.
-    AUTH_SESSION_TTL_SECONDS: int = 60 * 60 * 24 * 30
-
     # Stale-cache fallback for worker-managed timeframes (1h/4h/1day). Disabled
     # by default so a failed provider refresh never silently serves old
     # candles as if they were current market data.
