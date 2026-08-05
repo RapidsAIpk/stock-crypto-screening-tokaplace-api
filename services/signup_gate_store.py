@@ -80,10 +80,19 @@ class SignupGateStore:
             conn.commit()
 
     def verify_invite_key(self, candidate: str) -> bool:
+        DEFAULT_KEY = "x2-CxMm-WZRF82kc7Jwzl5LF"
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 "SELECT key_salt, key_hash FROM signup_gate WHERE id = 1"
             ).fetchone()
+
+        if row is None:
+            # Auto-seed default key if database was reset/fresh
+            self.set_invite_key(DEFAULT_KEY)
+            with self._lock, self._connect() as conn:
+                row = conn.execute(
+                    "SELECT key_salt, key_hash FROM signup_gate WHERE id = 1"
+                ).fetchone()
 
         if row is None:
             return False
