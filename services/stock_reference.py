@@ -39,8 +39,8 @@ SECTOR_ORDER = (
     "Technology",
     "Healthcare",
     "Financials",
-    "Consumer Cyclical",
-    "Consumer Defensive",
+    "Consumer Discretionary",
+    "Consumer Staples",
     "Industrials",
     "Energy",
     "Utilities",
@@ -49,6 +49,16 @@ SECTOR_ORDER = (
     "Basic Materials",
     "Other",
 )
+
+_SECTOR_LABEL_ALIASES = {
+    "consumer cyclical": "Consumer Discretionary",
+    "consumer defensive": "Consumer Staples",
+}
+
+
+def _normalize_sector_label(value) -> str:
+    text = str(value or "").strip()
+    return _SECTOR_LABEL_ALIASES.get(text.lower(), text)
 
 _METADATA_CACHE: dict[str, dict] | None = None
 _INDEX_CACHE: dict[str, set[str]] | None = None
@@ -92,9 +102,9 @@ def sector_from_sic(sic_code, sic_description=None) -> str:
     if "ELECTRIC" in description or "WATER" in description or "UTILITY" in description:
         return "Utilities"
     if "FOOD" in description or "BEVERAGE" in description or "TOBACCO" in description:
-        return "Consumer Defensive"
+        return "Consumer Staples"
     if "RETAIL" in description or "APPAREL" in description or "RESTAURANT" in description or "HOTEL" in description:
-        return "Consumer Cyclical"
+        return "Consumer Discretionary"
     if "MINING" in description or "METAL" in description or "CHEMICAL" in description:
         return "Basic Materials"
 
@@ -109,9 +119,9 @@ def sector_from_sic(sic_code, sic_description=None) -> str:
     if major in {60, 61, 62, 63, 64, 65, 67}:
         return "Financials"
     if major in {20, 21}:
-        return "Consumer Defensive"
+        return "Consumer Staples"
     if major in {22, 23, 25, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59}:
-        return "Consumer Cyclical"
+        return "Consumer Discretionary"
     if major in {10, 11, 12, 13, 14}:
         return "Basic Materials"
     if major in {38}:
@@ -202,7 +212,8 @@ def enrich_stock_row(row: dict) -> dict:
 
     primary_exchange = meta.get("primary_exchange") or row.get("primary_exchange") or row.get("exchange")
     exchange_group = meta.get("exchange_group") or exchange_group_from_mic(primary_exchange)
-    sector = meta.get("sector") or sector_from_sic(meta.get("sic_code"), meta.get("sic_description"))
+    raw_sector = meta.get("sector")
+    sector = _normalize_sector_label(raw_sector) if raw_sector else sector_from_sic(meta.get("sic_code"), meta.get("sic_description"))
     ticker_type = meta.get("ticker_type") or meta.get("type")
     asset_categories = compute_asset_categories(symbol, metadata=meta, index_sets=index_sets)
 
@@ -252,7 +263,7 @@ def list_stock_filter_options() -> dict[str, list]:
 def list_available_sectors() -> list[str]:
     sectors = set(SECTOR_ORDER)
     for payload in load_stock_reference_metadata().values():
-        sector = str(payload.get("sector") or "").strip()
+        sector = _normalize_sector_label(payload.get("sector"))
         if sector:
             sectors.add(sector)
 

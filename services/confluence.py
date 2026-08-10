@@ -553,41 +553,88 @@ def _close_not_below_selection(candles, source, candle_index):
     return close_value >= snapshot["lower"]
 
 
-def _active_close_run(candles, source, start_index, relation):
-    count = 0
-    started = False
+def _build_relation_index(bool_array, n):
+    """Precompute O(1)-queryable structures from a per-candle boolean array:
+    - false_prefix[i]: count of False values in bool_array[0:i], for O(1)
+      "are all values in [start, end] True" range queries.
+    - next_true[i]: smallest j >= i with bool_array[j] True, else None.
+    - threshold: smallest i such that bool_array[i:] are all True (0 if the
+      whole array is already all-True, n if it never settles into an
+      all-True tail at all).
+    Building this once per source turns _active_close_run /
+    _all_closes_above_from / _all_closes_not_below from O(range) each call
+    (which made the outer lookback loop O(lookback^2) in the worst case)
+    into O(1) each call."""
+    false_prefix = [0] * (n + 1)
+    for index in range(n):
+        false_prefix[index + 1] = false_prefix[index] + (0 if bool_array[index] else 1)
 
-    for candle_index in range(start_index, len(candles)):
-        matched = _close_above_selection(candles, source, candle_index)
-        if relation == "below":
-            matched = _close_below_selection(candles, source, candle_index)
+    next_true = [None] * (n + 1)
+    for index in range(n - 1, -1, -1):
+        next_true[index] = index if bool_array[index] else next_true[index + 1]
 
-        if matched:
-            started = True
-            count += 1
-            continue
+    # Default: no False anywhere, so the all-True tail covers the whole
+    # array, starting at 0. If a False is found, the tail starts right
+    # after the LAST one (searching backward so the first hit is exactly
+    # that).
+    threshold = 0
+    for index in range(n - 1, -1, -1):
+        if not bool_array[index]:
+            threshold = index + 1
+            break
 
-        if started:
-            return None
-
-    return count if started else None
-
-
-def _all_closes_above_from(candles, source, start_index):
-    return all(
-        _close_above_selection(candles, source, candle_index)
-        for candle_index in range(start_index, len(candles))
-    )
+    return {"false_prefix": false_prefix, "next_true": next_true, "threshold": threshold}
 
 
-def _all_closes_not_below(candles, source, start_index, end_index):
+def _relation_all_true(relation_index, start_index, end_index):
     if end_index < start_index:
         return True
+    return relation_index["false_prefix"][end_index + 1] - relation_index["false_prefix"][start_index] == 0
 
-    return all(
-        _close_not_below_selection(candles, source, candle_index)
-        for candle_index in range(start_index, end_index + 1)
-    )
+
+def _relation_active_run(relation_index, start_index, n):
+    if start_index < 0 or start_index >= n:
+        return None
+    j = relation_index["next_true"][start_index]
+    if j is None or j < relation_index["threshold"]:
+        return None
+    return n - j
+
+
+def _build_source_signals(candles, source):
+    """One O(n) pass per source, reusing the existing (unmodified)
+    _close_above_selection / _close_below_selection / _close_not_below_selection
+    predicates per candle, then indexing each resulting boolean array via
+    _build_relation_index. Callers build this once per source, before the
+    lookback loop, and reuse it across every iteration."""
+    n = len(candles)
+    close_above = [False] * n
+    close_below = [False] * n
+    close_not_below = [False] * n
+
+    for index in range(n):
+        close_above[index] = _close_above_selection(candles, source, index)
+        close_below[index] = _close_below_selection(candles, source, index)
+        close_not_below[index] = _close_not_below_selection(candles, source, index)
+
+    return {
+        "above": _build_relation_index(close_above, n),
+        "below": _build_relation_index(close_below, n),
+        "not_below": _build_relation_index(close_not_below, n),
+    }
+
+
+def _active_close_run(signals, relation, start_index, n):
+    key = "below" if relation == "below" else "above"
+    return _relation_active_run(signals[key], start_index, n)
+
+
+def _all_closes_above_from(signals, start_index, n):
+    return _relation_all_true(signals["above"], start_index, n - 1)
+
+
+def _all_closes_not_below(signals, start_index, end_index):
+    return _relation_all_true(signals["not_below"], start_index, end_index)
 
 
 def _latest_close_near_support(candles, source, tolerance_pct):
@@ -708,10 +755,13 @@ def _selection_is_clustered(first_source, second_source, candles, candle_index, 
 def _matches_breakout(candles, source_channels, lookback, tolerance_pct, evidence=None):
     first_source, second_source = source_channels
     latest_index = len(candles) - 1
+    candle_count = len(candles)
+    first_signals = _build_source_signals(candles, first_source)
+    second_signals = _build_source_signals(candles, second_source)
 
     for second_index in _recent_indices(candles, lookback):
         if _breaks_resistance(candles, second_source, second_index):
-            close_run = _active_close_run(candles, second_source, second_index, "above")
+            close_run = _active_close_run(second_signals, "above", second_index, candle_count)
             if close_run is not None and 1 <= close_run <= 4:
                 for first_index in _candidate_first_indices(second_index):
                     if _breaks_resistance(candles, first_source, first_index):
@@ -720,7 +770,7 @@ def _matches_breakout(candles, source_channels, lookback, tolerance_pct, evidenc
                         _capture_match(evidence, "dual_resistance_break", candles, source_channels, first_index, second_index)
                         return True
 
-            close_run = _active_close_run(candles, second_source, second_index, "above")
+            close_run = _active_close_run(second_signals, "above", second_index, candle_count)
             if close_run is not None and 1 <= close_run <= 3:
                 for first_index in _candidate_first_indices(second_index):
                     if _holds_support(candles, first_source, first_index, tolerance_pct):
@@ -742,7 +792,7 @@ def _matches_breakout(candles, source_channels, lookback, tolerance_pct, evidenc
             if _bars_inclusive(first_index, latest_index) > 4:
                 continue
 
-            if not _all_closes_above_from(candles, first_source, first_index):
+            if not _all_closes_above_from(first_signals, first_index, candle_count):
                 continue
 
             _capture_match(evidence, "resistance_break_then_support", candles, source_channels, first_index, second_index)
@@ -754,6 +804,8 @@ def _matches_breakout(candles, source_channels, lookback, tolerance_pct, evidenc
 def _matches_role_reversal(candles, source_channels, lookback, tolerance_pct, evidence=None):
     first_source, second_source = source_channels
     latest_index = len(candles) - 1
+    candle_count = len(candles)
+    first_signals = _build_source_signals(candles, first_source)
 
     for second_index in _recent_indices(candles, lookback):
         if not _holds_support(candles, second_source, second_index, tolerance_pct):
@@ -769,7 +821,7 @@ def _matches_role_reversal(candles, source_channels, lookback, tolerance_pct, ev
             if _bars_inclusive(first_index, latest_index) > 4:
                 continue
 
-            if not _all_closes_above_from(candles, first_source, first_index):
+            if not _all_closes_above_from(first_signals, first_index, candle_count):
                 continue
 
             _capture_match(evidence, "role_reversal", candles, source_channels, first_index, second_index)
@@ -781,12 +833,15 @@ def _matches_role_reversal(candles, source_channels, lookback, tolerance_pct, ev
 def _matches_bullish(candles, source_channels, lookback, tolerance_pct, evidence=None):
     first_source, second_source = source_channels
     latest_index = len(candles) - 1
+    candle_count = len(candles)
+    first_signals = _build_source_signals(candles, first_source)
+    second_signals = _build_source_signals(candles, second_source)
 
     for second_index in _recent_indices(candles, lookback):
         if not _holds_support(candles, second_source, second_index, tolerance_pct):
             continue
 
-        dual_support_run = _active_close_run(candles, second_source, second_index, "above")
+        dual_support_run = _active_close_run(second_signals, "above", second_index, candle_count)
         if dual_support_run is not None and 1 <= dual_support_run <= 4:
             for first_index in _candidate_first_indices(second_index):
                 if _holds_support(candles, first_source, first_index, tolerance_pct):
@@ -808,10 +863,10 @@ def _matches_bullish(candles, source_channels, lookback, tolerance_pct, evidence
             if _bars_inclusive(first_index, latest_index) > 4:
                 continue
 
-            if not _all_closes_not_below(candles, first_source, first_index, second_index - 1):
+            if not _all_closes_not_below(first_signals, first_index, second_index - 1):
                 continue
 
-            if not _all_closes_not_below(candles, second_source, second_index, latest_index):
+            if not _all_closes_not_below(second_signals, second_index, latest_index):
                 continue
 
             _capture_match(evidence, "stacked_support", candles, source_channels, first_index, second_index)
@@ -823,6 +878,8 @@ def _matches_bullish(candles, source_channels, lookback, tolerance_pct, evidence
 def _matches_bearish(candles, source_channels, lookback, tolerance_pct, evidence=None):
     first_source, second_source = source_channels
     latest_index = len(candles) - 1
+    candle_count = len(candles)
+    first_signals = _build_source_signals(candles, first_source)
 
     for second_index in _recent_indices(candles, lookback):
         if not _holds_resistance(candles, second_source, second_index, tolerance_pct):
@@ -843,7 +900,7 @@ def _matches_bearish(candles, source_channels, lookback, tolerance_pct, evidence
         if not _selection_is_clustered(first_source, second_source, candles, second_index, tolerance_pct):
             continue
 
-        close_run = _active_close_run(candles, first_source, second_index, "below")
+        close_run = _active_close_run(first_signals, "below", second_index, candle_count)
         if close_run is None or close_run > 4:
             continue
 
