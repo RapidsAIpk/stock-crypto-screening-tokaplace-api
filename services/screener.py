@@ -1,4 +1,5 @@
 # services/screener.py
+import asyncio
 import hashlib
 import json
 import logging
@@ -70,7 +71,7 @@ async def _run_filter_pipeline(data, request, indicators, scan_stage_label: str)
     stage_symbols = []
 
     await _progress_stage("price_range", current=0, total=len(data))
-    data = apply_price_range(data, getattr(request, "price_range", None))
+    data = await asyncio.to_thread(apply_price_range, data, getattr(request, "price_range", None))
     stage_symbols.append(("price_range", [asset["symbol"] for asset in data]))
     await _progress_stage(
         "price_range",
@@ -80,7 +81,7 @@ async def _run_filter_pipeline(data, request, indicators, scan_stage_label: str)
     )
 
     await _progress_stage("dead_assets", current=0, total=len(data))
-    data = apply_dead_assets(data, getattr(request, "dead_assets", None))
+    data = await asyncio.to_thread(apply_dead_assets, data, getattr(request, "dead_assets", None))
     stage_symbols.append(("dead_assets", [asset["symbol"] for asset in data]))
     await _progress_stage(
         "dead_assets",
@@ -96,7 +97,7 @@ async def _run_filter_pipeline(data, request, indicators, scan_stage_label: str)
             current=0,
             total=len(data),
         )
-        data = apply_selected_indicators(data, indicators)
+        data = await asyncio.to_thread(apply_selected_indicators, data, indicators)
         stage_symbols.append(("indicators", [asset["symbol"] for asset in data]))
         await _progress_stage(
             "indicators",
@@ -111,7 +112,7 @@ async def _run_filter_pipeline(data, request, indicators, scan_stage_label: str)
         await _progress_stage("confluence", current=0, total=len(data))
 
     await _progress_stage("post_filters", current=0, total=len(data))
-    data = apply_post_filters(data, request)
+    data = await asyncio.to_thread(apply_post_filters, data, request)
     stage_symbols.append(("post_filters", [asset["symbol"] for asset in data]))
     await _progress_stage(
         "post_filters",

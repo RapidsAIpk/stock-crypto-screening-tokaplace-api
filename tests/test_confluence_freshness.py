@@ -372,6 +372,96 @@ class ConfluenceFreshnessTests(unittest.TestCase):
 
         self.assertFalse(confluence.evaluate_confluence(candles, channels, config))
 
+    # --------------------------------------------------------------
+    # IBTA bug reproduction: a source's close_above/close_below
+    # sub-filter must be checked against the exact candle that source
+    # matched on, not against an unrelated later ("latest") candle.
+    # --------------------------------------------------------------
+
+    def test_sub_filter_does_not_borrow_close_above_from_a_later_unrelated_candle(self):
+        # Bearish "stacked_resistance": Source 1 (first) rejects a rising
+        # line at candle 1; Source 2 (second) rejects a flat line at
+        # candle 3 (close 97, NOT above its own line of 100). Candle 4
+        # (the latest candle) is an unrelated later candle whose close
+        # (102) happens to sit above Source 2's line - this must not be
+        # allowed to satisfy a close_above sub-filter configured on
+        # Source 2, since Source 2's actual matched event (candle 3)
+        # never closed above its line.
+        candles = [
+            _candle(79, 75, 76, 79),
+            _candle(84, 85.3, 83, 84),
+            _candle(90, 91, 89, 90),
+            _candle(96, 100.2, 93, 97),
+            _candle(100, 103, 99, 102),
+        ]
+        channels = {
+            "first": {
+                "channel_type": "lrc",
+                "channel": {"upper": [80.0, 85.0, 90.0, 95.0, 105.0], "lower": [70.0] * 5},
+            },
+            "second": {
+                "channel_type": "lrc",
+                "channel": {"upper": [100.0] * 5, "lower": [85.0] * 5},
+            },
+        }
+
+        base_config = _config(
+            "bearish",
+            "upper",
+            "upper",
+        )
+        # Sanity check: without the sub-filter, the underlying scenario
+        # genuinely matches (first_index=1, second_index=3) - proving the
+        # sub-filter, not the core matcher, is what must reject this case.
+        evidence = {}
+        self.assertTrue(
+            confluence.evaluate_confluence(candles, channels, base_config, evidence=evidence)
+        )
+        self.assertEqual(evidence["scenario"], "stacked_resistance")
+        matched_by_id = {m["source_id"]: m["candle_index"] for m in evidence["source_matches"]}
+        self.assertEqual(matched_by_id["second"], 3)
+
+        config_with_subfilter = _config(
+            "bearish",
+            "upper",
+            "upper",
+            second_overrides={"line_relation": "close_above"},
+        )
+
+        self.assertFalse(
+            confluence.evaluate_confluence(candles, channels, config_with_subfilter)
+        )
+
+    def test_sub_filter_passes_when_close_above_holds_on_the_actual_matched_candle(self):
+        # Positive control: a breakout scenario where Source 2's matched
+        # candle (the one that broke resistance) genuinely closes above
+        # its own line at that same candle - the intended timing - so the
+        # close_above sub-filter must still allow the match through.
+        candles = [
+            _candle(99, 100, 98, 99),
+            _candle(101, 102, 100, 101),
+            _candle(101, 102, 100, 101),
+            _candle(101, 102, 100, 101),
+            _candle(201, 202, 200, 201),
+        ]
+        channels = _channels(len(candles), first_upper=100.0, second_upper=200.0)
+        config = _config(
+            "breakout",
+            "upper",
+            "upper",
+            second_overrides={"line_relation": "close_above"},
+        )
+
+        evidence = {}
+        self.assertTrue(
+            confluence.evaluate_confluence(candles, channels, config, evidence=evidence)
+        )
+        matched_by_id = {m["source_id"]: m["candle_index"] for m in evidence["source_matches"]}
+        # The matched candle (index 4) is also the latest candle here, so
+        # this additionally proves the fix does not regress the common
+        # case where the matched event and the latest candle coincide.
+        self.assertEqual(matched_by_id["second"], 4)
+
 
 if __name__ == "__main__":
     unittest.main()

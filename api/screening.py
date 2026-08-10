@@ -1,4 +1,5 @@
 # api/screening.py
+import asyncio
 import logging
 import time
 
@@ -18,6 +19,7 @@ from services.market_data import active_candle_provider, active_crypto_candle_pr
 from services.asset_router import list_crypto_exchanges
 from services.stock_reference import list_stock_filter_options
 from services.scan_progress import broadcaster as scan_progress_broadcaster, scan_progress_scope
+from services import scan_registry
 from core.config import settings
 
 router = APIRouter()
@@ -50,6 +52,24 @@ class DetailRequest(BaseModel):
     timeframe: str
     scan_stage: str = "single"
     request: ScreeningRequest
+
+
+class CancelScanRequest(BaseModel):
+    scan_id: str
+
+
+async def _run_cancellable_scan(scan_id: str | None, coro):
+    """Run a scan coroutine as a cancellable task registered under scan_id."""
+    task = asyncio.ensure_future(coro)
+    if scan_id:
+        scan_registry.register(scan_id, task)
+    try:
+        return await task
+    except asyncio.CancelledError:
+        raise HTTPException(status_code=499, detail="Scan cancelled") from None
+    finally:
+        if scan_id:
+            scan_registry.unregister(scan_id)
 
 
 def _require_supported_indicators(request: ScreeningRequest):
@@ -85,6 +105,12 @@ async def scan_progress_ws(websocket: WebSocket, scan_id: str = Query(...)):
         await scan_progress_broadcaster.unsubscribe(normalized_scan_id, websocket)
 
 
+@router.post("/cancel")
+async def cancel_scan(body: CancelScanRequest):
+    cancelled = scan_registry.cancel(body.scan_id)
+    return {"cancelled": cancelled}
+
+
 def _require_admin(http_request: Request):
     expected = (settings.ADMIN_API_TOKEN or "").strip()
 
@@ -112,8 +138,9 @@ async def run_screening(request: ScreeningRequest, http_request: Request):
         )
     _require_supported_indicators(request)
 
-    async with scan_progress_scope(_scan_id_from_request(http_request)):
-        response = await run_single(request)
+    scan_id = _scan_id_from_request(http_request)
+    async with scan_progress_scope(scan_id):
+        response = await _run_cancellable_scan(scan_id, run_single(request))
     logger.info(
         "API /screen/run timeframe=%s results=%s elapsed=%.2fs",
         request.single_timeframe,
@@ -344,8 +371,11 @@ async def run_gate_screening(request: ScreeningRequest, http_request: Request):
         )
     _require_supported_indicators(request)
 
-    async with scan_progress_scope(_scan_id_from_request(http_request)):
-        response = await run_gate(request, client_id=_client_identity(http_request))
+    scan_id = _scan_id_from_request(http_request)
+    async with scan_progress_scope(scan_id):
+        response = await _run_cancellable_scan(
+            scan_id, run_gate(request, client_id=_client_identity(http_request))
+        )
     logger.info(
         "API /screen/run-gate timeframe=%s results=%s elapsed=%.2fs",
         request.gate_timeframe,
@@ -375,8 +405,11 @@ async def run_entry_screening(request: ScreeningRequest, http_request: Request):
         )
     _require_supported_indicators(request)
 
-    async with scan_progress_scope(_scan_id_from_request(http_request)):
-        response = await run_entry(request, client_id=_client_identity(http_request))
+    scan_id = _scan_id_from_request(http_request)
+    async with scan_progress_scope(scan_id):
+        response = await _run_cancellable_scan(
+            scan_id, run_entry(request, client_id=_client_identity(http_request))
+        )
     logger.info(
         "API /screen/run-entry timeframe=%s results=%s elapsed=%.2fs",
         request.entry_timeframe,
