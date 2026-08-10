@@ -29,6 +29,21 @@ DEFAULT_REQUEST_RETRY_MAX_SLEEP_SECONDS = float(
 )
 LIST_LIMIT = int(os.getenv("MASSIVE_TICKERS_LIMIT", "1000") or "1000")
 
+# MIC codes for US exchanges. Zoya's basicCompliance feed is global, so this
+# is a second line of defense on top of the Massive US-locale symbol filter
+# to guarantee the universe only ever contains US-listed stocks.
+US_EXCHANGE_MICS = {
+    "XNYS",  # NYSE
+    "XNAS",  # Nasdaq
+    "XNGS",  # Nasdaq Global Select
+    "XNMS",  # Nasdaq Global Market
+    "XNCM",  # Nasdaq Capital Market
+    "XASE",  # NYSE American
+    "ARCX",  # NYSE Arca
+    "BATS",  # Cboe BZX
+    "IEXG",  # IEX
+}
+
 
 def _retry_sleep_seconds(response: Optional[requests.Response], attempt: int) -> float:
     if response is not None:
@@ -145,7 +160,9 @@ def filter_zoya_universe(items: Iterable[dict], supported_symbols: set[str]) -> 
 
     for item in items:
         symbol = _normalize_symbol((item or {}).get("symbol"))
-        if symbol and symbol in supported_symbols:
+        exchange = str((item or {}).get("exchange") or "").strip().upper()
+
+        if symbol and symbol in supported_symbols and exchange in US_EXCHANGE_MICS:
             kept.append(item)
             continue
         removed.append(item)

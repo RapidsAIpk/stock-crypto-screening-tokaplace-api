@@ -574,6 +574,49 @@ class ConfluenceTests(unittest.TestCase):
 
         self.assertTrue(confluence.evaluate_confluence(candles, channels, config))
 
+    def test_confluence_detail_reports_exact_candles_and_source_matches(self):
+        candles = [
+            {"time": 100, "open": 100.2, "high": 100.6, "low": 99.8, "close": 100.3},
+            {"time": 200, "open": 100.1, "high": 100.4, "low": 99.9, "close": 100.2},
+        ]
+        channels = {
+            "lrc_0": {
+                "channel_type": "lrc",
+                "selection": "lower",
+                "channel": {"upper": [105.0, 105.1], "lower": [100.0, 100.0]},
+            },
+            "trend_1": {
+                "channel_type": "trend",
+                "selection": "bottom_line",
+                "channel": {"top": [110.0, 110.1], "bottom": [100.05, 100.05]},
+            },
+        }
+        config = SimpleNamespace(
+            type="bullish",
+            channels=["lrc", "trend"],
+            sources=[
+                SimpleNamespace(id="lrc_0", channel_type="lrc", selection="lower"),
+                SimpleNamespace(id="trend_1", channel_type="trend", selection="bottom_line"),
+            ],
+            liquidity_sweep=False,
+            lookback_candles=2,
+            tolerance_pct=0.1,
+        )
+
+        detail = confluence.evaluate_confluence_detail({
+            "candles": candles,
+            "confluence_channels": channels,
+        }, config)
+
+        self.assertTrue(detail["passed"])
+        self.assertEqual(detail["details"]["match_scenario"], "dual_support")
+        self.assertEqual(detail["details"]["matched_candle_indexes"], [0, 1])
+        self.assertEqual(detail["details"]["matched_candle_times"], [100, 200])
+        self.assertEqual(
+            [match["source_id"] for match in detail["details"]["source_matches"]],
+            ["lrc_0", "trend_1"],
+        )
+
     def test_evaluate_confluence_requires_reaction_not_just_line_overlap(self):
         candles = [
             {"open": 100.0, "high": 100.06, "low": 99.98, "close": 100.02},
@@ -728,7 +771,58 @@ class ChannelRespectTests(unittest.TestCase):
         count = channel_respect.count_respects(candles, channel, config)
         self.assertEqual(count, 2)
 
-    def test_count_respects_requires_expected_wick_side_for_lower_line(self):
+    def test_count_respects_reports_only_candles_that_contribute_counted_clusters(self):
+        candles = [
+            {"time": 100, "open": 100.0, "high": 100.2, "low": 99.8, "close": 100.0},
+            {"time": 200, "open": 100.0, "high": 100.1, "low": 99.9, "close": 100.0},
+            {"time": 300, "open": 101.4, "high": 101.8, "low": 101.2, "close": 101.6},
+            {"time": 400, "open": 101.2, "high": 101.5, "low": 101.0, "close": 101.3},
+            {"time": 500, "open": 101.1, "high": 101.4, "low": 100.9, "close": 101.2},
+            {"time": 600, "open": 100.0, "high": 100.2, "low": 99.8, "close": 100.0},
+        ]
+        channel = {"middle": [100.0] * len(candles)}
+        config = SimpleNamespace(line="middle", tolerance_pct=0.0, cluster_gap=3)
+
+        count, indexes, touch_indexes = channel_respect.count_respects_with_evidence(
+            candles,
+            channel,
+            config,
+        )
+
+        self.assertEqual(count, 2)
+        self.assertEqual(indexes, [0, 5])
+        self.assertEqual(touch_indexes, [0, 1, 5])
+
+    def test_detail_exposes_counted_candle_times_for_chart_highlights(self):
+        candles = [
+            {"time": 100, "open": 100.0, "high": 100.2, "low": 99.8, "close": 100.0},
+            {"time": 200, "open": 101.0, "high": 101.2, "low": 100.8, "close": 101.0},
+            {"time": 300, "open": 101.0, "high": 101.2, "low": 100.8, "close": 101.0},
+            {"time": 400, "open": 101.0, "high": 101.2, "low": 100.8, "close": 101.0},
+            {"time": 500, "open": 100.0, "high": 100.2, "low": 99.8, "close": 100.0},
+        ]
+        config = SimpleNamespace(
+            channel_type="lrc",
+            line="middle",
+            min_respect=2,
+            max_respect=None,
+            tolerance_pct=0.0,
+            cluster_gap=3,
+            touch_type="wick",
+        )
+
+        detail = channel_respect.evaluate_channel_respect_detail({
+            "candles": candles,
+            "channels": {"lrc": {"middle": [100.0] * len(candles)}},
+        }, config)
+
+        self.assertTrue(detail["passed"])
+        self.assertEqual(detail["details"]["counted_respect_candle_indexes"], [0, 4])
+        self.assertEqual(detail["details"]["counted_respect_candle_times"], [100, 500])
+        self.assertEqual(detail["details"]["matched_candle_indexes"], [0, 4])
+        self.assertEqual(detail["details"]["matched_candle_times"], [100, 500])
+
+    def test_count_respects_accepts_either_actual_wick_side_for_a_selected_line(self):
         candles = [
             {"open": 98.0, "high": 100.5, "low": 97.5, "close": 99.0},
             {"open": 101.0, "high": 102.0, "low": 99.5, "close": 101.5},
@@ -738,6 +832,25 @@ class ChannelRespectTests(unittest.TestCase):
 
         count = channel_respect.count_respects(candles, channel, config)
         self.assertEqual(count, 1)
+        _, _, touch_indexes = channel_respect.count_respects_with_evidence(candles, channel, config)
+        self.assertEqual(touch_indexes, [0, 1])
+
+    def test_upper_line_accepts_a_lower_wick_touch_from_above(self):
+        candles = [
+            {"open": 101.0, "high": 102.0, "low": 99.5, "close": 101.5},
+        ]
+        channel = {"upper": [100.0]}
+        config = SimpleNamespace(line="upper", tolerance_pct=0.0, cluster_gap=3, touch_type="wick")
+
+        count, counted_indexes, touch_indexes = channel_respect.count_respects_with_evidence(
+            candles,
+            channel,
+            config,
+        )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(counted_indexes, [0])
+        self.assertEqual(touch_indexes, [0])
 
 
 class DeadAssetsTests(unittest.TestCase):
@@ -5770,6 +5883,15 @@ class ScreeningApiSmokeTests(unittest.IsolatedAsyncioTestCase):
                 stop_response = await client.post("/screen/ops/worker/stop")
                 self.assertEqual(stop_response.status_code, 200)
                 self.assertFalse(stop_response.json()["worker"]["running"])
+
+                screening_cfg_response = await client.post(
+                    "/screen/ops/screening/config",
+                    json={"screening_max_symbols": 150},
+                )
+                self.assertEqual(screening_cfg_response.status_code, 200)
+                self.assertEqual(
+                    screening_cfg_response.json()["screening"]["screening_max_symbols"], 150
+                )
 
     async def test_worker_ops_require_admin_token_when_configured(self):
         with patch.object(main.settings, "ADMIN_API_TOKEN", "secret"), patch.object(

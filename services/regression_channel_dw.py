@@ -69,12 +69,26 @@ def compute_dw_regression_channel(
         for key, values in series.items()
     }
 
+    tracer = np.asarray(active_series["middle"], dtype=float)
+    current_middle = float(tracer[-1])
+    current_slope = float(np.asarray(active_series["slope"], dtype=float)[-1])
+    current_deviation = float(
+        np.asarray(active_series["standard_deviation"], dtype=float)[-1]
+    )
+    positions = np.arange(active_length, dtype=float)
+    middle = current_middle - current_slope * (active_length - 1) + current_slope * positions
+    upper = middle + current_deviation
+    lower = middle - current_deviation
+    q3 = middle + current_deviation / 2.0
+    q1 = middle - current_deviation / 2.0
+
     return {
-        "middle": active_series["middle"],
-        "upper": active_series["upper"],
-        "lower": active_series["lower"],
-        "q1": active_series["q1"],
-        "q3": active_series["q3"],
+        "middle": middle,
+        "upper": upper,
+        "lower": lower,
+        "q1": q1,
+        "q3": q3,
+        "tracer": tracer,
         "length": active_length,
         "window_type": window_type,
         "interval_step": step,

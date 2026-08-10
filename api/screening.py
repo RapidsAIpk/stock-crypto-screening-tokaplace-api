@@ -29,6 +29,10 @@ class WorkerConfigRequest(BaseModel):
     batch_size: int | None = None
 
 
+class ScreeningConfigRequest(BaseModel):
+    screening_max_symbols: int | None = None
+
+
 class IntegrationProviderConfig(BaseModel):
     enabled: bool | None = None
     paused: bool | None = None
@@ -314,6 +318,19 @@ async def worker_config(body: WorkerConfigRequest, http_request: Request):
         batch_size=body.batch_size,
     )
     return {"worker": worker.status()}
+
+
+@router.post("/ops/screening/config")
+async def screening_config(body: ScreeningConfigRequest, http_request: Request):
+    _require_admin(http_request)
+    if body.screening_max_symbols is not None:
+        settings.SCREENING_MAX_SYMBOLS = max(0, body.screening_max_symbols)
+    return {
+        "screening": {
+            "screening_max_symbols": settings.SCREENING_MAX_SYMBOLS,
+            "manual_symbols_max": settings.MANUAL_SYMBOLS_MAX,
+        }
+    }
 
 
 @router.post("/run-gate", response_model=ScreeningResponse)

@@ -1,0 +1,23 @@
+# Railway deployment ignore file
+# Ignore heavy database cache files and docs/reports that cause railway up upload timeouts
+
+data/market_data_cache.db
+data/indicator_cache.db
+*.db
+*.sqlite3
+data/*.db
+data/*.sqlite3
+
+# Ignore docs & reports
+docs/
+client_report/
+*.md
+
+# Standard gitignore rules
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.*
