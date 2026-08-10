@@ -223,22 +223,27 @@ def evaluate_confluence(candles, channels, config, evidence=None):
     if len(source_channels) != 2:
         return False
 
+    # Always capture per-source match evidence internally, even when the
+    # caller passed evidence=None, so the sub-filter check below can be
+    # pinned to the exact candle each source matched on rather than
+    # falling back to "the latest candle" (see _source_sub_filter_passes).
+    match_evidence = {}
+
     if raw_type == LEGACY_ROLE_REVERSAL:
-        matched = _matches_role_reversal(candles, source_channels, lookback, tolerance_pct, evidence)
+        matched = _matches_role_reversal(candles, source_channels, lookback, tolerance_pct, match_evidence)
     elif raw_type == "bullish":
-        matched = _matches_bullish(candles, source_channels, lookback, tolerance_pct, evidence)
+        matched = _matches_bullish(candles, source_channels, lookback, tolerance_pct, match_evidence)
     elif raw_type == "bearish":
-        matched = _matches_bearish(candles, source_channels, lookback, tolerance_pct, evidence)
+        matched = _matches_bearish(candles, source_channels, lookback, tolerance_pct, match_evidence)
     elif raw_type == "breakout":
-        matched = _matches_breakout(candles, source_channels, lookback, tolerance_pct, evidence)
+        matched = _matches_breakout(candles, source_channels, lookback, tolerance_pct, match_evidence)
     elif raw_type == "any":
         matched = False
         for matcher in (_matches_bullish, _matches_bearish, _matches_breakout):
             candidate_evidence = {}
             if matcher(candles, source_channels, lookback, tolerance_pct, candidate_evidence):
                 matched = True
-                if evidence is not None:
-                    evidence.update(candidate_evidence)
+                match_evidence = candidate_evidence
                 break
     else:
         matched = False
@@ -252,26 +257,29 @@ def evaluate_confluence(candles, channels, config, evidence=None):
     }:
         first_source = source_channels[0]
         if not _closed_back_near_first_line(candles, first_source, tolerance_pct):
-            if evidence is not None:
-                evidence.clear()
             return False
 
+    matched_index_by_source = {
+        item.get("source_id"): item.get("candle_index")
+        for item in (match_evidence.get("source_matches") or [])
+    }
+
     for source in source_channels:
-        if not _source_sub_filter_passes(candles, source, source.get("sub_filter")):
-            if evidence is not None:
-                evidence.clear()
+        matched_index = matched_index_by_source.get(source["source_id"])
+        if not _source_sub_filter_passes(candles, source, source.get("sub_filter"), matched_index):
             return False
 
     if liquidity_required:
         if not detect_liquidity_sweep(candles[-2:]):
-            if evidence is not None:
-                evidence.clear()
             return False
-        if evidence is not None:
-            evidence["matched_candle_indexes"] = sorted(set([
-                *(evidence.get("matched_candle_indexes") or []),
-                len(candles) - 1,
-            ]))
+        match_evidence["matched_candle_indexes"] = sorted(set([
+            *(match_evidence.get("matched_candle_indexes") or []),
+            len(candles) - 1,
+        ]))
+
+    if evidence is not None:
+        evidence.clear()
+        evidence.update(match_evidence)
 
     return True
 
@@ -620,9 +628,18 @@ def _closed_back_near_first_line(candles, source, tolerance_pct):
     return close_value >= snapshot["lower"] - tolerance
 
 
-def _trailing_close_streak(candles, source, relation):
+def _close_streak_ending_at(candles, source, relation, end_index):
+    """Length of the run of consecutive close_above/close_below candles
+    ending at (and including) end_index, walking backward. Anchoring the
+    streak to a specific candle - rather than always to the latest candle
+    in the whole series - is required so a source's sub-filter is checked
+    against the same candle its core confluence condition matched on,
+    instead of being satisfiable by any unrelated later candle."""
+    if end_index is None or end_index < 0 or end_index >= len(candles):
+        return 0
+
     streak = 0
-    for candle_index in range(len(candles) - 1, -1, -1):
+    for candle_index in range(end_index, -1, -1):
         matched = (
             _close_above_selection(candles, source, candle_index)
             if relation == "close_above"
@@ -634,7 +651,7 @@ def _trailing_close_streak(candles, source, relation):
     return streak
 
 
-def _source_sub_filter_passes(candles, source, sub_filter):
+def _source_sub_filter_passes(candles, source, sub_filter, matched_index):
     if not sub_filter:
         return True
 
@@ -642,10 +659,13 @@ def _source_sub_filter_passes(candles, source, sub_filter):
     if relation not in {"close_above", "close_below"}:
         return True
 
+    if matched_index is None:
+        return False
+
     target_line = _config_value(sub_filter, "target_line") or source.get("selection")
     line_source = {**source, "selection": target_line}
 
-    streak = _trailing_close_streak(candles, line_source, relation)
+    streak = _close_streak_ending_at(candles, line_source, relation, matched_index)
     if streak <= 0:
         return False
 
