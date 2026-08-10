@@ -5854,7 +5854,7 @@ class ScreeningApiSmokeTests(unittest.IsolatedAsyncioTestCase):
             main.settings,
             "MARKET_DATA_WORKER_ENABLED",
             False,
-        ), patch.object(main.settings, "ADMIN_API_TOKEN", ""), patch.object(
+        ), patch.object(
             main.settings,
             "APP_ENV",
             "development",
@@ -5893,59 +5893,8 @@ class ScreeningApiSmokeTests(unittest.IsolatedAsyncioTestCase):
                     screening_cfg_response.json()["screening"]["screening_max_symbols"], 150
                 )
 
-    async def test_worker_ops_require_admin_token_when_configured(self):
-        with patch.object(main.settings, "ADMIN_API_TOKEN", "secret"), patch.object(
-            main.settings,
-            "MARKET_DATA_WORKER_ENABLED",
-            False,
-        ):
-            app = main.create_app()
-            async with app_client(app) as client:
-                denied = await client.get("/screen/ops/worker")
-                self.assertEqual(denied.status_code, 403)
-
-                allowed = await client.get(
-                    "/screen/ops/worker",
-                    headers={"X-Admin-Token": "secret"},
-                )
-                self.assertEqual(allowed.status_code, 200)
-
-    async def test_worker_ops_deny_all_requests_in_production_without_admin_token(self):
-        with patch.object(main.settings, "ADMIN_API_TOKEN", ""), patch.object(
-            main.settings,
-            "APP_ENV",
-            "production",
-        ), patch.object(
-            main.settings,
-            "MARKET_DATA_WORKER_ENABLED",
-            False,
-        ):
-            app = main.create_app()
-            async with app_client(app) as client:
-                denied = await client.get("/screen/ops/worker")
-                self.assertEqual(denied.status_code, 403)
-
-    async def test_worker_ops_allow_requests_in_development_without_admin_token(self):
-        with patch.object(main.settings, "ADMIN_API_TOKEN", ""), patch.object(
-            main.settings,
-            "APP_ENV",
-            "development",
-        ), patch.object(
-            main.settings,
-            "MARKET_DATA_WORKER_ENABLED",
-            False,
-        ):
-            app = main.create_app()
-            async with app_client(app) as client:
-                allowed = await client.get("/screen/ops/worker")
-                self.assertEqual(allowed.status_code, 200)
-
     async def test_runtime_settings_endpoint_returns_effective_server_config(self):
         with patch.object(main.settings, "MARKET_DATA_WORKER_ENABLED", False), patch.object(
-            main.settings,
-            "ADMIN_API_TOKEN",
-            "",
-        ), patch.object(
             main.settings,
             "CRYPTO_CANDLES_PROVIDER",
             "binance",

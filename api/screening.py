@@ -111,19 +111,6 @@ async def cancel_scan(body: CancelScanRequest):
     return {"cancelled": cancelled}
 
 
-def _require_admin(http_request: Request):
-    expected = (settings.ADMIN_API_TOKEN or "").strip()
-
-    if not expected:
-        if settings.APP_ENV.lower() == "production":
-            raise HTTPException(status_code=403, detail="Admin token required.")
-        return
-
-    provided = (http_request.headers.get("X-Admin-Token") or "").strip()
-    if provided != expected:
-        raise HTTPException(status_code=403, detail="Admin token required.")
-
-
 # --------------------------------------------
 # SINGLE TIMEFRAME
 # --------------------------------------------
@@ -214,7 +201,6 @@ def _provider_base_url(provider_name: str) -> str:
 
 @router.get("/ops/worker")
 async def worker_status(http_request: Request):
-    _require_admin(http_request)
     worker = _worker_from_request(http_request)
     return {
         "worker": worker.status(),
@@ -224,7 +210,6 @@ async def worker_status(http_request: Request):
 
 @router.get("/ops/runtime-settings")
 async def runtime_settings(http_request: Request):
-    _require_admin(http_request)
     worker = _worker_from_request(http_request)
     stock_provider = active_candle_provider()
     crypto_provider = active_crypto_candle_provider()
@@ -268,21 +253,16 @@ async def runtime_settings(http_request: Request):
             "binance_fetch_concurrency": settings.BINANCE_FETCH_CONCURRENCY,
             "binance_requests_per_second": settings.BINANCE_REQUESTS_PER_SECOND,
         },
-        "integrations": {
-            **integration_runtime.snapshot(),
-            "admin_api_token_required": bool((settings.ADMIN_API_TOKEN or "").strip()),
-        },
+        "integrations": integration_runtime.snapshot(),
     }
 
 @router.get("/ops/integrations")
 async def integrations_status(http_request: Request):
-    _require_admin(http_request)
     return integration_runtime.snapshot()
 
 
 @router.post("/ops/integrations/config")
 async def integrations_config(body: IntegrationConfigRequest, http_request: Request):
-    _require_admin(http_request)
 
     for provider_name, provider_config in body.providers.items():
         integration_runtime.update_provider(
@@ -298,7 +278,6 @@ async def integrations_config(body: IntegrationConfigRequest, http_request: Requ
 
 @router.get("/ops/integrations/{provider}/history")
 async def integration_history(provider: str, http_request: Request):
-    _require_admin(http_request)
     history = integration_runtime.get_history(provider)
     if history is None:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider}")
@@ -307,14 +286,12 @@ async def integration_history(provider: str, http_request: Request):
 
 @router.post("/ops/diagnose")
 async def ops_diagnose(http_request: Request):
-    _require_admin(http_request)
     worker = _worker_from_request(http_request)
     return integration_runtime.diagnose(worker_status=worker.status())
 
 
 @router.post("/ops/worker/start")
 async def worker_start(http_request: Request):
-    _require_admin(http_request)
     worker = _worker_from_request(http_request)
     await worker.start()
     return {"worker": worker.status()}
@@ -322,7 +299,6 @@ async def worker_start(http_request: Request):
 
 @router.post("/ops/worker/stop")
 async def worker_stop(http_request: Request):
-    _require_admin(http_request)
     worker = _worker_from_request(http_request)
     await worker.stop()
     return {"worker": worker.status()}
@@ -330,7 +306,6 @@ async def worker_stop(http_request: Request):
 
 @router.post("/ops/worker/refresh")
 async def worker_refresh(http_request: Request):
-    _require_admin(http_request)
     worker = _worker_from_request(http_request)
     await worker.refresh_once()
     return {"worker": worker.status()}
@@ -338,7 +313,6 @@ async def worker_refresh(http_request: Request):
 
 @router.post("/ops/worker/config")
 async def worker_config(body: WorkerConfigRequest, http_request: Request):
-    _require_admin(http_request)
     worker = _worker_from_request(http_request)
     worker.update_runtime(
         poll_interval=body.poll_interval,
@@ -349,7 +323,6 @@ async def worker_config(body: WorkerConfigRequest, http_request: Request):
 
 @router.post("/ops/screening/config")
 async def screening_config(body: ScreeningConfigRequest, http_request: Request):
-    _require_admin(http_request)
     if body.screening_max_symbols is not None:
         settings.SCREENING_MAX_SYMBOLS = max(0, body.screening_max_symbols)
     return {

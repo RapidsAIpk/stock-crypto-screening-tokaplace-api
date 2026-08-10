@@ -132,7 +132,6 @@ class Settings(BaseSettings):
 
     MASSIVE_API_KEY: Optional[str] = None
     POLYGON_API_KEY: Optional[str] = None
-    ADMIN_API_TOKEN: Optional[str] = None
 
     ZOYA_ENDPOINT: str = "https://api.zoya.finance/graphql"
     MARKET_DATA_PROVIDER_DOCS_URL: str = "https://massive.com/docs"
