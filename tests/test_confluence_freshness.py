@@ -30,21 +30,29 @@ def _flat_channel(count, upper=100.0, lower=95.0):
     }
 
 
-def _sources(first_selection, second_selection):
+def _sources(first_selection, second_selection, first_overrides=None, second_overrides=None):
     return [
-        SimpleNamespace(id="first", channel_type="lrc", selection=first_selection),
-        SimpleNamespace(id="second", channel_type="lrc", selection=second_selection),
+        SimpleNamespace(id="first", channel_type="lrc", selection=first_selection, **(first_overrides or {})),
+        SimpleNamespace(id="second", channel_type="lrc", selection=second_selection, **(second_overrides or {})),
     ]
 
 
-def _config(confluence_type, first_selection, second_selection):
+def _config(
+    confluence_type,
+    first_selection,
+    second_selection,
+    first_overrides=None,
+    second_overrides=None,
+    **overrides,
+):
     return SimpleNamespace(
         type=confluence_type,
         channels=["lrc", "lrc"],
-        sources=_sources(first_selection, second_selection),
+        sources=_sources(first_selection, second_selection, first_overrides, second_overrides),
         liquidity_sweep=False,
-        lookback_candles=4,
+        lookback_candles=overrides.pop("lookback_candles", 4),
         tolerance_pct=0.1,
+        **overrides,
     )
 
 
@@ -218,6 +226,151 @@ class ConfluenceFreshnessTests(unittest.TestCase):
         self.assertFalse(
             confluence.evaluate_confluence(candles, _channels(len(candles)), _config("breakout", "upper", "upper"))
         )
+
+    # --------------------------------------------------------------
+    # Client issue #1/#3: lookback_candles is no longer capped at 4.
+    # --------------------------------------------------------------
+
+    def test_normalized_lookback_no_longer_capped_at_4(self):
+        self.assertEqual(confluence._normalized_lookback(10), 10)
+        self.assertEqual(confluence._normalized_lookback(0), 1)
+        self.assertEqual(confluence._normalized_lookback(-5), 1)
+
+    def test_confluence_config_accepts_lookback_above_4(self):
+        from models.filters import ConfluenceConfig
+
+        config = ConfluenceConfig(
+            type="bullish",
+            sources=[
+                {"channel_type": "lrc", "selection": "lower"},
+                {"channel_type": "lrc", "selection": "lower"},
+            ],
+            lookback_candles=25,
+        )
+        self.assertEqual(config.lookback_candles, 25)
+
+    def test_confluence_config_still_rejects_lookback_below_1(self):
+        from pydantic import ValidationError
+
+        from models.filters import ConfluenceConfig
+
+        with self.assertRaises(ValidationError):
+            ConfluenceConfig(
+                type="bullish",
+                sources=[
+                    {"channel_type": "lrc", "selection": "lower"},
+                    {"channel_type": "lrc", "selection": "lower"},
+                ],
+                lookback_candles=-1,
+            )
+
+    # --------------------------------------------------------------
+    # Client issue #4: bullish confluence can require price to close
+    # back near the first source's line before matching.
+    # --------------------------------------------------------------
+
+    def test_bullish_reclose_to_first_line_passes_when_close_is_near_first_line(self):
+        candles = [
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 99.8, 101),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 99.8, 101),
+        ]
+        channels = _channels(len(candles), first_lower=100.0, second_lower=100.0)
+
+        self.assertTrue(
+            confluence.evaluate_confluence(
+                candles,
+                channels,
+                _config("bullish", "lower", "lower", reclose_to_first_line=True),
+            )
+        )
+
+    def test_bullish_reclose_to_first_line_fails_when_price_stays_far_below_first_line(self):
+        candles = [
+            _candle(101, 102, 100.5, 101),
+            _candle(151, 152, 149.8, 151),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 99.8, 101),
+        ]
+        channels = _channels(len(candles), first_lower=150.0, second_lower=100.0)
+        config = _config("bullish", "lower", "lower", reclose_to_first_line=True)
+
+        self.assertTrue(
+            confluence.evaluate_confluence(candles, channels, _config("bullish", "lower", "lower"))
+        )
+        self.assertFalse(confluence.evaluate_confluence(candles, channels, config))
+
+    # --------------------------------------------------------------
+    # Client issue #2: per-line sub-filters (close above/below a
+    # specific line, and how many candles since that close happened).
+    # --------------------------------------------------------------
+
+    def test_source_sub_filter_close_above_within_range_passes(self):
+        candles = [
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 99.8, 101),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 99.8, 101),
+        ]
+        channels = _channels(len(candles), first_lower=100.0, second_lower=100.0)
+        config = _config(
+            "bullish",
+            "lower",
+            "lower",
+            first_overrides={
+                "line_relation": "close_above",
+                "target_line": "lower",
+                "candles_since_close_min": 1,
+                "candles_since_close_max": 10,
+            },
+        )
+
+        self.assertTrue(confluence.evaluate_confluence(candles, channels, config))
+
+    def test_source_sub_filter_candles_since_close_out_of_range_fails(self):
+        candles = [
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 99.8, 101),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 99.8, 101),
+        ]
+        channels = _channels(len(candles), first_lower=100.0, second_lower=100.0)
+        config = _config(
+            "bullish",
+            "lower",
+            "lower",
+            first_overrides={
+                "line_relation": "close_above",
+                "target_line": "lower",
+                "candles_since_close_min": 1,
+                "candles_since_close_max": 1,
+            },
+        )
+
+        self.assertFalse(confluence.evaluate_confluence(candles, channels, config))
+
+    def test_source_sub_filter_wrong_relation_fails(self):
+        candles = [
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 99.8, 101),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 100.5, 101),
+            _candle(101, 102, 99.8, 101),
+        ]
+        channels = _channels(len(candles), first_lower=100.0, second_lower=100.0)
+        config = _config(
+            "bullish",
+            "lower",
+            "lower",
+            first_overrides={"line_relation": "close_below", "target_line": "lower"},
+        )
+
+        self.assertFalse(confluence.evaluate_confluence(candles, channels, config))
 
 
 if __name__ == "__main__":

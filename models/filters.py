@@ -230,6 +230,17 @@ class ConfluenceSource(BaseModel):
 
     interval_step: Optional[int] = None
 
+    # Optional sub-filter: require price to close above/below a specific
+    # line of this source (which may differ from `selection`, the line
+    # used for the primary confluence scenario matching).
+    line_relation: Optional[Literal["close_above", "close_below", "none"]] = None
+
+    target_line: Optional[ConfluenceSelection] = None
+
+    candles_since_close_min: Optional[int] = None
+
+    candles_since_close_max: Optional[int] = None
+
 
 class ConfluenceConfig(BaseModel):
 
@@ -244,6 +255,12 @@ class ConfluenceConfig(BaseModel):
     lookback_candles: int = 4
 
     tolerance_pct: float = 0.1
+
+    # Client issue #4: after the first source line is breached and the
+    # second source holds as support, require price to have come back up
+    # and closed at/near the first source's line again before matching.
+    # Only applies to bullish/role_reversal scenarios.
+    reclose_to_first_line: bool = False
 
     @model_validator(mode="after")
     def validate_confluence_config(self):
@@ -260,8 +277,8 @@ class ConfluenceConfig(BaseModel):
             raise ValueError("confluence requires exactly 2 selected sources")
 
         lookback = int(getattr(self, "lookback_candles", 4) or 4)
-        if lookback < 1 or lookback > 4:
-            raise ValueError("confluence.lookback_candles must be between 1 and 4")
+        if lookback < 1:
+            raise ValueError("confluence.lookback_candles must be at least 1")
 
         tolerance = float(getattr(self, "tolerance_pct", 0.1) or 0.0)
         if tolerance < 0:
@@ -270,13 +287,34 @@ class ConfluenceConfig(BaseModel):
         for source in sources:
             channel_type = _config_attr(source, "channel_type")
             selection = _config_attr(source, "selection")
-            if not selection:
-                continue
+            if selection:
+                valid_selections = _valid_confluence_selections(channel_type)
+                if selection not in valid_selections:
+                    raise ValueError(
+                        f"confluence selection '{selection}' is invalid for channel_type '{channel_type}'"
+                    )
 
-            valid_selections = _valid_confluence_selections(channel_type)
-            if selection not in valid_selections:
+            target_line = _config_attr(source, "target_line")
+            if target_line:
+                valid_selections = _valid_confluence_selections(channel_type)
+                if target_line not in valid_selections:
+                    raise ValueError(
+                        f"confluence target_line '{target_line}' is invalid for channel_type '{channel_type}'"
+                    )
+
+            candles_since_close_min = _config_attr(source, "candles_since_close_min")
+            candles_since_close_max = _config_attr(source, "candles_since_close_max")
+            if candles_since_close_min is not None and candles_since_close_min < 0:
+                raise ValueError("confluence candles_since_close_min cannot be negative")
+            if candles_since_close_max is not None and candles_since_close_max < 0:
+                raise ValueError("confluence candles_since_close_max cannot be negative")
+            if (
+                candles_since_close_min is not None
+                and candles_since_close_max is not None
+                and candles_since_close_min > candles_since_close_max
+            ):
                 raise ValueError(
-                    f"confluence selection '{selection}' is invalid for channel_type '{channel_type}'"
+                    "confluence candles_since_close_min cannot exceed candles_since_close_max"
                 )
 
         return self
