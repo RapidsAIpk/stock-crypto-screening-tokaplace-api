@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     APP_ENV: str = "development"
     DEBUG: bool = False
+    DEV_ENV: bool = False
     LOG_LEVEL: str = "INFO"
 
     HOST: str = "0.0.0.0"
@@ -152,6 +153,20 @@ class Settings(BaseSettings):
                 return False
 
         return value
+
+    @field_validator("DEV_ENV", mode="before")
+    @classmethod
+    def parse_dev_env(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+
+            if normalized in {"0", "false", "no", "off", ""}:
+                return False
+
+        return bool(value) if value is not None else False
 
     @field_validator("CANDLES_PROVIDER", mode="before")
     @classmethod

@@ -40,6 +40,7 @@ from services.volume import (
     volume_spike_config_warnings,
 )
 from services.volatility import normalize_volatility_config, required_volatility_candles, volatility_config_warnings
+from services.dev_audit_logger import write_dev_market_data_audit
 
 logger = logging.getLogger(__name__)
 DETAIL_RECENT_CANDLES = 120
@@ -830,22 +831,21 @@ def _latest_candle_completed(candles):
 def _audit_market_data_run(run_id, stage, symbols, assets_by_symbol, final_symbols=None, final_reason_by_symbol=None):
     final_symbols = final_symbols or set()
     final_reason_by_symbol = final_reason_by_symbol or {}
+    summary_payload = {
+        "run_id": run_id,
+        "stage": stage,
+        "universe_size": len(symbols),
+        "symbols_with_candles": len(assets_by_symbol),
+        "included": len(final_symbols),
+        "missing_market_data": len([symbol for symbol in symbols if symbol not in assets_by_symbol]),
+    }
     logger.info(
         "%s %s",
         MARKET_DATA_AUDIT_LOG,
-        json.dumps(
-            {
-                "run_id": run_id,
-                "stage": stage,
-                "universe_size": len(symbols),
-                "symbols_with_candles": len(assets_by_symbol),
-                "included": len(final_symbols),
-                "missing_market_data": len([symbol for symbol in symbols if symbol not in assets_by_symbol]),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ),
+        json.dumps(summary_payload, sort_keys=True, separators=(",", ":")),
     )
+
+    dev_symbol_payloads = []
 
     for symbol in symbols:
         asset = assets_by_symbol.get(symbol)
@@ -888,6 +888,9 @@ def _audit_market_data_run(run_id, stage, symbols, assets_by_symbol, final_symbo
             MARKET_DATA_AUDIT_LOG,
             json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str),
         )
+        dev_symbol_payloads.append(payload)
+
+    write_dev_market_data_audit(run_id, stage, summary_payload, dev_symbol_payloads)
 
 
 def _result_reason(asset):
