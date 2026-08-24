@@ -1,13 +1,25 @@
 # services/ema.py
 
 import numpy as np
+from services.candle_utils import completed_candles
 from services.pine_math import pine_ema, pine_sma
+from services.range_utils import candles_since_in_range, selection_mode_pass
 from services.utils import build_indicator_sticker, format_price_value
 
 
 # =========================================================
 # EMA
 # =========================================================
+
+TRADINGVIEW_STANDARD_EMA_PERIODS = [20, 50, 100, 200]
+TRADINGVIEW_STANDARD_EMA_PRESETS = {
+    "ema_20_50_100_200",
+    "ema20_50_100_200",
+    "ema_20/50/100/200",
+    "ema 20/50/100/200",
+    "tradingview_ema_20_50_100_200",
+    "tv_ema_20_50_100_200",
+}
 
 def compute_ema(series, length):
 
@@ -101,25 +113,334 @@ def price_matches_ema_rule(price, ema_value, rule, tolerance_pct=0):
     return False
 
 
+EMA_CONDITION_ALIASES = {
+    "touch_from_above": "touch_from_above",
+    "touch_above": "touch_from_above",
+    "touch": "touch_from_above",
+    "piercing_from_below": "piercing_from_below",
+    "pierce_from_below": "piercing_from_below",
+    "piercing": "piercing_from_below",
+    "close_above": "close_above",
+    "above": "close_above",
+    "touched_or_pierced_and_closed_above": "touched_or_pierced_and_closed_above",
+    "touch_or_pierce_close_above": "touched_or_pierced_and_closed_above",
+    "touch_pierce_close_above": "touched_or_pierced_and_closed_above",
+    "below": "legacy_below",
+}
+
+EMA_DEFAULT_CONDITIONS = {
+    "touch_from_above": {
+        "enabled": False,
+        "candles_since_min": 0,
+        "candles_since_max": 5,
+    },
+    "piercing_from_below": {
+        "enabled": False,
+        "candles_since_min": 0,
+        "candles_since_max": 5,
+    },
+    "close_above": {
+        "enabled": True,
+        "candles_since_min": 0,
+        "candles_since_max": 0,
+    },
+    "touched_or_pierced_and_closed_above": {
+        "enabled": False,
+        "candles_since_min": 0,
+        "candles_since_max": 5,
+        "require_still_above_now": True,
+    },
+}
+
+
+def _uses_tradingview_standard_ema_periods(config):
+    if config.get("ema_20_50_100_200") is True:
+        return True
+    if config.get("standard_ema_periods") is True:
+        return True
+    if config.get("tradingview_standard_emas") is True:
+        return True
+
+    raw_preset = (
+        config.get("preset")
+        or config.get("ema_preset")
+        or config.get("study")
+        or config.get("title")
+    )
+    preset = str(raw_preset or "").strip().lower()
+    return preset in TRADINGVIEW_STANDARD_EMA_PRESETS
+
+
+def normalize_ema_periods(config):
+    raw = config.get("periods") or config.get("ema_periods") or config.get("lengths")
+    if raw is None and config.get("length") is not None:
+        raw = config.get("length")
+    if raw is None and _uses_tradingview_standard_ema_periods(config):
+        return list(TRADINGVIEW_STANDARD_EMA_PERIODS)
+    if raw is None:
+        raw = 9
+
+    if not isinstance(raw, (list, tuple, set)):
+        raw = [raw]
+
+    periods = []
+    for value in raw:
+        try:
+            period = int(value)
+        except (TypeError, ValueError):
+            continue
+        if period > 0 and period not in periods:
+            periods.append(period)
+
+    return periods or [9]
+
+
+def normalize_ema_conditions(config):
+    raw_conditions = config.get("conditions")
+    normalized = {
+        name: dict(defaults)
+        for name, defaults in EMA_DEFAULT_CONDITIONS.items()
+    }
+    explicit_conditions = False
+
+    if isinstance(raw_conditions, dict):
+        explicit_conditions = True
+        for condition_config in normalized.values():
+            condition_config["enabled"] = False
+        for raw_name, raw_value in raw_conditions.items():
+            condition_name = EMA_CONDITION_ALIASES.get(str(raw_name or "").strip().lower())
+            if condition_name is None or condition_name == "legacy_below":
+                continue
+            if isinstance(raw_value, dict):
+                normalized[condition_name].update(raw_value)
+                normalized[condition_name]["enabled"] = bool(raw_value.get("enabled", True))
+            else:
+                normalized[condition_name]["enabled"] = bool(raw_value)
+
+    elif isinstance(raw_conditions, (list, tuple, set)):
+        explicit_conditions = True
+        for condition_config in normalized.values():
+            condition_config["enabled"] = False
+        for raw_name in raw_conditions:
+            condition_name = EMA_CONDITION_ALIASES.get(str(raw_name or "").strip().lower())
+            if condition_name is not None and condition_name != "legacy_below":
+                normalized[condition_name]["enabled"] = True
+
+    if not explicit_conditions:
+        for item in normalized.values():
+            item["enabled"] = False
+
+        rule = EMA_CONDITION_ALIASES.get(str(config.get("rule", "above") or "above").strip().lower())
+        if rule in normalized:
+            normalized[rule]["enabled"] = True
+            normalized[rule]["candles_since_min"] = config.get("candles_since_min", config.get("window_min", 0))
+            normalized[rule]["candles_since_max"] = config.get("candles_since_max", config.get("window_max", 0))
+        elif rule == "legacy_below":
+            normalized["legacy_below"] = {
+                "enabled": True,
+                "candles_since_min": config.get("candles_since_min", 0),
+                "candles_since_max": config.get("candles_since_max", 0),
+            }
+
+    return normalized
+
+
+def normalize_ema_config(config):
+    config = dict(config or {})
+    return {
+        **config,
+        "periods": normalize_ema_periods(config),
+        "selection_mode": str(config.get("selection_mode", "all") or "all").strip().lower(),
+        "conditions": normalize_ema_conditions(config),
+    }
+
+
+def _finite_at(series, index):
+    if index < 0 or index >= len(series):
+        return None
+    value = float(series[index])
+    return value if np.isfinite(value) else None
+
+
+def _ema_touch_from_above(candles, ema_series, index):
+    if index <= 0:
+        return False
+    candle = candles[index]
+    prev_close = float(candles[index - 1]["close"])
+    prev_ema = _finite_at(ema_series, index - 1)
+    ema_value = _finite_at(ema_series, index)
+    if prev_ema is None or ema_value is None:
+        return False
+    return (
+        prev_close > prev_ema
+        and float(candle["low"]) <= ema_value
+        and float(candle["high"]) >= ema_value
+        and float(candle["close"]) > ema_value
+    )
+
+
+def _ema_piercing_from_below(candles, ema_series, index):
+    if index <= 0:
+        return False
+    candle = candles[index]
+    prev_close = float(candles[index - 1]["close"])
+    prev_ema = _finite_at(ema_series, index - 1)
+    ema_value = _finite_at(ema_series, index)
+    if prev_ema is None or ema_value is None:
+        return False
+    return (
+        prev_close < prev_ema
+        and float(candle["low"]) < ema_value
+        and float(candle["high"]) >= ema_value
+        and float(candle["close"]) > ema_value
+    )
+
+
+def _ema_close_above(candles, ema_series, index):
+    ema_value = _finite_at(ema_series, index)
+    return ema_value is not None and float(candles[index]["close"]) > ema_value
+
+
+def _ema_legacy_below(candles, ema_series, index):
+    ema_value = _finite_at(ema_series, index)
+    return ema_value is not None and float(candles[index]["close"]) < ema_value
+
+
+def _find_latest_ema_event(candles, ema_series, predicate):
+    for index in range(len(candles) - 1, -1, -1):
+        if predicate(candles, ema_series, index):
+            return index
+    return None
+
+
+def _condition_range(config):
+    return (
+        config.get("candles_since_min", config.get("min_candles_since")),
+        config.get("candles_since_max", config.get("max_candles_since")),
+    )
+
+
+def _evaluate_period_condition(candles, ema_series, condition_name, condition_config):
+    if not condition_config.get("enabled"):
+        return False, None
+
+    latest_index = len(candles) - 1
+    min_candles, max_candles = _condition_range(condition_config)
+
+    if condition_name == "touch_from_above":
+        event_index = _find_latest_ema_event(candles, ema_series, _ema_touch_from_above)
+    elif condition_name == "piercing_from_below":
+        event_index = _find_latest_ema_event(candles, ema_series, _ema_piercing_from_below)
+    elif condition_name == "close_above":
+        event_index = _find_latest_ema_event(candles, ema_series, _ema_close_above)
+    elif condition_name == "legacy_below":
+        event_index = _find_latest_ema_event(candles, ema_series, _ema_legacy_below)
+    elif condition_name == "touched_or_pierced_and_closed_above":
+        event_index = _find_latest_ema_event(
+            candles,
+            ema_series,
+            lambda rows, series, index: (
+                _ema_touch_from_above(rows, series, index)
+                or _ema_piercing_from_below(rows, series, index)
+            ),
+        )
+        if condition_config.get("require_still_above_now", True) and not _ema_close_above(candles, ema_series, latest_index):
+            return False, event_index
+    else:
+        return False, None
+
+    return (
+        candles_since_in_range(event_index, latest_index, min_candles, max_candles),
+        event_index,
+    )
+
+
+def evaluate_ema_period(candles, period, config):
+    closes = np.array([c["close"] for c in candles], dtype=float)
+    ema_series = compute_ema(closes, period)
+    conditions = config["conditions"]
+    active_conditions = [
+        (name, condition_config)
+        for name, condition_config in conditions.items()
+        if isinstance(condition_config, dict) and condition_config.get("enabled")
+    ]
+
+    if not active_conditions:
+        return {
+            "period": period,
+            "passed": False,
+            "conditions": {},
+            "ema": float(ema_series[-1]),
+            "close": float(closes[-1]),
+        }
+
+    condition_results = {}
+    for condition_name, condition_config in active_conditions:
+        passed, event_index = _evaluate_period_condition(
+            candles,
+            ema_series,
+            condition_name,
+            condition_config,
+        )
+        condition_results[condition_name] = {
+            "passed": bool(passed),
+            "event_index": event_index,
+            "candles_since": (len(candles) - 1 - event_index) if event_index is not None else None,
+        }
+
+    return {
+        "period": period,
+        "passed": all(item["passed"] for item in condition_results.values()),
+        "conditions": condition_results,
+        "ema": float(ema_series[-1]),
+        "close": float(closes[-1]),
+    }
+
+
+def evaluate_ema_rules_detail(candles, config):
+    if _is_ema_wave_config(config):
+        return {
+            "passed": evaluate_ema_wave_rules(candles, config),
+            "mode": "ema_wave",
+            "period_results": [],
+            "config": dict(config or {}),
+        }
+
+    closed = completed_candles(candles)
+    if len(closed) < 2:
+        return {
+            "passed": False,
+            "mode": "ema",
+            "period_results": [],
+            "config": normalize_ema_config(config),
+        }
+
+    normalized = normalize_ema_config(config)
+    period_results = [
+        evaluate_ema_period(closed, period, normalized)
+        for period in normalized["periods"]
+    ]
+
+    return {
+        "passed": selection_mode_pass(
+            [item["passed"] for item in period_results],
+            normalized.get("selection_mode", "all"),
+        ),
+        "mode": "ema",
+        "period_results": period_results,
+        "config": normalized,
+    }
+
+
 # =========================================================
 # RULES
 # =========================================================
 
 def evaluate_ema_rules(candles, config):
     if _is_ema_wave_config(config):
-        return evaluate_ema_wave_rules(candles, config)
+        return evaluate_ema_wave_rules(completed_candles(candles), config)
 
-    closes = np.array([c["close"] for c in candles])
-
-    length = config.get("length", 9)
-    rule = config.get("rule")
-
-    ema = compute_ema(closes, length)
-
-    price = closes[-1]
-    ema_val = ema[-1]
-    tolerance_pct = max(0.0, float(config.get("tolerance_pct", 0) or 0))
-    return price_matches_ema_rule(price, ema_val, rule, tolerance_pct=tolerance_pct)
+    return bool(evaluate_ema_rules_detail(candles, config)["passed"])
 
 
 def evaluate_ema_wave_rules(candles, config):
@@ -177,15 +498,30 @@ def build_moving_average_sticker(label, length, rule, price, ma_value):
 
 def build_ema_sticker(candles, config):
     if _is_ema_wave_config(config):
-        return build_ema_wave_sticker(candles, config)
+        return build_ema_wave_sticker(completed_candles(candles), config)
 
-    length = config.get("length", 9)
-    rule = config.get("rule")
-    closes = np.array([c["close"] for c in candles], dtype=float)
-    ema_series = compute_ema(closes, length)
-    price = float(closes[-1])
-    ema_value = float(ema_series[-1])
-    return build_moving_average_sticker("EMA", length, rule, price, ema_value)
+    detail = evaluate_ema_rules_detail(candles, config)
+    normalized = detail["config"]
+    periods = [item["period"] for item in detail["period_results"] if item["passed"]]
+    display_periods = periods or normalized["periods"]
+    length = display_periods[0] if len(display_periods) == 1 else None
+    condition_names = [
+        name.replace("_", " ")
+        for name, value in normalized["conditions"].items()
+        if isinstance(value, dict) and value.get("enabled")
+    ]
+    condition = (
+        f"Periods {', '.join(str(period) for period in display_periods)} | "
+        f"{' + '.join(condition_names) if condition_names else 'EMA condition'}"
+    )
+    return build_indicator_sticker(
+        "EMA",
+        condition,
+        {"window": 1, "confirmation": False},
+        length=length,
+        window=1,
+        decision="EMA Phase 1 Match",
+    )
 
 
 def build_ema_wave_sticker(candles, config):
@@ -239,7 +575,7 @@ def _is_ema_wave_config(config):
         return False
     if config.get("simple_ema") is True:
         return False
-    return True
+    return mode in {"wave", "ema_wave", "ewi", "ewi_lb"} or _has_ema_wave_config(config)
 
 
 def _has_ema_wave_config(config):

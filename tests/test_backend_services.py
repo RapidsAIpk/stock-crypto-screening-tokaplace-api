@@ -1183,6 +1183,112 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertTrue(passed)
         self.assertIsNotNone(sticker)
 
+    def test_ema_excludes_unfinished_candle_and_uses_completed_history(self):
+        candles = [
+            {"open": 10.0, "high": 10.2, "low": 9.8, "close": 10.0, "is_closed": True},
+            {"open": 10.0, "high": 10.2, "low": 9.8, "close": 10.0, "is_closed": True},
+            {"open": 10.0, "high": 10.2, "low": 9.8, "close": 10.0, "is_closed": True},
+            {"open": 10.0, "high": 10.2, "low": 9.8, "close": 10.0, "is_closed": True},
+            {"open": 10.0, "high": 10.2, "low": 9.8, "close": 10.0, "is_closed": True},
+            {"open": 20.0, "high": 21.0, "low": 19.0, "close": 20.0, "is_closed": False},
+        ]
+
+        self.assertFalse(ema.evaluate_ema_rules(candles, {
+            "simple_ema": True,
+            "length": 3,
+            "rule": "above",
+        }))
+
+    def test_ema_touch_from_above_uses_matching_historical_ema_value(self):
+        candles = [
+            {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+            {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+            {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+            {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+            {"open": 10.0, "high": 12.0, "low": 10.0, "close": 12.0},
+            {"open": 12.0, "high": 14.0, "low": 11.0, "close": 13.0},
+            {"open": 13.0, "high": 13.0, "low": 8.0, "close": 13.0},
+            {"open": 22.0, "high": 30.0, "low": 22.0, "close": 30.0},
+        ]
+
+        self.assertTrue(ema.evaluate_ema_rules(candles, {
+            "simple_ema": True,
+            "periods": [3],
+            "conditions": {
+                "touch_from_above": {
+                    "enabled": True,
+                    "candles_since_min": 1,
+                    "candles_since_max": 1,
+                },
+            },
+        }))
+        self.assertFalse(ema.evaluate_ema_rules(candles, {
+            "simple_ema": True,
+            "periods": [3],
+            "conditions": {
+                "touch_from_above": {
+                    "enabled": True,
+                    "candles_since_min": 0,
+                    "candles_since_max": 0,
+                },
+            },
+        }))
+
+    def test_ema_piercing_close_above_and_combined_conditions(self):
+        candles = [
+            {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+            {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+            {"open": 8.0, "high": 8.0, "low": 8.0, "close": 8.0},
+            {"open": 8.0, "high": 12.0, "low": 7.0, "close": 12.0},
+            {"open": 12.0, "high": 13.0, "low": 12.0, "close": 13.0},
+        ]
+
+        self.assertTrue(ema.evaluate_ema_rules(candles, {
+            "simple_ema": True,
+            "periods": [3],
+            "selection_mode": "all",
+            "conditions": {
+                "piercing_from_below": {
+                    "enabled": True,
+                    "candles_since_min": 1,
+                    "candles_since_max": 1,
+                },
+                "close_above": {
+                    "enabled": True,
+                    "candles_since_min": 0,
+                    "candles_since_max": 0,
+                },
+                "touched_or_pierced_and_closed_above": {
+                    "enabled": True,
+                    "candles_since_min": 1,
+                    "candles_since_max": 1,
+                    "require_still_above_now": True,
+                },
+            },
+        }))
+
+    def test_ema_multi_period_selection_modes_are_respected(self):
+        candles = [
+            {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+            {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
+            {"open": 20.0, "high": 20.0, "low": 20.0, "close": 20.0},
+        ]
+        config = {
+            "simple_ema": True,
+            "periods": [1, 3],
+            "conditions": {
+                "close_above": {
+                    "enabled": True,
+                    "candles_since_min": 0,
+                    "candles_since_max": 0,
+                },
+            },
+        }
+
+        self.assertTrue(ema.evaluate_ema_rules(candles, {**config, "selection_mode": "any"}))
+        self.assertFalse(ema.evaluate_ema_rules(candles, {**config, "selection_mode": "all"}))
+        self.assertTrue(ema.evaluate_ema_rules(candles, {**config, "selection_mode": "one"}))
+
     def test_ema_indicator_defaults_to_lazybear_wave_path(self):
         candles = []
         for index in range(70):

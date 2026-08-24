@@ -60,6 +60,7 @@ from services.vlr import (
 )
 
 from services.ema import evaluate_ema_rules, build_ema_sticker, build_moving_average_sticker, price_matches_ema_rule
+from services.candle_utils import completed_candles
 from services.macd import compute_macd, evaluate_macd_rules, build_macd_sticker
 from services.volume import (
     evaluate_volume_spike,
@@ -712,10 +713,11 @@ def handle_vlr(asset, candles, config):
 
 def handle_ema(asset, candles, config):
 
-    if not evaluate_ema_rules(candles, config):
+    closed_candles = completed_candles(candles)
+    if not evaluate_ema_rules(closed_candles, config):
         return False, None
 
-    return True, build_ema_sticker(candles, config)
+    return True, build_ema_sticker(closed_candles, config)
 
 
 def handle_ema_wave(asset, candles, config):
@@ -723,10 +725,11 @@ def handle_ema_wave(asset, candles, config):
     wave_config = dict(config or {})
     wave_config.setdefault("mode", "ema_wave")
 
-    if not evaluate_ema_rules(candles, wave_config):
+    closed_candles = completed_candles(candles)
+    if not evaluate_ema_rules(closed_candles, wave_config):
         return False, None
 
-    return True, build_ema_sticker(candles, wave_config)
+    return True, build_ema_sticker(closed_candles, wave_config)
 
 
 def handle_macd(asset, candles, config):
