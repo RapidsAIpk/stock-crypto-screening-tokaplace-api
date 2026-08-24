@@ -79,6 +79,19 @@ class ProviderKeyStore:
             ).fetchone()
         return row["api_key"] if row else None
 
+    def get_effective_override(self, provider: str) -> str | None:
+        """App-wide override: the most recently saved key for this provider,
+        regardless of which user saved it. Whoever last saved a key in
+        Settings becomes the key the whole app uses for that provider.
+        """
+        provider = self._require_provider(provider)
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT api_key FROM provider_api_keys WHERE provider = ? ORDER BY updated_at DESC LIMIT 1",
+                (provider,),
+            ).fetchone()
+        return row["api_key"] if row else None
+
     def status(self, user_id: str) -> dict:
         with self._lock, self._connect() as conn:
             rows = conn.execute(
