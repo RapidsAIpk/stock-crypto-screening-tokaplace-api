@@ -956,6 +956,11 @@ def _cache_age_seconds(updated_at, now):
 # =========================================================
 
 def _polygon_api_key():
+    from services.provider_key_store import store as provider_key_store
+
+    override = provider_key_store.get_effective_override("massive")
+    if override:
+        return override
     return str(settings.market_data_api_key or "").strip()
 
 

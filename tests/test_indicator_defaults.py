@@ -16,7 +16,52 @@ from services import ema, indicators, screener  # noqa: E402
 class IndicatorDefaultTests(unittest.TestCase):
     def test_required_candles_uses_ema_default_length_9(self):
         indicator = SimpleNamespace(name="ema", config={})
-        self.assertEqual(screener.required_candles_for_indicators([indicator]), 10)
+        self.assertEqual(screener.required_candles_for_indicators([indicator]), 11)
+
+    def test_required_candles_uses_ema_periods_and_range_budget(self):
+        indicator = SimpleNamespace(
+            name="ema",
+            config={
+                "simple_ema": True,
+                "periods": [9, 20],
+                "conditions": {
+                    "touch_from_above": {
+                        "enabled": True,
+                        "candles_since_max": 5,
+                    },
+                },
+            },
+        )
+        self.assertEqual(screener.required_candles_for_indicators([indicator]), 27)
+
+    def test_required_candles_uses_tradingview_standard_ema_preset(self):
+        indicator = SimpleNamespace(
+            name="ema",
+            config={
+                "simple_ema": True,
+                "title": "EMA 20/50/100/200",
+                "conditions": {
+                    "touch_from_above": {
+                        "enabled": True,
+                        "candles_since_max": 5,
+                    },
+                },
+            },
+        )
+        self.assertEqual(screener.required_candles_for_indicators([indicator]), 207)
+
+    def test_tradingview_standard_ema_preset_normalizes_periods(self):
+        self.assertEqual(
+            ema.normalize_ema_periods({"title": "EMA 20/50/100/200"}),
+            [20, 50, 100, 200],
+        )
+        self.assertEqual(
+            ema.normalize_ema_periods({
+                "title": "EMA 20/50/100/200",
+                "periods": [9],
+            }),
+            [9],
+        )
 
     def test_required_candles_uses_trend_pivot_history_budget(self):
         indicator = SimpleNamespace(name="trend", config={})

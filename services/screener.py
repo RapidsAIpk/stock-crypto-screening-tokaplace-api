@@ -13,6 +13,7 @@ from services.asset_router import build_asset_universe, resolve_asset_metadata
 from services.indicators import apply_indicators, evaluate_indicator_details
 from services.channel_respect import apply_channel_respect, evaluate_channel_respect_detail
 from services.dead_assets import apply_dead_assets, evaluate_dead_assets_detail
+from services.ema import normalize_ema_periods
 from services.confluence import (
     apply_confluence,
     default_confluence_selection,
@@ -593,9 +594,21 @@ def required_candles_for_indicators(indicators):
             needed = lr_length + signal_smoothing + window + confirmation_window
         elif name in {"ema", "ema_wave"}:
             mode = str(config.get("mode", config.get("type", "")) or "").strip().lower()
-            is_wave = name == "ema_wave" or not (
-                mode in {"price", "simple", "simple_ema", "ema_price", "moving_average"}
-                or config.get("simple_ema") is True
+            is_wave = name == "ema_wave" or mode in {"wave", "ema_wave", "ewi", "ewi_lb"} or any(
+                key in config
+                for key in (
+                    "wave",
+                    "wave_a_length",
+                    "wave_b_length",
+                    "wave_c_length",
+                    "wave_sma_length",
+                    "alength",
+                    "blength",
+                    "clength",
+                    "lengthMA",
+                    "mse",
+                    "cutoff",
+                )
             )
             if is_wave:
                 longest_wave = max(
@@ -606,7 +619,29 @@ def required_candles_for_indicators(indicators):
                 smoothing = _safe_int(config.get("wave_sma_length", config.get("lengthMA", config.get("length_ma"))), 4, minimum=1)
                 needed = longest_wave + smoothing + 1
             else:
-                needed = _safe_int(config.get("length"), 9, minimum=1) + 1
+                periods = normalize_ema_periods(config)
+                max_period = max(periods or [9])
+                max_candles_since = 0
+                conditions = config.get("conditions")
+                if isinstance(conditions, dict):
+                    iterable_conditions = conditions.values()
+                else:
+                    iterable_conditions = []
+                for condition in iterable_conditions:
+                    if isinstance(condition, dict):
+                        max_candles_since = max(
+                            max_candles_since,
+                            _safe_int(
+                                condition.get("candles_since_max", condition.get("max_candles_since")),
+                                0,
+                                minimum=0,
+                            ),
+                        )
+                max_candles_since = max(
+                    max_candles_since,
+                    _safe_int(config.get("candles_since_max", config.get("window_max")), 0, minimum=0),
+                )
+                needed = max_period + max_candles_since + 2
         elif name == "macd":
             fast = _safe_int(config.get("fast"), 12, minimum=1)
             slow = _safe_int(config.get("slow"), 26, minimum=1)
