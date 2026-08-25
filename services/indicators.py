@@ -129,6 +129,14 @@ def _trend_area_condition(area_rule):
         interaction = "Entered Zone"
     elif action == "rejected":
         interaction = "Rejected from Zone"
+    elif action == "piercing_from_below":
+        interaction = "Piercing From Below"
+    elif action in {"reclaimed_from_below_bullish", "reclaim_from_below_bullish"}:
+        interaction = "Reclaimed From Below"
+    elif action in {"rejected_from_above_bullish", "rejected_from_above_bullish_support"}:
+        interaction = "Rejected From Above"
+    elif action in {"rejected_from_below_bearish", "rejected_from_below_bearish_resistance"}:
+        interaction = "Rejected From Below"
     elif action == "breach":
         breach_parts = ["Breached"]
         if breach_type:
@@ -181,6 +189,17 @@ def _trend_rule_bias(area_rule):
     area = str(area_rule.get("area") or "").strip().lower()
     action = str(area_rule.get("action") or "").strip().lower()
     breach_direction = str(area_rule.get("breach_direction") or "any").strip().lower()
+
+    if action in {
+        "piercing_from_below",
+        "reclaimed_from_below_bullish",
+        "reclaim_from_below_bullish",
+        "rejected_from_above_bullish",
+        "rejected_from_above_bullish_support",
+    }:
+        return "bullish"
+    if action in {"rejected_from_below_bearish", "rejected_from_below_bearish_resistance"}:
+        return "bearish"
 
     if area == "top_line":
         if action == "closed_above":

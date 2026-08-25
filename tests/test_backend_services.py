@@ -1313,6 +1313,130 @@ class IndicatorMathTests(unittest.TestCase):
         self.assertTrue(passed)
         self.assertIsNotNone(sticker)
 
+    def test_channel_line_piercing_reclaim_rejection_conditions(self):
+        channel = {
+            "length": 5,
+            "lower": [10.0, 10.0, 10.0, 10.0, 10.0],
+            "middle": [12.0, 12.0, 12.0, 12.0, 12.0],
+            "upper": [20.0, 20.0, 20.0, 20.0, 20.0],
+        }
+
+        piercing_candles = [
+            {"open": 9.0, "high": 9.5, "low": 8.8, "close": 9.0},
+            {"open": 9.0, "high": 9.4, "low": 8.9, "close": 9.2},
+            {"open": 9.2, "high": 11.0, "low": 9.0, "close": 10.8},
+            {"open": 10.8, "high": 11.2, "low": 10.4, "close": 10.9},
+            {"open": 10.9, "high": 11.4, "low": 10.5, "close": 11.0},
+        ]
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(piercing_candles, channel, {
+            "lines": ["lower"],
+            "action": "piercing_from_below",
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+        }))
+
+        reclaim_candles = [
+            {"open": 9.0, "high": 9.5, "low": 8.8, "close": 9.0},
+            {"open": 9.0, "high": 9.4, "low": 8.9, "close": 9.2},
+            {"open": 9.2, "high": 10.8, "low": 9.0, "close": 10.4},
+            {"open": 10.4, "high": 11.0, "low": 10.2, "close": 10.5},
+            {"open": 10.5, "high": 11.2, "low": 10.3, "close": 10.6},
+        ]
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(reclaim_candles, channel, {
+            "lines": ["lower"],
+            "action": "reclaimed_from_below_bullish",
+            "min_consecutive_below": 2,
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+        }))
+
+        support_rejection_candles = [
+            {"open": 11.0, "high": 11.4, "low": 10.7, "close": 11.0},
+            {"open": 11.0, "high": 11.3, "low": 10.6, "close": 10.8},
+            {"open": 10.8, "high": 11.0, "low": 9.8, "close": 10.5},
+            {"open": 10.5, "high": 11.0, "low": 10.2, "close": 10.7},
+            {"open": 10.7, "high": 11.1, "low": 10.4, "close": 10.8},
+        ]
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(support_rejection_candles, channel, {
+            "lines": ["lower"],
+            "action": "rejected_from_above_bullish",
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+        }))
+
+        resistance_rejection_candles = [
+            {"open": 19.0, "high": 19.5, "low": 18.7, "close": 19.0},
+            {"open": 19.0, "high": 19.4, "low": 18.8, "close": 19.2},
+            {"open": 19.2, "high": 20.2, "low": 18.9, "close": 19.7},
+            {"open": 19.7, "high": 19.9, "low": 19.2, "close": 19.5},
+            {"open": 19.5, "high": 19.8, "low": 19.1, "close": 19.4},
+        ]
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(resistance_rejection_candles, channel, {
+            "lines": ["upper"],
+            "action": "rejected_from_below_bearish",
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+        }))
+
+    def test_channel_line_selection_modes_for_new_conditions(self):
+        candles = [
+            {"open": 9.0, "high": 9.5, "low": 8.8, "close": 9.0},
+            {"open": 9.0, "high": 9.4, "low": 8.9, "close": 9.2},
+            {"open": 9.2, "high": 11.0, "low": 9.0, "close": 10.8},
+        ]
+        channel = {
+            "length": 3,
+            "lower": [10.0, 10.0, 10.0],
+            "middle": [30.0, 30.0, 30.0],
+        }
+        config = {
+            "lines": ["lower", "middle"],
+            "action": "piercing_from_below",
+            "candles_since_min": 0,
+            "candles_since_max": 0,
+        }
+
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(candles, channel, {**config, "selection_mode": "any"}))
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(candles, channel, {**config, "selection_mode": "one"}))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, {**config, "selection_mode": "all"}))
+
+    def test_trend_channel_new_line_and_zone_interactions(self):
+        candles = [
+            {"open": 9.0, "high": 9.5, "low": 8.8, "close": 9.0},
+            {"open": 9.0, "high": 9.4, "low": 8.9, "close": 9.2},
+            {"open": 9.2, "high": 11.0, "low": 9.0, "close": 10.8},
+            {"open": 10.8, "high": 11.2, "low": 10.4, "close": 10.9},
+            {"open": 10.9, "high": 11.4, "low": 10.5, "close": 11.0},
+        ]
+        tc = {
+            "length": 5,
+            "bottom": [10.0, 10.0, 10.0, 10.0, 10.0],
+            "middle": [12.0, 12.0, 12.0, 12.0, 12.0],
+            "top": [20.0, 20.0, 20.0, 20.0, 20.0],
+            "bottom_zone_lower": [9.0, 9.0, 9.0, 9.0, 9.0],
+            "bottom_zone_upper": [10.0, 10.0, 10.0, 10.0, 10.0],
+            "top_zone_lower": [20.0, 20.0, 20.0, 20.0, 20.0],
+            "top_zone_upper": [21.0, 21.0, 21.0, 21.0, 21.0],
+        }
+
+        self.assertTrue(trend_channels.evaluate_trend_channel_rules(candles, tc, {
+            "areas": [{
+                "area": "bottom_line",
+                "action": "piercing_from_below",
+                "candles_since_min": 2,
+                "candles_since_max": 2,
+            }],
+        }))
+
+        self.assertTrue(trend_channels.evaluate_trend_channel_rules(candles, tc, {
+            "areas": [{
+                "area": "bottom_zone",
+                "action": "piercing_from_below",
+                "candles_since_min": 2,
+                "candles_since_max": 2,
+            }],
+        }))
+
     def test_confirm_if_needed_without_type_or_pattern_fails(self):
         candles = [{"open": 1.0, "close": 1.1, "high": 1.2, "low": 0.9}]
         self.assertFalse(
