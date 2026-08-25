@@ -3,6 +3,12 @@
 
 import math
 
+from services.channel_interactions import (
+    evaluate_channel_interaction,
+    is_channel_interaction_action,
+    normalize_channel_interaction_action,
+)
+from services.range_utils import selection_mode_pass
 from services.utils import confirm_if_needed, detect_touch, humanize_token
 
 
@@ -22,11 +28,24 @@ def evaluate_regression_lines(candles, channel, config):
     action = str(config.get("action") or "").strip().lower()
     latest_index = len(candles) - 1
 
+    line_results = []
+
     for line_name in selected_lines:
         line_series = channel.get(line_name)
 
         if line_series is None:
             return False
+
+        if is_channel_interaction_action(action):
+            target_values = _target_values_for_line(line_series, config, line_name, start_index)
+            interaction_result = evaluate_channel_interaction(
+                candles,
+                target_values,
+                action,
+                config,
+            )
+            line_results.append(bool(interaction_result["passed"]))
+            continue
 
         if action in {"touch", "close_above", "close_below", "stay_above", "stay_below"}:
             signal_start_index = _current_signal_start_index(
@@ -47,11 +66,19 @@ def evaluate_regression_lines(candles, channel, config):
             if not confirm_if_needed(candles, signal_start_index, config):
                 return False
 
+            line_results.append(True)
             continue
 
         return False
 
-    return True
+    return selection_mode_pass(line_results, config.get("selection_mode", "all"))
+
+
+def _target_values_for_line(line_series, config, line_name=None, start_index=0):
+    return [None for _ in range(max(0, int(start_index or 0)))] + [
+        _evaluation_line_value(value, config, line_name)
+        for value in line_series
+    ]
 
 
 def _current_signal_start_index(
@@ -219,10 +246,15 @@ def build_regression_sticker(indicator_name, channel, config):
         "close_below": "Closed Below",
         "stay_above": "Stayed Above",
         "stay_below": "Stayed Below",
+        "piercing_from_below": "Piercing From Below",
+        "reclaimed_from_below_bullish": "Reclaimed From Below",
+        "rejected_from_above_bullish": "Rejected From Above",
+        "rejected_from_below_bearish": "Rejected From Below",
     }
 
     line_label = "/".join(_line_label(line) for line in lines)
-    interaction = action_map.get(action, humanize_token(action))
+    canonical_action = normalize_channel_interaction_action(action)
+    interaction = action_map.get(canonical_action, action_map.get(action, humanize_token(action)))
     condition = f"{line_label}: {interaction}" if line_label else interaction
 
     return {

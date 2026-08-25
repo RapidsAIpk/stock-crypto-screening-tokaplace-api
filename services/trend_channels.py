@@ -5,7 +5,13 @@ from collections import defaultdict
 
 import numpy as np
 
+from services.channel_interactions import (
+    evaluate_channel_interaction,
+    is_channel_interaction_action,
+    normalize_channel_interaction_action,
+)
 from services.market_data import MAX_CANDLES
+from services.range_utils import selection_mode_pass
 from services.utils import detect_touch, confirm_if_needed
 
 
@@ -612,24 +618,26 @@ def evaluate_trend_channel_rules(candles, tc, config, evidence=None):
     if not active_areas:
         return bool(selected_areas)
 
-    all_passed = True
+    area_results = []
 
     for area_rule in active_areas:
 
-        if not evaluate_single_area(
+        area_passed = evaluate_single_area(
             candles,
             tc,
             area_rule,
             evidence=evidence,
-        ):
-            all_passed = False
+        )
+        area_results.append(bool(area_passed))
+
+        if not area_passed:
             # Short-circuit on the hot screening path (evidence=None); keep
             # evaluating every configured area when evidence collection was
             # requested so the caller gets a full picture of what failed.
             if evidence is None:
                 return False
 
-    return all_passed
+    return selection_mode_pass(area_results, config.get("selection_mode", "all"))
 
 
 # =========================================================
@@ -718,6 +726,34 @@ def _evaluate_area_geometry(tc, rule, area, candle, regression_index):
         return matched, None, zone_low, zone_high, wick_overlap
 
     return False, None, None, None, False
+
+
+def _trend_area_target_values(tc, area, action):
+    canonical_action = normalize_channel_interaction_action(action)
+
+    if area in _LINE_AREA_SERIES_KEY:
+        return tc.get(_LINE_AREA_SERIES_KEY[area])
+
+    if area not in _ZONE_AREA_KEYS:
+        return None
+
+    lower_key, upper_key, _ = _ZONE_AREA_KEYS[area]
+    lower_series = tc.get(lower_key)
+    upper_series = tc.get(upper_key)
+    if lower_series is None or upper_series is None:
+        return None
+
+    if canonical_action in {
+        "piercing_from_below",
+        "reclaimed_from_below_bullish",
+        "rejected_from_above_bullish",
+    }:
+        return [max(float(low), float(high)) for low, high in zip(lower_series, upper_series)]
+
+    if canonical_action == "rejected_from_below_bearish":
+        return [min(float(low), float(high)) for low, high in zip(lower_series, upper_series)]
+
+    return None
 
 
 def _finalize_area_result(candidates, matched_index, empty_reason="no_candidates_checked"):
@@ -854,9 +890,46 @@ def _evaluate_single_area_core(candles, tc, rule):
      regression/LRC channel rules.
     """
     area = rule.get("area")
+    action = str(rule.get("action") or "").strip().lower()
     window = int(rule.get("window", 1) or 1)
     length = tc["length"]
     start_index = len(candles) - length
+
+    if is_channel_interaction_action(action):
+        target_values = _trend_area_target_values(tc, area, action)
+        if target_values is None:
+            return _finalize_area_result([], None, empty_reason="unsupported_area")
+
+        padded_target_values = [None for _ in range(max(0, start_index))] + list(target_values)
+        interaction_result = evaluate_channel_interaction(
+            candles,
+            padded_target_values,
+            action,
+            rule,
+        )
+
+        candidates = []
+        event_index = interaction_result.get("event_index")
+        if event_index is not None and 0 <= event_index < len(candles):
+            candidate = _base_candidate_info(candles[event_index], event_index)
+            target = padded_target_values[event_index]
+            if area in _LINE_AREA_SERIES_KEY:
+                candidate["line_value"] = target
+            else:
+                candidate["zone_low"] = target
+                candidate["zone_high"] = target
+            candidate["geometry_overlap"] = bool(interaction_result.get("passed"))
+            candidate["wick_overlap"] = bool(interaction_result.get("passed"))
+            candidate["failure_reason"] = "" if interaction_result.get("passed") else "outside_range"
+            candidates.append(candidate)
+
+        return {
+            "matched": bool(interaction_result.get("passed")),
+            "matched_index": event_index if interaction_result.get("passed") else None,
+            "candidates": candidates,
+            "failure_reason": None if interaction_result.get("passed") else "no_candidate_matched",
+            "candles_since": interaction_result.get("candles_since"),
+        }
 
     return _evaluate_exact_window_area(candles, tc, rule, area, window, start_index, length)
 
