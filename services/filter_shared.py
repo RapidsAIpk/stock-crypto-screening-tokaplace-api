@@ -128,18 +128,44 @@ async def get_completed_daily_candles(symbol, lookback_days):
     fewer than `lookback_days` completed candles are available so callers
     can exclude the symbol instead of silently averaging a shorter window.
     """
-    lookback_days = int(lookback_days)
-    if lookback_days <= 0 or not symbol:
+    if not symbol:
         return None
+
+    by_symbol = await get_completed_daily_candles_bulk([symbol], lookback_days)
+    return by_symbol.get(symbol)
+
+
+async def get_completed_daily_candles_bulk(symbols, lookback_days):
+    """Same contract as `get_completed_daily_candles`, for many symbols in a
+    single fetch.
+
+    Scan-time filters (ADR, Gap Exclusion) run over the whole surviving
+    universe, so fetching one symbol at a time would multiply provider calls
+    by the symbol count. Returns {symbol: candles} and simply omits symbols
+    without enough completed daily history.
+    """
+    lookback_days = int(lookback_days)
+    if lookback_days <= 0 or not symbols:
+        return {}
+
+    unique_symbols = list(dict.fromkeys(symbol for symbol in symbols if symbol))
+    if not unique_symbols:
+        return {}
 
     # +1 so a still-forming daily candle can be dropped without leaving the
     # caller one candle short of the requested lookback.
-    results = await fetch_live_data([symbol], "1day", candles_limit=lookback_days + 1)
+    results = await fetch_live_data(unique_symbols, "1day", candles_limit=lookback_days + 1)
     if not results:
-        return None
+        return {}
 
-    candles = drop_unclosed_last_candle(results[0].get("candles") or [])
-    if len(candles) < lookback_days:
-        return None
+    by_symbol = {}
+    for payload in results:
+        symbol = payload.get("symbol")
+        if not symbol:
+            continue
+        candles = drop_unclosed_last_candle(payload.get("candles") or [])
+        if len(candles) < lookback_days:
+            continue
+        by_symbol[symbol] = candles[-lookback_days:]
 
-    return candles[-lookback_days:]
+    return by_symbol

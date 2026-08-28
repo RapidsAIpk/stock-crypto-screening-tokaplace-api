@@ -400,6 +400,61 @@ class DeadAssetsFilter(BaseModel):
 
 
 # --------------------------------------------------
+# AVERAGE DAILY RANGE (ADR $)
+# --------------------------------------------------
+
+AdrCondition = Literal["gte", "lte", "between"]
+
+
+class AdrFilter(BaseModel):
+    """Average Daily Range in dollars: average(Daily High - Daily Low) over
+    `lookback_days` fully completed daily candles. Not ATR, not True Range,
+    not a percentage."""
+
+    enabled: bool = True
+
+    lookback_days: int = 14
+
+    condition: AdrCondition = "gte"
+
+    min_adr: Optional[float] = None
+
+    max_adr: Optional[float] = None
+
+    # Stocks by default; crypto only when the user separately opts in, so
+    # 24/7 crypto daily candles are never silently mixed with market sessions.
+    apply_to_crypto: bool = False
+
+    @model_validator(mode="after")
+    def validate_adr_filter(self):
+        if not self.enabled:
+            return self
+
+        if self.lookback_days < 1:
+            raise ValueError("adr.lookback_days must be at least 1")
+
+        if self.min_adr is not None and self.min_adr < 0:
+            raise ValueError("adr.min_adr cannot be negative")
+        if self.max_adr is not None and self.max_adr < 0:
+            raise ValueError("adr.max_adr cannot be negative")
+
+        if self.condition == "gte" and self.min_adr is None:
+            raise ValueError("adr.min_adr is required when condition is 'gte'")
+        if self.condition == "lte" and self.max_adr is None:
+            raise ValueError("adr.max_adr is required when condition is 'lte'")
+
+        if self.condition == "between":
+            if self.min_adr is None or self.max_adr is None:
+                raise ValueError(
+                    "adr.min_adr and adr.max_adr are both required when condition is 'between'"
+                )
+            if self.min_adr > self.max_adr:
+                raise ValueError("adr.min_adr cannot be greater than adr.max_adr")
+
+        return self
+
+
+# --------------------------------------------------
 # MAIN REQUEST
 # --------------------------------------------------
 
@@ -472,6 +527,11 @@ class ScreeningRequest(BaseModel):
     # DEAD ASSETS
     # -----------------------------
     dead_assets: Optional[DeadAssetsFilter] = None
+
+    # -----------------------------
+    # AVERAGE DAILY RANGE (ADR $)
+    # -----------------------------
+    adr: Optional[AdrFilter] = None
 
     asset_categories: Optional[List[str]] = None
 

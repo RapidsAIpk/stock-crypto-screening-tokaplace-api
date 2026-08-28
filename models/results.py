@@ -49,6 +49,9 @@ class ScreeningResult(ResultsBaseModel):
     candles_count: Optional[int] = None
     last_candle_time: Optional[int] = None
 
+    # Average Daily Range in dollars, present only when the ADR filter ran.
+    adr: Optional[float] = None
+
     exchange: Optional[str] = None
     exchange_availability: Optional[List[str]] = None
 
