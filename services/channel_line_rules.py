@@ -4,6 +4,7 @@
 import math
 
 from services.channel_interactions import (
+    channel_interaction_stages,
     evaluate_channel_interaction,
     is_channel_interaction_action,
     normalize_channel_interaction_action,
@@ -12,7 +13,7 @@ from services.range_utils import selection_mode_pass
 from services.utils import confirm_if_needed, detect_touch, humanize_token
 
 
-def evaluate_regression_lines(candles, channel, config):
+def evaluate_regression_lines(candles, channel, config, evidence=None):
     selected_lines = config.get("lines", [])
     window = max(1, int(config.get("window", 1) or 1))
 
@@ -45,6 +46,20 @@ def evaluate_regression_lines(candles, channel, config):
                 config,
             )
             line_results.append(bool(interaction_result["passed"]))
+            if evidence is not None:
+                evidence.append({
+                    "line": line_name,
+                    "action": normalize_channel_interaction_action(action),
+                    "matched": bool(interaction_result["passed"]),
+                    "candles_since": interaction_result.get("candles_since"),
+                    "stages": channel_interaction_stages(
+                        candles,
+                        target_values,
+                        action,
+                        config,
+                        interaction_result.get("event_index"),
+                    ),
+                })
             continue
 
         if action in {"touch", "close_above", "close_below", "stay_above", "stay_below"}:
@@ -266,9 +281,24 @@ def build_regression_sticker(indicator_name, channel, config):
     }
 
 
+# Decisions for the Phase 2 multi-stage interactions. These are the only
+# actions that actually verify a reclaim or a rejection, so they are the only
+# ones allowed to claim one - see M3-ISS-02.
+CHANNEL_INTERACTION_DECISIONS = {
+    "piercing_from_below": "Bullish Piercing",
+    "reclaimed_from_below_bullish": "Bullish Reclaim",
+    "rejected_from_above_bullish": "Bullish Support Rejection",
+    "rejected_from_below_bearish": "Bearish Resistance Rejection",
+}
+
+
 def _regression_decision(lines, action):
     normalized_lines = {str(line or "").strip().lower() for line in (lines or [])}
     normalized_action = str(action or "").strip().lower()
+
+    interaction_action = normalize_channel_interaction_action(normalized_action)
+    if interaction_action in CHANNEL_INTERACTION_DECISIONS:
+        return CHANNEL_INTERACTION_DECISIONS[interaction_action]
 
     has_upper = bool(normalized_lines.intersection({"upper", "top"}))
     has_lower = bool(normalized_lines.intersection({"lower", "bottom"}))
@@ -286,7 +316,11 @@ def _regression_decision(lines, action):
     if normalized_action == "close_above":
         if has_upper:
             return "Bullish Breakout"
-        return "Bullish Reclaim"
+        # NOT a reclaim: `close_above` is a single-candle state check that
+        # never verifies price previously closed below the line. Calling it
+        # "Bullish Reclaim" is what made rejections and reclaims look
+        # identical in results (M3-ISS-02).
+        return "Bullish Close Above"
 
     if normalized_action == "close_below":
         if has_lower:

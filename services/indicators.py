@@ -310,7 +310,8 @@ def handle_lrc(asset, candles, config):
     if not passes_r_filter(channel["r"], config):
         return False, None
 
-    if not evaluate_regression_lines(candles, channel, config):
+    interaction_evidence = []
+    if not evaluate_regression_lines(candles, channel, config, evidence=interaction_evidence):
         return False, None
 
     asset["channels"]["lrc"] = {
@@ -320,7 +321,7 @@ def handle_lrc(asset, candles, config):
     }
 
     sticker_data = build_regression_sticker("LRC", channel, config)
-    return True, build_indicator_sticker(
+    sticker = build_indicator_sticker(
         sticker_data["name"],
         sticker_data["condition"],
         config,
@@ -328,6 +329,12 @@ def handle_lrc(asset, candles, config):
         window=sticker_data["window"],
         decision=sticker_data.get("decision"),
     )
+    if interaction_evidence:
+        return True, {
+            "sticker": sticker,
+            "evidence": {"channel_interactions": interaction_evidence},
+        }
+    return True, sticker
 
 
 def _log_dw_regression_evaluation(asset, candles, channel, config, passed):
@@ -465,14 +472,17 @@ def handle_regression(asset, candles, config):
     # still controlled solely by `passed`, while the details/chart path can
     # now display the exact channel that produced either PASS or FAIL.
     asset["channels"]["regression"] = channel
-    passed = evaluate_regression_lines(candles, channel, evaluation_config)
+    interaction_evidence = []
+    passed = evaluate_regression_lines(
+        candles, channel, evaluation_config, evidence=interaction_evidence,
+    )
     _log_dw_regression_evaluation(asset, candles, channel, evaluation_config, passed)
 
     if not passed:
         return False, None
 
     sticker_data = build_regression_sticker("Regression Channel", channel, evaluation_config)
-    return True, build_indicator_sticker(
+    sticker = build_indicator_sticker(
         sticker_data["name"],
         sticker_data["condition"],
         evaluation_config,
@@ -480,6 +490,12 @@ def handle_regression(asset, candles, config):
         window=sticker_data["window"],
         decision=sticker_data.get("decision"),
     )
+    if interaction_evidence:
+        return True, {
+            "sticker": sticker,
+            "evidence": {"channel_interactions": interaction_evidence},
+        }
+    return True, sticker
 
 
 def handle_rsi(asset, candles, config):

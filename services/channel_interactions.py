@@ -107,16 +107,23 @@ def _rejected_from_below_bearish(candles, target_values, index):
     )
 
 
-def _consecutive_below_before(candles, target_values, index):
-    count = 0
+def _consecutive_below_indexes_before(candles, target_values, index):
+    """Indexes of the unbroken run of closes below the line ending at
+    `index - 1`, oldest first."""
+    indexes = []
     cursor = index - 1
     while cursor >= 0:
         target = _finite_target(target_values, cursor)
         if target is None or _close(candles, cursor) >= target:
             break
-        count += 1
+        indexes.append(cursor)
         cursor -= 1
-    return count
+    indexes.reverse()
+    return indexes
+
+
+def _consecutive_below_before(candles, target_values, index):
+    return len(_consecutive_below_indexes_before(candles, target_values, index))
 
 
 def _reclaimed_from_below_bullish(candles, target_values, index, config):
@@ -196,3 +203,90 @@ def evaluate_channel_interaction(candles, target_values, action, config):
         "event_index": event_index,
         "candles_since": latest_index - event_index if event_index is not None else None,
     }
+
+
+# =========================================================
+# EVIDENCE — per-stage breakdown for the detail chart
+# =========================================================
+
+def _stage(candles, target_values, index, stage, note):
+    if index is None or index < 0 or index >= len(candles):
+        return None
+    candle = candles[index]
+    return {
+        "stage": stage,
+        "note": note,
+        "candle_index": index,
+        "candle_time": candle.get("time"),
+        "line_value": _finite_target(target_values, index),
+        "open": candle.get("open"),
+        "high": candle.get("high"),
+        "low": candle.get("low"),
+        "close": candle.get("close"),
+    }
+
+
+def channel_interaction_stages(candles, target_values, action, config, event_index):
+    """The individual candles that make up one interaction, so the detail
+    chart can show *why* it qualified rather than just that it did.
+
+    This is what makes a Reclaim distinguishable from a Rejection on screen:
+    a reclaim shows the run of closes below the line before it, a rejection
+    shows that price only touched the line and never closed below (M3-ISS-02).
+    """
+    normalized = normalize_channel_interaction_action(action)
+    if event_index is None or not candles:
+        return []
+
+    stages = []
+    latest_index = len(candles) - 1
+
+    if normalized == "reclaimed_from_below_bullish":
+        below_indexes = _consecutive_below_indexes_before(candles, target_values, event_index)
+        for position, index in enumerate(below_indexes, start=1):
+            stages.append(_stage(
+                candles, target_values, index, "closed_below",
+                f"Closed below the line ({position} of {len(below_indexes)} consecutive).",
+            ))
+        stages.append(_stage(
+            candles, target_values, event_index, "reclaim_close_above",
+            "Reclaim: first candle to close back above the line after that run.",
+        ))
+        if latest_index != event_index:
+            stages.append(_stage(
+                candles, target_values, latest_index, "still_above_now",
+                "Newest completed candle - still holding above the line.",
+            ))
+
+    elif normalized == "rejected_from_above_bullish":
+        stages.append(_stage(
+            candles, target_values, event_index - 1, "came_from_above",
+            "Previous candle closed above the line - price approached from above.",
+        ))
+        stages.append(_stage(
+            candles, target_values, event_index, "rejected_close_above",
+            "Touched/pierced the line intraday but closed back above it. "
+            "No close below the line is required for a rejection.",
+        ))
+
+    elif normalized == "rejected_from_below_bearish":
+        stages.append(_stage(
+            candles, target_values, event_index - 1, "came_from_below",
+            "Previous candle closed below the line - price approached from below.",
+        ))
+        stages.append(_stage(
+            candles, target_values, event_index, "rejected_close_below",
+            "Touched/pierced the line intraday but closed back below it.",
+        ))
+
+    elif normalized == "piercing_from_below":
+        stages.append(_stage(
+            candles, target_values, event_index - 1, "closed_below",
+            "Previous candle closed below the line.",
+        ))
+        stages.append(_stage(
+            candles, target_values, event_index, "pierced_close_above",
+            "Broke up through the line and closed above it.",
+        ))
+
+    return [item for item in stages if item is not None]
