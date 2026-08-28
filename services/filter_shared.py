@@ -135,7 +135,7 @@ async def get_completed_daily_candles(symbol, lookback_days):
     return by_symbol.get(symbol)
 
 
-async def get_completed_daily_candles_bulk(symbols, lookback_days):
+async def get_completed_daily_candles_bulk(symbols, lookback_days, minimum_days=None):
     """Same contract as `get_completed_daily_candles`, for many symbols in a
     single fetch.
 
@@ -143,10 +143,17 @@ async def get_completed_daily_candles_bulk(symbols, lookback_days):
     universe, so fetching one symbol at a time would multiply provider calls
     by the symbol count. Returns {symbol: candles} and simply omits symbols
     without enough completed daily history.
+
+    `minimum_days` defaults to `lookback_days` - the strict "give me the full
+    window or nothing" rule ADR needs. Gap Exclusion passes a lower floor
+    because it counts events across whatever verified history exists rather
+    than averaging a fixed-size window.
     """
     lookback_days = int(lookback_days)
     if lookback_days <= 0 or not symbols:
         return {}
+
+    minimum_days = lookback_days if minimum_days is None else max(1, int(minimum_days))
 
     unique_symbols = list(dict.fromkeys(symbol for symbol in symbols if symbol))
     if not unique_symbols:
@@ -164,7 +171,7 @@ async def get_completed_daily_candles_bulk(symbols, lookback_days):
         if not symbol:
             continue
         candles = drop_unclosed_last_candle(payload.get("candles") or [])
-        if len(candles) < lookback_days:
+        if len(candles) < minimum_days:
             continue
         by_symbol[symbol] = candles[-lookback_days:]
 

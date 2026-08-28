@@ -14,6 +14,7 @@ from services.indicators import apply_indicators, evaluate_indicator_details
 from services.channel_respect import apply_channel_respect, evaluate_channel_respect_detail
 from services.dead_assets import apply_dead_assets, evaluate_dead_assets_detail
 from services.adr import apply_adr, evaluate_adr_detail
+from services.gap_exclusion import apply_gap_exclusion, evaluate_gap_exclusion_detail
 from services.ema import normalize_ema_periods
 from services.confluence import (
     apply_confluence,
@@ -56,6 +57,7 @@ STAGE_LABELS = {
     "price_range": "Applying price range filter",
     "dead_assets": "Filtering dead assets",
     "adr": "Applying average daily range filter",
+    "gap_exclusion": "Excluding repeated gap creators",
     "indicators": "Evaluating indicators",
     "channel_respect": "Checking channel respect",
     "confluence": "Evaluating confluence",
@@ -104,6 +106,20 @@ async def _run_filter_pipeline(data, request, indicators, scan_stage_label: str)
     await _progress_stage(
         "adr",
         f"Average daily range filter: {len(data)} symbols remaining",
+        current=len(data),
+        total=len(data),
+    )
+
+    await _progress_stage("gap_exclusion", current=0, total=len(data))
+    data = await apply_gap_exclusion(
+        data,
+        getattr(request, "gap_exclusion", None),
+        getattr(request, "asset_type", None),
+    )
+    stage_symbols.append(("gap_exclusion", [asset["symbol"] for asset in data]))
+    await _progress_stage(
+        "gap_exclusion",
+        f"Gap exclusion filter: {len(data)} symbols remaining",
         current=len(data),
         total=len(data),
     )
@@ -1444,6 +1460,14 @@ async def get_asset_detail(symbol, asset_type, timeframe, request, scan_stage="s
     if adr_detail:
         filter_details.append(adr_detail)
 
+    gap_exclusion_detail = await evaluate_gap_exclusion_detail(
+        asset,
+        getattr(request, "gap_exclusion", None),
+        asset_type,
+    )
+    if gap_exclusion_detail:
+        filter_details.append(gap_exclusion_detail)
+
     channel_detail = evaluate_channel_respect_detail(asset, getattr(request, "channel_respect", None))
     if channel_detail:
         filter_details.append(channel_detail)
@@ -1487,6 +1511,14 @@ async def get_asset_detail(symbol, asset_type, timeframe, request, scan_stage="s
         "last_candle_time": candles[-1].get("time") if candles else None,
         "adr": next(
             (item["details"].get("adr") for item in filter_details if item["name"] == "adr"),
+            None,
+        ),
+        "qualifying_gap_count": next(
+            (
+                item["details"].get("gap_count")
+                for item in filter_details
+                if item["name"] == "gap_exclusion"
+            ),
             None,
         ),
         "stickers": detail_stickers,
@@ -1842,6 +1874,7 @@ def build_response(filtered, timeframe, scan_stage, gate_session_id=None, warnin
                     else None
                 ),
                 "adr": a.get("adr"),
+                "qualifying_gap_count": a.get("qualifying_gap_count"),
                 "stickers": a.get("stickers", []),
                 "matched_indicators": a.get("matched_indicators"),
                 "market_data_freshness": _market_data_freshness(a),

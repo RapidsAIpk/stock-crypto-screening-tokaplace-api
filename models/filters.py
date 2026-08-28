@@ -455,6 +455,45 @@ class AdrFilter(BaseModel):
 
 
 # --------------------------------------------------
+# REPEATED TRUE EMPTY-SPACE GAP EXCLUSION
+# --------------------------------------------------
+
+GapDirection = Literal["both", "up", "down"]
+
+
+class GapExclusionFilter(BaseModel):
+    """Excludes symbols that repeatedly create true empty-space gaps between
+    consecutive completed daily candles. A gap is strictly a blank price area
+    (current low > previous high, or current high < previous low) - large
+    candles, long wicks and overlapping candles never count."""
+
+    enabled: bool = True
+
+    lookback_days: int = 60
+
+    direction: GapDirection = "both"
+
+    # User-editable, never hardcoded to 5%.
+    min_gap_pct: float = 5.0
+
+    max_gaps: int = 2
+
+    @model_validator(mode="after")
+    def validate_gap_exclusion_filter(self):
+        if not self.enabled:
+            return self
+
+        if self.lookback_days < 2:
+            raise ValueError("gap_exclusion.lookback_days must be at least 2")
+        if self.min_gap_pct < 0:
+            raise ValueError("gap_exclusion.min_gap_pct cannot be negative")
+        if self.max_gaps < 0:
+            raise ValueError("gap_exclusion.max_gaps cannot be negative")
+
+        return self
+
+
+# --------------------------------------------------
 # MAIN REQUEST
 # --------------------------------------------------
 
@@ -532,6 +571,11 @@ class ScreeningRequest(BaseModel):
     # AVERAGE DAILY RANGE (ADR $)
     # -----------------------------
     adr: Optional[AdrFilter] = None
+
+    # -----------------------------
+    # REPEATED TRUE EMPTY-SPACE GAP EXCLUSION
+    # -----------------------------
+    gap_exclusion: Optional[GapExclusionFilter] = None
 
     asset_categories: Optional[List[str]] = None
 

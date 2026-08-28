@@ -52,6 +52,10 @@ class ScreeningResult(ResultsBaseModel):
     # Average Daily Range in dollars, present only when the ADR filter ran.
     adr: Optional[float] = None
 
+    # Qualifying true empty-space gaps counted in the lookback, present only
+    # when the Gap Exclusion filter ran.
+    qualifying_gap_count: Optional[int] = None
+
     exchange: Optional[str] = None
     exchange_availability: Optional[List[str]] = None
 

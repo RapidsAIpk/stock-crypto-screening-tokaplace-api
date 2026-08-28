@@ -451,18 +451,27 @@ def slice_recent(candles, limit=MAX_CANDLES, maximum=MAX_CANDLES):
 
 def _sanitize_candles(candles, *, source):
     """Graceful validation applied to every raw provider row after it has
-    been coerced into our candle shape: drop rows whose OHLC values are
-    internally inconsistent (low <= open/close <= high must hold), then
-    sort and de-duplicate by timestamp (last write wins) so a re-fetched or
-    out-of-order page can never leave the pipeline with unsorted or
-    repeated candle times.
+    been coerced into our candle shape: drop rows carrying a non-positive
+    timestamp, drop rows whose OHLC values are internally inconsistent
+    (low <= open/close <= high must hold), then sort and de-duplicate by
+    timestamp (last write wins) so a re-fetched or out-of-order page can
+    never leave the pipeline with unsorted or repeated candle times.
+
+    The timestamp guard matters because candles are sorted by time: an
+    epoch-0 placeholder row (which providers emit for a window with no
+    trades) would sort to the front of the series and silently corrupt
+    every rolling window, EMA seed and regression fit computed from it.
     """
     if not candles:
         return candles
 
     valid = []
     malformed = 0
+    undated = 0
     for candle in candles:
+        if int(candle.get("time") or 0) <= 0:
+            undated += 1
+            continue
         low = candle["low"]
         high = candle["high"]
         open_ = candle["open"]
@@ -471,6 +480,13 @@ def _sanitize_candles(candles, *, source):
             malformed += 1
             continue
         valid.append(candle)
+
+    if undated:
+        logger.warning(
+            "%s dropped %s row(s) with a non-positive timestamp",
+            source,
+            undated,
+        )
 
     if malformed:
         logger.warning(
