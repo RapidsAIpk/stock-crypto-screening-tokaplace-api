@@ -293,6 +293,7 @@ def _stochrsi_decision(rule):
 # =========================================================
 
 def handle_lrc(asset, candles, config):
+    candles = completed_candles(candles)
     deviation = config.get("deviation", config.get("devlen"))
     upper_dev = config.get("upper_dev", deviation if deviation is not None else 2.0)
     lower_dev = config.get("lower_dev", deviation if deviation is not None else 2.0)
@@ -452,6 +453,7 @@ def _regression_mintick(asset, config, candles=None):
 
 
 def handle_regression(asset, candles, config):
+    candles = completed_candles(candles)
     evaluation_config = dict(config or {})
     mintick = _regression_mintick(asset, evaluation_config, candles)
     if mintick is not None:
