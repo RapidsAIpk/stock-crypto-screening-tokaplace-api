@@ -325,6 +325,40 @@ class PriceRangeFilter(BaseModel):
     max_price: Optional[float] = None
 
 
+AdrCondition = Literal["gte", "lte", "between"]
+
+
+class AdrFilter(BaseModel):
+    enabled: bool = True
+    lookback_days: int = 14
+    condition: AdrCondition = "gte"
+    min_adr: Optional[float] = None
+    max_adr: Optional[float] = None
+    include_crypto: bool = False
+
+    @model_validator(mode="after")
+    def validate_adr_filter(self):
+        if self.lookback_days < 1:
+            raise ValueError("adr.lookback_days must be at least 1")
+
+        if self.min_adr is not None and self.min_adr < 0:
+            raise ValueError("adr.min_adr cannot be negative")
+        if self.max_adr is not None and self.max_adr < 0:
+            raise ValueError("adr.max_adr cannot be negative")
+
+        if self.condition == "gte" and self.min_adr is None:
+            raise ValueError("adr.min_adr is required when condition='gte'")
+        if self.condition == "lte" and self.max_adr is None:
+            raise ValueError("adr.max_adr is required when condition='lte'")
+        if self.condition == "between":
+            if self.min_adr is None or self.max_adr is None:
+                raise ValueError("adr.min_adr and adr.max_adr are required when condition='between'")
+            if self.min_adr > self.max_adr:
+                raise ValueError("adr.min_adr cannot be greater than adr.max_adr")
+
+        return self
+
+
 # --------------------------------------------------
 # DEAD ASSETS (Omit Dead Stock / Crypto)
 # --------------------------------------------------

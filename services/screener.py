@@ -55,6 +55,7 @@ STAGE_LABELS = {
     "building_universe": "Building asset universe",
     "fetching_market_data": "Fetching market data",
     "price_range": "Applying price range filter",
+    "adr": "Applying ADR filter",
     "dead_assets": "Filtering dead assets",
     "adr": "Applying average daily range filter",
     "gap_exclusion": "Excluding repeated gap creators",
@@ -223,6 +224,7 @@ def _scope_payload_from_request(request):
         "excluded_categories": _normalize_list(getattr(request, "excluded_categories", None)),
         "gate_timeframe": getattr(request, "gate_timeframe", None),
         "indicators": _normalized_indicator_scope(getattr(request, "indicators", None)),
+        "adr": _model_to_dict(getattr(request, "adr", None)) or {},
     }
 
 
@@ -582,9 +584,27 @@ def required_candles_for_indicators(indicators):
             length = _safe_int(config.get("length"), 11, minimum=1)
             max_candles_since = 0
             for condition in config.get("conditions") or []:
-                value = condition.get("candles_since") if isinstance(condition, dict) else getattr(condition, "candles_since", None)
-                if value is not None:
-                    max_candles_since = max(max_candles_since, _safe_int(value, 0, minimum=0))
+                if isinstance(condition, dict):
+                    values = [
+                        condition.get("candles_since"),
+                        condition.get("candles_since_max"),
+                        condition.get("max_candles_since"),
+                        condition.get("candles_since_direction_change_max"),
+                        condition.get("active_candles_max"),
+                        condition.get("consecutive_candles_max"),
+                    ]
+                else:
+                    values = [
+                        getattr(condition, "candles_since", None),
+                        getattr(condition, "candles_since_max", None),
+                        getattr(condition, "max_candles_since", None),
+                        getattr(condition, "candles_since_direction_change_max", None),
+                        getattr(condition, "active_candles_max", None),
+                        getattr(condition, "consecutive_candles_max", None),
+                    ]
+                for value in values:
+                    if value is not None:
+                        max_candles_since = max(max_candles_since, _safe_int(value, 0, minimum=0))
             # +10 covers the fixed internal lookback constants used by Weak/Compression
             # conditions (see WEAK_LOOKBACK etc. in services/trendy_adx.py), which aren't
             # driven by user-configured candles_since values.
@@ -1410,6 +1430,7 @@ def _build_request_filters(request, scan_stage, timeframe, selected_indicators):
         "channel_respect": _model_to_dict(getattr(request, "channel_respect", None)) or {},
         "confluence": _model_to_dict(getattr(request, "confluence", None)) or {},
         "price_range": _model_to_dict(getattr(request, "price_range", None)) or {},
+        "adr": _model_to_dict(getattr(request, "adr", None)) or {},
     }
 
 

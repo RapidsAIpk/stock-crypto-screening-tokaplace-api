@@ -51,6 +51,7 @@ from services.trendy_adx import (
     evaluate_trendy_adx_rules,
     build_trendy_adx_sticker,
     trendy_adx_debug_trace,
+    direction_streaks_evidence,
 )
 
 from services.vlr import (
@@ -710,19 +711,20 @@ def handle_trendy_adx(asset, candles, config):
         return False, None
 
     sticker = build_trendy_adx_sticker(computed, candles, config)
-    if config.get("debug") or config.get("trace"):
-        return True, {
-            "sticker": sticker,
-            "evidence": trendy_adx_debug_trace(
-                computed,
-                candles,
-                config,
-                symbol=asset.get("symbol"),
-                timeframe=asset.get("timeframe") or config.get("timeframe"),
-            ),
-        }
+    streaks = direction_streaks_evidence(computed, candles, config)
+    if not streaks and not (config.get("debug") or config.get("trace")):
+        return True, sticker
 
-    return True, sticker
+    evidence = {"direction_streaks": streaks}
+    if config.get("debug") or config.get("trace"):
+        evidence["debug"] = trendy_adx_debug_trace(
+            computed,
+            candles,
+            config,
+            symbol=asset.get("symbol"),
+            timeframe=asset.get("timeframe") or config.get("timeframe"),
+        )
+    return True, {"sticker": sticker, "evidence": evidence}
 
 
 def handle_vlr(asset, candles, config):

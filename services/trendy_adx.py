@@ -184,6 +184,221 @@ def _find_recent_event(n, window, predicate):
     return True, (n - 1) - latest
 
 
+def _coerce_non_negative_int(value, default=None):
+    if value is None:
+        return default
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _range_from_config(config, min_key, max_key, default_min=0, default_max=0):
+    config = config or {}
+    minimum = _coerce_non_negative_int(config.get(min_key), None)
+    maximum = _coerce_non_negative_int(config.get(max_key), None)
+
+    if minimum is None and maximum is None and config.get("candles_since") is not None:
+        legacy = _coerce_non_negative_int(config.get("candles_since"), default_max)
+        return 0, legacy
+
+    if minimum is None:
+        minimum = default_min
+    if maximum is None:
+        maximum = default_max
+    if maximum < minimum:
+        maximum = minimum
+    return minimum, maximum
+
+
+def _event_range_from_config(config, default_min=0, default_max=0):
+    return _range_from_config(
+        config,
+        "candles_since_min",
+        "candles_since_max",
+        default_min=default_min,
+        default_max=default_max,
+    )
+
+
+def _active_range_from_config(config, default_min=1, default_max=None):
+    config = config or {}
+    max_default = default_min if default_max is None else default_max
+    minimum = _coerce_non_negative_int(
+        config.get("active_candles_min", config.get("consecutive_candles_min")),
+        None,
+    )
+    maximum = _coerce_non_negative_int(
+        config.get("active_candles_max", config.get("consecutive_candles_max")),
+        None,
+    )
+
+    if minimum is None and maximum is None and config.get("candles_since") is not None:
+        legacy = max(1, _coerce_non_negative_int(config.get("candles_since"), default_min))
+        return legacy, None
+
+    if minimum is None:
+        minimum = default_min
+    if maximum is None:
+        maximum = max_default
+    if maximum is not None and maximum < minimum:
+        maximum = minimum
+    return minimum, maximum
+
+
+def _candles_since_in_range(candles_since, minimum, maximum):
+    if candles_since is None:
+        return False
+    if candles_since < minimum:
+        return False
+    if maximum is not None and candles_since > maximum:
+        return False
+    return True
+
+
+def _find_recent_event_in_range(n, condition_cfg, predicate, default_min=0, default_max=0):
+    minimum, maximum = _event_range_from_config(condition_cfg, default_min, default_max)
+    search_window = max(1, maximum + 1)
+    found, candles_since = _find_recent_event(n, search_window, predicate)
+    if not found:
+        return False, None
+    return _candles_since_in_range(candles_since, minimum, maximum), candles_since
+
+
+def _count_consecutive_active(n, predicate):
+    count = 0
+    for idx in range(n - 1, -1, -1):
+        if predicate(idx):
+            count += 1
+        else:
+            break
+    return count
+
+
+def _active_condition_in_range(n, condition_cfg, predicate, default_min=1, default_max=None):
+    if n <= 0 or not predicate(n - 1):
+        return False, None
+    condition_cfg = condition_cfg or {}
+    has_range = any(
+        key in condition_cfg
+        for key in (
+            "active_candles_min",
+            "active_candles_max",
+            "consecutive_candles_min",
+            "consecutive_candles_max",
+            "candles_since",
+        )
+    )
+    if not has_range:
+        return True, None
+    consecutive = _count_consecutive_active(n, predicate)
+    minimum, maximum = _active_range_from_config(condition_cfg, default_min, default_max)
+    passed = consecutive >= minimum and (maximum is None or consecutive <= maximum)
+    return passed, consecutive - 1
+
+
+def _line_direction_at(series, idx):
+    if idx <= 0:
+        return None
+    current = _v(series, idx)
+    previous = _v(series, idx - 1)
+    if current is None or previous is None:
+        return None
+    if current > previous:
+        return "up"
+    if current < previous:
+        return "down"
+    return "flat"
+
+
+def _line_direction_matches(series, idx, direction):
+    normalized = str(direction or "any").strip().lower()
+    if normalized in {"", "any"}:
+        return True
+    return _line_direction_at(series, idx) == normalized
+
+
+def _direction_changed_at(series, idx, direction):
+    current = _line_direction_at(series, idx)
+    previous = _line_direction_at(series, idx - 1)
+    return current == direction and previous != direction
+
+
+def _evaluate_direction_filter(condition_cfg, computed, n):
+    line_name = str(
+        condition_cfg.get("line")
+        or condition_cfg.get("direction_line")
+        or condition_cfg.get("target")
+        or "adx"
+    ).strip().lower()
+    direction = str(condition_cfg.get("direction") or "any").strip().lower()
+
+    line_map = {
+        "adx": computed.get("adx"),
+        "di_plus": computed.get("di_plus"),
+        "di+": computed.get("di_plus"),
+        "plus": computed.get("di_plus"),
+        "pink": computed.get("di_plus"),
+        "di_minus": computed.get("di_minus"),
+        "di-": computed.get("di_minus"),
+        "minus": computed.get("di_minus"),
+        "blue": computed.get("di_minus"),
+    }
+    series = line_map.get(line_name)
+    if series is None or n < 2:
+        return False, None
+    if direction in {"up", "down", "flat"}:
+        if not _line_direction_matches(series, n - 1, direction):
+            return False, None
+        effective_direction = direction
+    else:
+        # "any"/unset - accept whichever direction is currently active, but it must
+        # still be resolved to a concrete up/down/flat before streak-counting below,
+        # otherwise "any" matches every candle and the min/max range is never enforced.
+        effective_direction = _line_direction_at(series, n - 1)
+        if effective_direction is None:
+            return False, None
+    has_range = any(
+        key in condition_cfg
+        for key in (
+            "candles_since_direction_change_min",
+            "candles_since_direction_change_max",
+            "candles_since_min",
+            "candles_since_max",
+            "candles_since",
+        )
+    )
+    if not has_range:
+        return True, None
+
+    range_cfg = condition_cfg
+    if (
+        "candles_since_direction_change_min" not in condition_cfg
+        and "candles_since_direction_change_max" not in condition_cfg
+        and ("candles_since_min" in condition_cfg or "candles_since_max" in condition_cfg)
+    ):
+        range_cfg = {
+            **condition_cfg,
+            "candles_since_direction_change_min": condition_cfg.get("candles_since_min"),
+            "candles_since_direction_change_max": condition_cfg.get("candles_since_max"),
+        }
+    minimum, maximum = _range_from_config(
+        range_cfg,
+        "candles_since_direction_change_min",
+        "candles_since_direction_change_max",
+        default_min=0,
+        default_max=0,
+    )
+    # `minimum`/`maximum` bound the streak length itself (inclusive on both ends).
+    # Count the actual consecutive run backward from the newest candle rather than
+    # the distance to the transition candle - that distance is `streak_length - 1`,
+    # which under-counts the streak by one and let e.g. a 6-candle streak slip through
+    # a `..._max: 5` cap.
+    streak = _count_consecutive_active(n, lambda i: _line_direction_matches(series, i, effective_direction))
+    passed = streak >= minimum and streak <= maximum
+    return passed, streak - 1
+
+
 def _resolve_window(condition_cfg, default=1):
     """'Candles since event' preset -> maximum lookback window, matching this
     platform's existing 'within the last N candles' convention (RSI/WaveTrend/Aroon)."""
@@ -324,14 +539,26 @@ def _evaluate_directional_condition(condition_id, sub_cfg, computed, candles, do
         return False, None
 
     adx = computed["adx"]
+    if condition_id in {"direction", "line_direction", "adx_direction", "di_plus_direction", "di_minus_direction"}:
+        if condition_id == "adx_direction":
+            sub_cfg = {**(sub_cfg or {}), "line": "adx"}
+        elif condition_id == "di_plus_direction":
+            sub_cfg = {**(sub_cfg or {}), "line": "di_plus"}
+        elif condition_id == "di_minus_direction":
+            sub_cfg = {**(sub_cfg or {}), "line": "di_minus"}
+        return _evaluate_direction_filter(sub_cfg or {}, computed, n)
 
     if condition_id == "di_crossed_above":
-        window = _resolve_window(sub_cfg)
-        return _find_recent_event(n, window, lambda i: _crossed_above(dominant, opposing, i))
+        return _find_recent_event_in_range(n, sub_cfg, lambda i: _crossed_above(dominant, opposing, i))
 
     if condition_id == "di_already_above":
-        v_dom, v_opp = _v(dominant, n - 1), _v(opposing, n - 1)
-        return (v_dom is not None and v_opp is not None and v_dom > v_opp), None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(dominant, i) is not None
+            and _v(opposing, i) is not None
+            and _v(dominant, i) > _v(opposing, i),
+        )
 
     if condition_id == "di_near_cross":
         distance = _resolve_distance(sub_cfg)
@@ -341,18 +568,22 @@ def _evaluate_directional_condition(condition_id, sub_cfg, computed, candles, do
         return (v_dom < v_opp) and (v_opp - v_dom) <= distance, None
 
     if condition_id == "di_touched_bounced":
-        window = _resolve_window(sub_cfg, default=3)
         v_dom_latest, v_opp_latest = _v(dominant, n - 1), _v(opposing, n - 1)
         if v_dom_latest is None or v_opp_latest is None or v_dom_latest <= v_opp_latest:
             return False, None
-        start = max(0, n - window)
+        min_candles, max_candles = _event_range_from_config(sub_cfg, default_min=0, default_max=2)
+        start = max(0, n - max_candles - 1)
+        latest = None
         for i in range(start, n - 1):
             v_dom_i, v_opp_i = _v(dominant, i), _v(opposing, i)
             if v_dom_i is None or v_opp_i is None:
                 continue
             if v_dom_i - v_opp_i <= COMPRESSION_TOUCH_TOLERANCE:
-                return True, (n - 1) - i
-        return False, None
+                latest = i
+        if latest is None:
+            return False, None
+        candles_since = (n - 1) - latest
+        return _candles_since_in_range(candles_since, min_candles, max_candles), candles_since
 
     if condition_id == "di_separating":
         lookback = DIRECTIONAL_TREND_LOOKBACK
@@ -377,8 +608,7 @@ def _evaluate_directional_condition(condition_id, sub_cfg, computed, candles, do
         return v_opp_now < v_opp_then, None
 
     if condition_id == "adx_below_20":
-        v_adx = _v(adx, n - 1)
-        return (v_adx is not None and v_adx < threshold), None
+        return _active_condition_in_range(n, sub_cfg, lambda i: _v(adx, i) is not None and _v(adx, i) < threshold)
 
     if condition_id == "adx_near_20":
         distance = _resolve_distance(sub_cfg)
@@ -388,21 +618,17 @@ def _evaluate_directional_condition(condition_id, sub_cfg, computed, candles, do
         return abs(v_adx - threshold) <= distance, None
 
     if condition_id == "adx_crossed_above_20":
-        window = _resolve_window(sub_cfg)
         level = np.full(n, threshold, dtype=float)
-        return _find_recent_event(n, window, lambda i: _crossed_above(adx, level, i))
+        return _find_recent_event_in_range(n, sub_cfg, lambda i: _crossed_above(adx, level, i))
 
     if condition_id == "adx_above_20":
-        v_adx = _v(adx, n - 1)
-        return (v_adx is not None and v_adx > threshold), None
+        return _active_condition_in_range(n, sub_cfg, lambda i: _v(adx, i) is not None and _v(adx, i) > threshold)
 
     if condition_id == "adx_above_25":
-        v_adx = _v(adx, n - 1)
-        return (v_adx is not None and v_adx > STRONG_ADX), None
+        return _active_condition_in_range(n, sub_cfg, lambda i: _v(adx, i) is not None and _v(adx, i) > STRONG_ADX)
 
     if condition_id == "adx_above_40":
-        v_adx = _v(adx, n - 1)
-        return (v_adx is not None and v_adx > EXHAUSTION_ADX), None
+        return _active_condition_in_range(n, sub_cfg, lambda i: _v(adx, i) is not None and _v(adx, i) > EXHAUSTION_ADX)
 
     if condition_id in ("adx_below_dominant", "adx_above_dominant", "adx_near_dominant", "adx_crossed_above_dominant"):
         return _evaluate_adx_vs_line(condition_id, sub_cfg, adx, dominant, n, window_default=1)
@@ -411,27 +637,37 @@ def _evaluate_directional_condition(condition_id, sub_cfg, computed, candles, do
         return _evaluate_adx_vs_line(condition_id, sub_cfg, adx, opposing, n, window_default=1)
 
     if condition_id == "adx_below_both":
-        v_adx, v_dom, v_opp = _v(adx, n - 1), _v(dominant, n - 1), _v(opposing, n - 1)
-        if None in (v_adx, v_dom, v_opp):
-            return False, None
-        return v_adx < min(v_dom, v_opp), None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(adx, i) is not None
+            and _v(dominant, i) is not None
+            and _v(opposing, i) is not None
+            and _v(adx, i) < min(_v(dominant, i), _v(opposing, i)),
+        )
 
     if condition_id == "adx_between_both":
-        v_adx, v_dom, v_opp = _v(adx, n - 1), _v(dominant, n - 1), _v(opposing, n - 1)
-        if None in (v_adx, v_dom, v_opp):
-            return False, None
-        lower, upper = min(v_dom, v_opp), max(v_dom, v_opp)
-        return lower < v_adx < upper, None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(adx, i) is not None
+            and _v(dominant, i) is not None
+            and _v(opposing, i) is not None
+            and min(_v(dominant, i), _v(opposing, i)) < _v(adx, i) < max(_v(dominant, i), _v(opposing, i)),
+        )
 
     if condition_id == "adx_crossed_above_both":
-        window = _resolve_window(sub_cfg)
-        return _find_recent_event(n, window, lambda i: _crossed_above_both(adx, dominant, opposing, i))
+        return _find_recent_event_in_range(n, sub_cfg, lambda i: _crossed_above_both(adx, dominant, opposing, i))
 
     if condition_id == "adx_above_both":
-        v_adx, v_dom, v_opp = _v(adx, n - 1), _v(dominant, n - 1), _v(opposing, n - 1)
-        if None in (v_adx, v_dom, v_opp):
-            return False, None
-        return v_adx > max(v_dom, v_opp), None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(adx, i) is not None
+            and _v(dominant, i) is not None
+            and _v(opposing, i) is not None
+            and _v(adx, i) > max(_v(dominant, i), _v(opposing, i)),
+        )
 
     if condition_id in ("bg_just_started", "bg_active", "bg_active_for_x"):
         return _evaluate_background_condition(condition_id, sub_cfg, dominant, opposing, n)
@@ -441,27 +677,34 @@ def _evaluate_directional_condition(condition_id, sub_cfg, computed, candles, do
 
 def _evaluate_adx_vs_line(condition_id, sub_cfg, adx, line, n, window_default):
     if condition_id.startswith("adx_below"):
-        v_adx, v_line = _v(adx, n - 1), _v(line, n - 1)
-        if v_adx is None or v_line is None:
-            return False, None
-        return v_adx < v_line, None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(adx, i) is not None and _v(line, i) is not None and _v(adx, i) < _v(line, i),
+        )
 
     if condition_id.startswith("adx_above"):
-        v_adx, v_line = _v(adx, n - 1), _v(line, n - 1)
-        if v_adx is None or v_line is None:
-            return False, None
-        return v_adx > v_line, None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(adx, i) is not None and _v(line, i) is not None and _v(adx, i) > _v(line, i),
+        )
 
     if condition_id.startswith("adx_near"):
         distance = _resolve_distance(sub_cfg)
-        v_adx, v_line = _v(adx, n - 1), _v(line, n - 1)
-        if v_adx is None or v_line is None:
-            return False, None
-        return abs(v_adx - v_line) <= distance, None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(adx, i) is not None and _v(line, i) is not None and abs(_v(adx, i) - _v(line, i)) <= distance,
+        )
 
     if condition_id.startswith("adx_crossed_above"):
-        window = _resolve_window(sub_cfg, default=window_default)
-        return _find_recent_event(n, window, lambda i: _crossed_above(adx, line, i))
+        return _find_recent_event_in_range(
+            n,
+            sub_cfg,
+            lambda i: _crossed_above(adx, line, i),
+            default_max=max(0, window_default - 1),
+        )
 
     return False, None
 
@@ -482,12 +725,16 @@ def _evaluate_background_condition(condition_id, sub_cfg, dominant, opposing, n)
             break
 
     if condition_id == "bg_just_started":
-        window = _resolve_window(sub_cfg)
-        return (consecutive <= window), (consecutive - 1)
+        if (sub_cfg or {}).get("active_candles_min") is not None or (sub_cfg or {}).get("active_candles_max") is not None:
+            minimum, maximum = _active_range_from_config(sub_cfg, default_min=1, default_max=1)
+            return consecutive >= minimum and (maximum is None or consecutive <= maximum), (consecutive - 1)
+        minimum, maximum = _event_range_from_config(sub_cfg, default_min=0, default_max=0)
+        candles_since_started = consecutive - 1
+        return _candles_since_in_range(candles_since_started, minimum, maximum), candles_since_started
 
     if condition_id == "bg_active_for_x":
-        threshold_x = _resolve_window(sub_cfg, default=1)
-        return (consecutive >= threshold_x), (consecutive - 1)
+        minimum, maximum = _active_range_from_config(sub_cfg, default_min=1, default_max=None)
+        return consecutive >= minimum and (maximum is None or consecutive <= maximum), (consecutive - 1)
 
     return False, None
 
@@ -499,19 +746,33 @@ def _evaluate_background_condition(condition_id, sub_cfg, dominant, opposing, n)
 def _evaluate_compression_condition(condition_id, sub_cfg, computed, candles, threshold):
     n = len(candles)
     di_plus, di_minus, adx = computed["di_plus"], computed["di_minus"], computed["adx"]
+    if condition_id in {"direction", "line_direction", "adx_direction", "di_plus_direction", "di_minus_direction"}:
+        if condition_id == "adx_direction":
+            sub_cfg = {**(sub_cfg or {}), "line": "adx"}
+        elif condition_id == "di_plus_direction":
+            sub_cfg = {**(sub_cfg or {}), "line": "di_plus"}
+        elif condition_id == "di_minus_direction":
+            sub_cfg = {**(sub_cfg or {}), "line": "di_minus"}
+        return _evaluate_direction_filter(sub_cfg or {}, computed, n)
 
     if condition_id == "di_close_together":
         distance = _resolve_distance(sub_cfg)
-        v_plus, v_minus = _v(di_plus, n - 1), _v(di_minus, n - 1)
-        if v_plus is None or v_minus is None:
-            return False, None
-        return abs(v_plus - v_minus) <= distance, None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(di_plus, i) is not None
+            and _v(di_minus, i) is not None
+            and abs(_v(di_plus, i) - _v(di_minus, i)) <= distance,
+        )
 
     if condition_id == "di_touching":
-        v_plus, v_minus = _v(di_plus, n - 1), _v(di_minus, n - 1)
-        if v_plus is None or v_minus is None:
-            return False, None
-        return abs(v_plus - v_minus) <= COMPRESSION_TOUCH_TOLERANCE, None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(di_plus, i) is not None
+            and _v(di_minus, i) is not None
+            and abs(_v(di_plus, i) - _v(di_minus, i)) <= COMPRESSION_TOUCH_TOLERANCE,
+        )
 
     if condition_id in ("di_pink_toward_blue", "di_blue_toward_pink"):
         lookback = DIRECTIONAL_TREND_LOOKBACK
@@ -535,16 +796,10 @@ def _evaluate_compression_condition(condition_id, sub_cfg, computed, candles, th
         return blue_contribution > pink_contribution, None
 
     if condition_id == "adx_below_20":
-        v_adx = _v(adx, n - 1)
-        return (v_adx is not None and v_adx < threshold), None
+        return _active_condition_in_range(n, sub_cfg, lambda i: _v(adx, i) is not None and _v(adx, i) < threshold)
 
     if condition_id == "adx_turning_up":
-        if n < 2:
-            return False, None
-        v_now, v_prev = _v(adx, n - 1), _v(adx, n - 2)
-        if v_now is None or v_prev is None:
-            return False, None
-        return v_now > v_prev, None
+        return _find_recent_event_in_range(n, sub_cfg, lambda i: _line_direction_at(adx, i) == "up")
 
     if condition_id == "adx_close_to_20":
         distance = _resolve_distance(sub_cfg)
@@ -554,9 +809,12 @@ def _evaluate_compression_condition(condition_id, sub_cfg, computed, candles, th
         return abs(v_adx - threshold) <= distance, None
 
     if condition_id == "bg_changed_recently":
-        window = _resolve_window(sub_cfg)
         zone_series = di_plus > di_minus
-        return _find_recent_event(n, window, lambda i: i > 0 and bool(zone_series[i]) != bool(zone_series[i - 1]))
+        return _find_recent_event_in_range(
+            n,
+            sub_cfg,
+            lambda i: i > 0 and bool(zone_series[i]) != bool(zone_series[i - 1]),
+        )
 
     return False, None
 
@@ -568,39 +826,43 @@ def _evaluate_compression_condition(condition_id, sub_cfg, computed, candles, th
 def _evaluate_weak_condition(condition_id, sub_cfg, computed, candles, threshold):
     n = len(candles)
     di_plus, di_minus, adx = computed["di_plus"], computed["di_minus"], computed["adx"]
+    if condition_id in {"direction", "line_direction", "adx_direction", "di_plus_direction", "di_minus_direction"}:
+        if condition_id == "adx_direction":
+            sub_cfg = {**(sub_cfg or {}), "line": "adx"}
+        elif condition_id == "di_plus_direction":
+            sub_cfg = {**(sub_cfg or {}), "line": "di_plus"}
+        elif condition_id == "di_minus_direction":
+            sub_cfg = {**(sub_cfg or {}), "line": "di_minus"}
+        return _evaluate_direction_filter(sub_cfg or {}, computed, n)
 
     if condition_id == "adx_below_20":
-        v_adx = _v(adx, n - 1)
-        return (v_adx is not None and v_adx < threshold), None
+        return _active_condition_in_range(n, sub_cfg, lambda i: _v(adx, i) is not None and _v(adx, i) < threshold)
 
     if condition_id == "adx_below_both_di":
-        v_adx, v_plus, v_minus = _v(adx, n - 1), _v(di_plus, n - 1), _v(di_minus, n - 1)
-        if None in (v_adx, v_plus, v_minus):
-            return False, None
-        return v_adx < min(v_plus, v_minus), None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(adx, i) is not None
+            and _v(di_plus, i) is not None
+            and _v(di_minus, i) is not None
+            and _v(adx, i) < min(_v(di_plus, i), _v(di_minus, i)),
+        )
 
     if condition_id == "adx_falling":
-        if n - 1 - WEAK_FALLING_LOOKBACK < 0:
-            return False, None
-        v_now, v_then = _v(adx, n - 1), _v(adx, n - 1 - WEAK_FALLING_LOOKBACK)
-        if v_now is None or v_then is None:
-            return False, None
-        return v_now < v_then, None
+        return _evaluate_direction_filter({**(sub_cfg or {}), "line": "adx", "direction": "down"}, computed, n)
 
     if condition_id == "adx_flat":
-        if n - 1 - WEAK_FALLING_LOOKBACK < 0:
-            return False, None
-        v_now, v_then = _v(adx, n - 1), _v(adx, n - 1 - WEAK_FALLING_LOOKBACK)
-        if v_now is None or v_then is None:
-            return False, None
-        return abs(v_now - v_then) <= WEAK_FLAT_TOLERANCE, None
+        return _evaluate_direction_filter({**(sub_cfg or {}), "line": "adx", "direction": "flat"}, computed, n)
 
     if condition_id == "di_close_no_separation":
         distance = _resolve_distance(sub_cfg, default=1.0)
-        v_plus, v_minus = _v(di_plus, n - 1), _v(di_minus, n - 1)
-        if v_plus is None or v_minus is None:
-            return False, None
-        return abs(v_plus - v_minus) <= distance, None
+        return _active_condition_in_range(
+            n,
+            sub_cfg,
+            lambda i: _v(di_plus, i) is not None
+            and _v(di_minus, i) is not None
+            and abs(_v(di_plus, i) - _v(di_minus, i)) <= distance,
+        )
 
     if condition_id == "bg_mixed_or_changing":
         start = max(1, n - WEAK_LOOKBACK)
@@ -751,6 +1013,89 @@ def build_trendy_adx_sticker(computed, candles, config):
         window=1,
         decision=label,
     )
+
+
+DIRECTION_CONDITION_IDS = {
+    "direction", "line_direction", "adx_direction", "di_plus_direction", "di_minus_direction",
+}
+
+_DIRECTION_CONDITION_LINE = {
+    "adx_direction": "adx",
+    "di_plus_direction": "di_plus",
+    "di_minus_direction": "di_minus",
+}
+
+
+def _direction_streak_evidence(condition_cfg, computed, candles):
+    """For one direction-based condition (adx_direction / di_plus_direction /
+    di_minus_direction / line_direction), return the exact candle range that
+    produced its current streak - the chart uses this to outline precisely
+    which candles drove the match, instead of leaving it to guesswork."""
+    condition_id = str((condition_cfg or {}).get("id") or "").strip().lower()
+    if condition_id not in DIRECTION_CONDITION_IDS:
+        return None
+
+    sub_cfg = dict(condition_cfg or {})
+    default_line = _DIRECTION_CONDITION_LINE.get(condition_id)
+    if default_line:
+        sub_cfg.setdefault("line", default_line)
+
+    line_name = str(
+        sub_cfg.get("line") or sub_cfg.get("direction_line") or sub_cfg.get("target") or "adx"
+    ).strip().lower()
+    line_map = {
+        "adx": computed.get("adx"),
+        "di_plus": computed.get("di_plus"),
+        "di+": computed.get("di_plus"),
+        "plus": computed.get("di_plus"),
+        "pink": computed.get("di_plus"),
+        "di_minus": computed.get("di_minus"),
+        "di-": computed.get("di_minus"),
+        "minus": computed.get("di_minus"),
+        "blue": computed.get("di_minus"),
+    }
+    series = line_map.get(line_name)
+    n = len(candles)
+    if series is None or n < 2:
+        return None
+
+    requested_direction = str(sub_cfg.get("direction") or "any").strip().lower()
+    effective_direction = (
+        requested_direction if requested_direction in {"up", "down", "flat"}
+        else _line_direction_at(series, n - 1)
+    )
+    if effective_direction is None:
+        return None
+
+    streak = _count_consecutive_active(n, lambda i: _line_direction_matches(series, i, effective_direction))
+    if streak <= 0:
+        return None
+
+    start_index = n - streak
+    end_index = n - 1
+    return {
+        "condition_id": condition_id,
+        "line": "di_plus" if line_name in {"di+", "plus", "pink"}
+            else "di_minus" if line_name in {"di-", "minus", "blue"}
+            else line_name,
+        "direction": effective_direction,
+        "streak": streak,
+        "start_time": candles[start_index].get("time") if isinstance(candles[start_index], dict) else None,
+        "end_time": candles[end_index].get("time") if isinstance(candles[end_index], dict) else None,
+    }
+
+
+def direction_streaks_evidence(computed, candles, config):
+    """Streak evidence for every direction-based condition in this rule config -
+    used by the chart to outline the exact candles behind an ADX/DI+/DI- match."""
+    candles = _closed_candles(candles)
+    conditions = (config or {}).get("conditions") or []
+    streaks = []
+    for condition in conditions:
+        info = _direction_streak_evidence(condition, computed, candles)
+        if info:
+            streaks.append(info)
+    return streaks
 
 
 def trendy_adx_debug_trace(computed, candles, config, symbol=None, timeframe=None):

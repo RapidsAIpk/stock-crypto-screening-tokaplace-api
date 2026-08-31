@@ -27,6 +27,7 @@ from models.filters import ScreeningRequest  # noqa: E402
 from models.results import ScreeningDetailResponse  # noqa: E402
 from scripts import filter_zoya_universe_by_massive, update_crypto_universe  # noqa: E402
 from services import (  # noqa: E402
+    adr,
     asset_router,
     confluence,
     indicators,
@@ -483,6 +484,42 @@ class ScreeningRequestValidationTests(unittest.TestCase):
         )
 
         self.assertIsNone(request.exchanges)
+
+    def test_adr_request_validation_requires_relevant_thresholds(self):
+        request = ScreeningRequest(
+            asset_type="stocks",
+            symbols=["AAPL"],
+            timeframe_mode="single",
+            single_timeframe="5m",
+            indicators=[],
+            adr={"lookback_days": 14, "condition": "gte", "min_adr": 2.5},
+        )
+
+        self.assertEqual(request.adr.lookback_days, 14)
+        self.assertEqual(request.adr.condition, "gte")
+        self.assertEqual(request.adr.min_adr, 2.5)
+
+        with self.assertRaises(ValueError) as exc:
+            ScreeningRequest(
+                asset_type="stocks",
+                symbols=["AAPL"],
+                timeframe_mode="single",
+                single_timeframe="5m",
+                indicators=[],
+                adr={"lookback_days": 0, "condition": "gte", "min_adr": 1.0},
+            )
+        self.assertIn("lookback_days", str(exc.exception))
+
+        with self.assertRaises(ValueError) as exc:
+            ScreeningRequest(
+                asset_type="stocks",
+                symbols=["AAPL"],
+                timeframe_mode="single",
+                single_timeframe="5m",
+                indicators=[],
+                adr={"lookback_days": 14, "condition": "between", "min_adr": 5.0, "max_adr": 3.0},
+            )
+        self.assertIn("min_adr cannot be greater than adr.max_adr", str(exc.exception))
 
     def test_confluence_requires_exactly_two_selected_sources(self):
         with self.assertRaises(ValueError) as exc:
@@ -1378,6 +1415,109 @@ class IndicatorMathTests(unittest.TestCase):
             "candles_since_max": 2,
         }))
 
+    def test_reclaimed_from_below_requires_prior_close_below_and_cross_back_above(self):
+        channel = {
+            "length": 5,
+            "lower": [10.0, 10.0, 10.0, 10.0, 10.0],
+        }
+
+        reclaim_candles = [
+            {"open": 9.4, "high": 9.6, "low": 9.1, "close": 9.3},
+            {"open": 9.3, "high": 9.8, "low": 9.0, "close": 9.5},
+            {"open": 9.5, "high": 10.7, "low": 9.4, "close": 10.4},
+            {"open": 10.4, "high": 10.8, "low": 10.1, "close": 10.5},
+            {"open": 10.5, "high": 10.9, "low": 10.2, "close": 10.6},
+        ]
+
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(reclaim_candles, channel, {
+            "lines": ["lower"],
+            "action": "reclaimed_from_below_bullish",
+            "below_candles_min": 2,
+            "below_candles_max": 2,
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+            "require_still_above_now": True,
+        }))
+
+        rejection_only_candles = [
+            {"open": 10.8, "high": 11.1, "low": 10.4, "close": 10.8},
+            {"open": 10.8, "high": 11.0, "low": 10.2, "close": 10.7},
+            {"open": 10.7, "high": 10.9, "low": 9.8, "close": 10.4},
+            {"open": 10.4, "high": 10.8, "low": 10.1, "close": 10.5},
+            {"open": 10.5, "high": 10.9, "low": 10.2, "close": 10.6},
+        ]
+
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(rejection_only_candles, channel, {
+            "lines": ["lower"],
+            "action": "reclaimed_from_below_bullish",
+            "below_candles_min": 1,
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+        }))
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(rejection_only_candles, channel, {
+            "lines": ["lower"],
+            "action": "rejected_from_above_bullish",
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+        }))
+
+    def test_reclaimed_from_below_respects_below_range_event_range_and_still_above(self):
+        channel = {
+            "length": 5,
+            "lower": [10.0, 10.0, 10.0, 10.0, 10.0],
+        }
+        candles = [
+            {"open": 9.4, "high": 9.6, "low": 9.1, "close": 9.3},
+            {"open": 9.3, "high": 9.8, "low": 9.0, "close": 9.5},
+            {"open": 9.5, "high": 10.7, "low": 9.4, "close": 10.4},
+            {"open": 10.4, "high": 10.8, "low": 10.1, "close": 10.5},
+            {"open": 10.5, "high": 10.9, "low": 10.2, "close": 10.6},
+        ]
+
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, {
+            "lines": ["lower"],
+            "action": "reclaimed_from_below_bullish",
+            "below_candles_min": 3,
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+        }))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, {
+            "lines": ["lower"],
+            "action": "reclaimed_from_below_bullish",
+            "below_candles_min": 2,
+            "below_candles_max": 1,
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+        }))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(candles, channel, {
+            "lines": ["lower"],
+            "action": "reclaimed_from_below_bullish",
+            "below_candles_min": 2,
+            "candles_since_min": 0,
+            "candles_since_max": 1,
+        }))
+
+        stale_reclaim_candles = [
+            *candles[:4],
+            {"open": 10.5, "high": 10.7, "low": 9.6, "close": 9.8},
+        ]
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(stale_reclaim_candles, channel, {
+            "lines": ["lower"],
+            "action": "reclaimed_from_below_bullish",
+            "below_candles_min": 2,
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+            "require_still_above_now": True,
+        }))
+        self.assertTrue(channel_line_rules.evaluate_regression_lines(stale_reclaim_candles, channel, {
+            "lines": ["lower"],
+            "action": "reclaimed_from_below_bullish",
+            "below_candles_min": 2,
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+            "require_still_above_now": False,
+        }))
+
     def test_channel_line_selection_modes_for_new_conditions(self):
         candles = [
             {"open": 9.0, "high": 9.5, "low": 8.8, "close": 9.0},
@@ -1674,6 +1814,19 @@ class IndicatorMathTests(unittest.TestCase):
             config={"length": 11, "conditions": [{"id": "di_crossed_above", "candles_since": 300}]},
         )
         self.assertEqual(screener.required_candles_for_indicators([indicator_with_large_lookback]), 313)
+
+        indicator_with_phase3_ranges = SimpleNamespace(
+            name="adx",
+            config={
+                "length": 11,
+                "conditions": [
+                    {"id": "di_crossed_above", "candles_since_max": 250},
+                    {"id": "adx_direction", "candles_since_direction_change_max": 275},
+                    {"id": "di_already_above", "active_candles_max": 290},
+                ],
+            },
+        )
+        self.assertEqual(screener.required_candles_for_indicators([indicator_with_phase3_ranges]), 303)
 
     def test_required_candles_for_adx_min_history_is_user_adjustable(self):
         # 200 is a hard floor, by explicit decision - not user-lowerable, since anything
@@ -4184,6 +4337,34 @@ class TrendyAdxTests(unittest.TestCase):
         too_tight_cfg = {"mode": "bullish", "threshold": 20, "conditions": [{"id": "di_crossed_above", "candles_since": 0}]}
         self.assertFalse(trendy_adx.evaluate_trendy_adx_rules(computed, candles, too_tight_cfg))
 
+    def test_phase3_di_crossed_above_uses_min_max_candles_since_event(self):
+        candles = self._fake_candles(10)
+        computed = self._fake_computed(
+            [10, 10, 10, 10, 10, 12, 18, 25, 30, 35],
+            [30, 30, 30, 30, 30, 28, 20, 15, 12, 10],
+            [15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
+        )
+
+        in_range_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{"id": "di_crossed_above", "candles_since_min": 2, "candles_since_max": 3}],
+        }
+        too_recent_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{"id": "di_crossed_above", "candles_since_min": 0, "candles_since_max": 1}],
+        }
+        too_old_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{"id": "di_crossed_above", "candles_since_min": 3, "candles_since_max": 5}],
+        }
+
+        self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, in_range_cfg))
+        self.assertFalse(trendy_adx.evaluate_trendy_adx_rules(computed, candles, too_recent_cfg))
+        self.assertFalse(trendy_adx.evaluate_trendy_adx_rules(computed, candles, too_old_cfg))
+
     def test_di_already_above_bullish_bearish_mirror(self):
         n = 10
         computed = self._fake_computed([30] * n, [10] * n, [25] * n)
@@ -4193,6 +4374,88 @@ class TrendyAdxTests(unittest.TestCase):
         bearish_cfg = {"mode": "bearish", "threshold": 20, "conditions": [{"id": "di_already_above"}]}
         self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, bullish_cfg))
         self.assertFalse(trendy_adx.evaluate_trendy_adx_rules(computed, candles, bearish_cfg))
+
+    def test_phase3_active_conditions_use_min_max_consecutive_active_candles(self):
+        candles = self._fake_candles(10)
+        computed = self._fake_computed(
+            [10, 10, 10, 30, 30, 30, 30, 30, 30, 30],
+            [30, 30, 30, 10, 10, 10, 10, 10, 10, 10],
+            [25] * 10,
+        )
+
+        in_range_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{"id": "di_already_above", "active_candles_min": 6, "active_candles_max": 7}],
+        }
+        too_short_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{"id": "di_already_above", "active_candles_min": 8, "active_candles_max": 10}],
+        }
+        stale_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{"id": "di_already_above", "active_candles_min": 1, "active_candles_max": 3}],
+        }
+
+        self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, in_range_cfg))
+        self.assertFalse(trendy_adx.evaluate_trendy_adx_rules(computed, candles, too_short_cfg))
+        self.assertFalse(trendy_adx.evaluate_trendy_adx_rules(computed, candles, stale_cfg))
+
+    def test_phase3_adx_di_direction_filters_are_independent_and_require_active_now(self):
+        candles = self._fake_candles(8)
+        computed = self._fake_computed(
+            [10, 11, 12, 13, 14, 15, 16, 17],
+            [30, 29, 28, 27, 26, 26, 26, 26],
+            [20, 21, 22, 23, 23, 23, 24, 25],
+        )
+
+        adx_up_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{
+                "id": "adx_direction",
+                "direction": "up",
+                "candles_since_direction_change_min": 0,
+                "candles_since_direction_change_max": 1,
+            }],
+        }
+        di_plus_up_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{
+                "id": "di_plus_direction",
+                "direction": "up",
+                "candles_since_direction_change_min": 6,
+                "candles_since_direction_change_max": 6,
+            }],
+        }
+        di_minus_flat_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{
+                "id": "di_minus_direction",
+                "direction": "flat",
+                "candles_since_direction_change_min": 2,
+                "candles_since_direction_change_max": 2,
+            }],
+        }
+        stale_adx_flat_cfg = {
+            "mode": "bullish",
+            "threshold": 20,
+            "conditions": [{
+                "id": "adx_direction",
+                "direction": "flat",
+                "candles_since_direction_change_min": 2,
+                "candles_since_direction_change_max": 3,
+            }],
+        }
+
+        self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, adx_up_cfg))
+        self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, di_plus_up_cfg))
+        self.assertTrue(trendy_adx.evaluate_trendy_adx_rules(computed, candles, di_minus_flat_cfg))
+        self.assertFalse(trendy_adx.evaluate_trendy_adx_rules(computed, candles, stale_adx_flat_cfg))
 
     def test_adx_threshold_tiers(self):
         n = 5
