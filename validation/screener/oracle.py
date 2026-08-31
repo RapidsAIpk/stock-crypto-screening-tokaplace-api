@@ -9,6 +9,7 @@ from services.utils import (
     _sanitize_confirmation_patterns,
     normalize_confirmation_config,
 )
+from validation.spec import canonical_utc_timestamp
 
 
 class ReferenceRuleError(ValueError):

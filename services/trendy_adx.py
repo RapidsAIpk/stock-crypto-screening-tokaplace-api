@@ -8,7 +8,7 @@
 
 import numpy as np
 
-from services.pine_math import NAN, pine_sma
+from services.pine_math import NAN, pine_rma
 from services.utils import build_indicator_sticker, format_decimal
 
 DEFAULT_LENGTH = 11
@@ -90,7 +90,7 @@ def compute_trendy_adx(candles, length=DEFAULT_LENGTH):
         di_sum = di_plus + di_minus
         dx = np.where(di_sum != 0.0, np.abs(di_plus - di_minus) / di_sum * 100.0, 0.0)
 
-    adx = pine_sma(dx, length)
+    adx = pine_rma(dx, length)
     trend_value = di_plus - di_minus
     buy_signal = _crossed_above_series(di_plus, di_minus)
     sell_signal = _crossed_above_series(di_minus, di_plus)
@@ -390,10 +390,8 @@ def _evaluate_direction_filter(condition_cfg, computed, n):
         default_max=0,
     )
     # `minimum`/`maximum` bound the streak length itself (inclusive on both ends).
-    # Count the actual consecutive run backward from the newest candle rather than
-    # the distance to the transition candle - that distance is `streak_length - 1`,
-    # which under-counts the streak by one and let e.g. a 6-candle streak slip through
-    # a `..._max: 5` cap.
+    # Compare the streak directly, not `streak - 1` - that under-counts by one and
+    # lets e.g. a 6-candle streak slip through a `..._max: 5` cap.
     streak = _count_consecutive_active(n, lambda i: _line_direction_matches(series, i, effective_direction))
     passed = streak >= minimum and streak <= maximum
     return passed, streak - 1

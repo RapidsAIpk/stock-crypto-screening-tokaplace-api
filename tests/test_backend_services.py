@@ -4225,9 +4225,10 @@ class TrendyAdxTests(unittest.TestCase):
         self.assertIsNotNone(computed)
 
         # Independent from-scratch reference implementation of the same Pine
-        # formula (0-seeded recursive smoothed TR/DM+/DM-, DI+/DI-, DX, ADX = SMA(DX, length)) —
-        # written separately here so this test can actually catch a wrong
-        # implementation, not just confirm the code agrees with itself.
+        # formula (0-seeded recursive smoothed TR/DM+/DM-, DI+/DI-, DX, ADX = RMA(DX, length),
+        # matching the standard Wilder ADX formula) — written separately here so this
+        # test can actually catch a wrong implementation, not just confirm the code
+        # agrees with itself.
         n = len(candles)
         highs = [c["high"] for c in candles]
         lows = [c["low"] for c in candles]
@@ -4269,13 +4270,18 @@ class TrendyAdxTests(unittest.TestCase):
             di_sum = di_plus_ref[i] + di_minus_ref[i]
             dx_ref[i] = abs(di_plus_ref[i] - di_minus_ref[i]) / di_sum * 100.0 if di_sum > 0 else 0.0
 
-        def sma(values, length):
+        def rma(values, length):
             out = [None] * len(values)
-            for i in range(length - 1, len(values)):
-                out[i] = sum(values[i - length + 1:i + 1]) / length
+            for i in range(len(values)):
+                if i < length - 1:
+                    out[i] = sum(values[: i + 1]) / (i + 1)
+                elif i == length - 1:
+                    out[i] = sum(values[:length]) / length
+                else:
+                    out[i] = (out[i - 1] * (length - 1) + values[i]) / length
             return out
 
-        adx_ref = sma(dx_ref, length)
+        adx_ref = rma(dx_ref, length)
 
         for i in range(n):
             if di_plus_ref[i] is not None:

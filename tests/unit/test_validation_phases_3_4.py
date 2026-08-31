@@ -251,6 +251,7 @@ class PhaseThreeFourPipelineTests(unittest.TestCase):
     def test_alignment_marks_provider_value_difference_inconclusive(self) -> None:
         payload = massive_payload()
         payload["results"][25]["c"] += 5
+        payload["results"][25]["h"] = max(payload["results"][25]["h"], payload["results"][25]["c"])
         output = self._freeze_massive(payload)
 
         self.assertEqual(output["alignment"]["status"], "inconclusive_input_mismatch")

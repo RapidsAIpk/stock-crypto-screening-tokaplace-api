@@ -26,7 +26,7 @@ from validation.massive.pipeline import MassiveValidationPipeline  # noqa: E402
 from validation.screener.cases import ScreenerCaseSuite  # noqa: E402
 from validation.screener.comparator import ScreenerComparator  # noqa: E402
 from validation.spec import IndicatorParameters, ValidationSpec  # noqa: E402
-from backend.tests.unit.test_validation_phases_3_4 import (  # noqa: E402
+from tests.unit.test_validation_phases_3_4 import (  # noqa: E402
     FakeMassiveTransport,
     daily_rows,
     make_twelve_response,
@@ -271,6 +271,7 @@ class PhaseFiveSixTests(unittest.TestCase):
     def test_phase_five_inherits_candle_input_mismatch(self) -> None:
         payload = massive_payload()
         payload["results"][25]["c"] += 3
+        payload["results"][25]["h"] = max(payload["results"][25]["h"], payload["results"][25]["c"])
         spec, store, twelve_path, _ = self._prepare(massive=payload)
 
         report = IndicatorComparator(store).compare(spec, twelve_path)["report"]
