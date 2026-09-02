@@ -950,6 +950,7 @@ MARKET_DATA_SOURCE_LIVE = "live_provider"
 MARKET_DATA_SOURCE_FRESH_CACHE = "fresh_cache"
 MARKET_DATA_SOURCE_STALE_CACHE = "stale_cache"
 STALE_REASON_PROVIDER_REFRESH_FAILED = "provider_refresh_failed"
+STALE_REASON_INSUFFICIENT_HISTORY = "cached_payload_insufficient_history"
 
 
 def _with_freshness_metadata(payload, *, is_stale, market_data_source, stale_age_seconds=0, stale_reason=None):
@@ -2821,11 +2822,14 @@ async def fetch_batches(
         async def fetch_one(target_symbol):
             async with symbol_semaphore:
                 fetcher = resolve_candle_fetcher_for_symbol(target_symbol)
-                result = await fetcher(
-                    target_symbol,
-                    timeframe,
-                    normalized_limit,
-                )
+                try:
+                    result = await fetcher(
+                        target_symbol,
+                        timeframe,
+                        normalized_limit,
+                    )
+                except Exception as exc:
+                    result = exc
                 return target_symbol, result
 
         completed = 0
@@ -3202,6 +3206,8 @@ async def fetch_live_data(
                 elif not is_payload_compatible_for_fetch(stale_payload, symbol, timeframe):
                     # When provider/session policy changed, avoid serving stale snapshots.
                     rejection_reason = "cached_payload_provider_mismatch"
+                elif len(stale_payload.get("candles") or []) < normalized_limit:
+                    rejection_reason = STALE_REASON_INSUFFICIENT_HISTORY
                 elif not allow_stale:
                     rejection_reason = "stale_fallback_disabled"
                 elif cache_age is not None and cache_age > max_stale_age:

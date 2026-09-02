@@ -5,7 +5,7 @@ same historical index. Callers provide one target value per candle, so the
 logic works for flat, regression, and sloped trend-channel lines.
 """
 
-from services.range_utils import candles_since_in_range
+from services.range_utils import candles_since_in_range, consecutive_count_in_range
 
 
 CHANNEL_INTERACTION_ACTIONS = {
@@ -130,15 +130,13 @@ def _reclaimed_from_below_bullish(candles, target_values, index, config):
     target = _finite_target(target_values, index)
     if target is None or index <= 0:
         return False
-    minimum_below = config.get(
-        "below_candles_min",
-        config.get("min_consecutive_below", config.get("consecutive_below_min", 1)),
-    )
+    min_consecutive_below = config.get("min_consecutive_below", config.get("consecutive_below_min", 1))
+    minimum_below = config.get("below_candles_min", config.get("consecutive_below_min", 1))
     maximum_below = config.get("below_candles_max", config.get("consecutive_below_max"))
     below_count = _consecutive_below_before(candles, target_values, index)
-    if below_count < int(minimum_below or 1):
+    if below_count < int(min_consecutive_below or 1):
         return False
-    if maximum_below is not None and below_count > int(maximum_below):
+    if not consecutive_count_in_range(below_count, minimum_below, maximum_below):
         return False
     return float(candles[index]["close"]) > target
 

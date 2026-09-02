@@ -1236,8 +1236,46 @@ class IndicatorMathTests(unittest.TestCase):
             "rule": "above",
         }))
 
+    def test_ema_requires_dynamic_warmup_history_for_selected_period(self):
+        candles = []
+        for index in range(31):
+            close = 20.0 + index * 0.5
+            candles.append({
+                "open": close - 0.2,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "is_closed": True,
+            })
+
+        config = {
+            "simple_ema": True,
+            "periods": [100],
+            "conditions": {
+                "piercing_from_below": {
+                    "enabled": True,
+                    "candles_since_min": 0,
+                    "candles_since_max": 5,
+                },
+            },
+        }
+
+        detail = ema.evaluate_ema_rules_detail(candles, config)
+
+        self.assertFalse(detail["passed"])
+        self.assertEqual(detail["period_results"][0]["failure_reason"], "insufficient_history")
+        self.assertEqual(detail["period_results"][0]["required_candles"], 500)
+        self.assertEqual(detail["period_results"][0]["available_candles"], 31)
+
+    def test_required_ema_history_is_dynamic_per_period_with_global_cap(self):
+        self.assertEqual(ema.required_ema_history(9), 45)
+        self.assertEqual(ema.required_ema_history(20), 100)
+        self.assertEqual(ema.required_ema_history(50), 250)
+        self.assertEqual(ema.required_ema_history(100), 500)
+        self.assertEqual(ema.required_ema_history(200), 500)
+
     def test_ema_touch_from_above_uses_matching_historical_ema_value(self):
-        candles = [
+        candles = [{"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0} for _ in range(10)] + [
             {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
             {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
             {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
@@ -1272,7 +1310,7 @@ class IndicatorMathTests(unittest.TestCase):
         }))
 
     def test_ema_piercing_close_above_and_combined_conditions(self):
-        candles = [
+        candles = [{"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0} for _ in range(10)] + [
             {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
             {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
             {"open": 8.0, "high": 8.0, "low": 8.0, "close": 8.0},
@@ -1305,7 +1343,7 @@ class IndicatorMathTests(unittest.TestCase):
         }))
 
     def test_ema_multi_period_selection_modes_are_respected(self):
-        candles = [
+        candles = [{"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0} for _ in range(13)] + [
             {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
             {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0},
             {"open": 20.0, "high": 20.0, "low": 20.0, "close": 20.0},
@@ -1434,6 +1472,16 @@ class IndicatorMathTests(unittest.TestCase):
             "action": "reclaimed_from_below_bullish",
             "below_candles_min": 2,
             "below_candles_max": 2,
+            "candles_since_min": 2,
+            "candles_since_max": 2,
+            "require_still_above_now": True,
+        }))
+        self.assertFalse(channel_line_rules.evaluate_regression_lines(reclaim_candles, channel, {
+            "lines": ["lower"],
+            "action": "reclaimed_from_below_bullish",
+            "below_candles_min": 1,
+            "below_candles_max": 5,
+            "min_consecutive_below": 3,
             "candles_since_min": 2,
             "candles_since_max": 2,
             "require_still_above_now": True,
@@ -1576,6 +1624,141 @@ class IndicatorMathTests(unittest.TestCase):
                 "candles_since_max": 2,
             }],
         }))
+
+    def test_trend_channel_phase2_actions_support_all_line_and_zone_areas(self):
+        tc = {
+            "length": 5,
+            "bottom": [10.0] * 5,
+            "middle": [15.0] * 5,
+            "top": [20.0] * 5,
+            "bottom_zone_lower": [9.0] * 5,
+            "bottom_zone_upper": [10.0] * 5,
+            "middle_zone_lower": [14.0] * 5,
+            "middle_zone_upper": [16.0] * 5,
+            "top_zone_lower": [20.0] * 5,
+            "top_zone_upper": [21.0] * 5,
+        }
+        cases = [
+            (
+                "bottom_line",
+                "piercing_from_below",
+                [
+                    {"open": 9.0, "high": 9.4, "low": 8.8, "close": 9.0},
+                    {"open": 9.0, "high": 9.4, "low": 8.9, "close": 9.2},
+                    {"open": 9.2, "high": 11.0, "low": 9.0, "close": 10.8},
+                    {"open": 10.8, "high": 11.2, "low": 10.4, "close": 10.9},
+                    {"open": 10.9, "high": 11.4, "low": 10.5, "close": 11.0},
+                ],
+            ),
+            (
+                "middle_line",
+                "reclaimed_from_below_bullish",
+                [
+                    {"open": 14.0, "high": 14.4, "low": 13.8, "close": 14.0},
+                    {"open": 14.0, "high": 14.4, "low": 13.9, "close": 14.2},
+                    {"open": 14.2, "high": 16.0, "low": 14.0, "close": 15.8},
+                    {"open": 15.8, "high": 16.2, "low": 15.4, "close": 15.9},
+                    {"open": 15.9, "high": 16.4, "low": 15.5, "close": 16.0},
+                ],
+            ),
+            (
+                "top_line",
+                "rejected_from_below_bearish",
+                [
+                    {"open": 19.0, "high": 19.5, "low": 18.7, "close": 19.0},
+                    {"open": 19.0, "high": 19.4, "low": 18.8, "close": 19.2},
+                    {"open": 19.2, "high": 20.2, "low": 18.9, "close": 19.7},
+                    {"open": 19.7, "high": 19.9, "low": 19.2, "close": 19.5},
+                    {"open": 19.5, "high": 19.8, "low": 19.1, "close": 19.4},
+                ],
+            ),
+            (
+                "bottom_zone",
+                "piercing_from_below",
+                [
+                    {"open": 9.0, "high": 9.4, "low": 8.8, "close": 9.0},
+                    {"open": 9.0, "high": 9.4, "low": 8.9, "close": 9.2},
+                    {"open": 9.2, "high": 11.0, "low": 9.0, "close": 10.8},
+                    {"open": 10.8, "high": 11.2, "low": 10.4, "close": 10.9},
+                    {"open": 10.9, "high": 11.4, "low": 10.5, "close": 11.0},
+                ],
+            ),
+            (
+                "middle_zone",
+                "rejected_from_above_bullish",
+                [
+                    {"open": 17.0, "high": 17.4, "low": 16.8, "close": 17.0},
+                    {"open": 17.0, "high": 17.3, "low": 16.6, "close": 16.8},
+                    {"open": 16.8, "high": 17.0, "low": 15.8, "close": 16.5},
+                    {"open": 16.5, "high": 17.0, "low": 16.2, "close": 16.7},
+                    {"open": 16.7, "high": 17.1, "low": 16.4, "close": 16.8},
+                ],
+            ),
+            (
+                "top_zone",
+                "rejected_from_below_bearish",
+                [
+                    {"open": 19.0, "high": 19.5, "low": 18.7, "close": 19.0},
+                    {"open": 19.0, "high": 19.4, "low": 18.8, "close": 19.2},
+                    {"open": 19.2, "high": 20.2, "low": 18.9, "close": 19.7},
+                    {"open": 19.7, "high": 19.9, "low": 19.2, "close": 19.5},
+                    {"open": 19.5, "high": 19.8, "low": 19.1, "close": 19.4},
+                ],
+            ),
+        ]
+
+        for area, action, candles in cases:
+            with self.subTest(area=area, action=action):
+                self.assertTrue(trend_channels.evaluate_trend_channel_rules(candles, tc, {
+                    "areas": [{
+                        "area": area,
+                        "action": action,
+                        "candles_since_min": 2,
+                        "candles_since_max": 2,
+                        "below_candles_min": 2,
+                        "below_candles_max": 2,
+                        "min_consecutive_below": 2,
+                        "require_still_above_now": True,
+                    }],
+                }))
+
+    def test_required_candles_for_phase2_channels_uses_event_and_reclaim_ranges(self):
+        lrc = SimpleNamespace(
+            name="lrc",
+            config={
+                "length": 100,
+                "action": "reclaimed_from_below_bullish",
+                "candles_since_max": 5,
+                "below_candles_max": 4,
+                "min_consecutive_below": 2,
+            },
+        )
+        regression = SimpleNamespace(
+            name="regression",
+            config={
+                "length": 200,
+                "action": "piercing_from_below",
+                "candles_since_max": 8,
+                "window": 1,
+            },
+        )
+        trend = SimpleNamespace(
+            name="trend",
+            config={
+                "length": 8,
+                "areas": [{
+                    "area": "middle_zone",
+                    "action": "reclaimed_from_below_bullish",
+                    "candles_since_max": 7,
+                    "below_candles_max": 3,
+                    "min_consecutive_below": 2,
+                }],
+            },
+        )
+
+        self.assertEqual(screener.required_candles_for_indicators([lrc]), 100)
+        self.assertEqual(screener.required_candles_for_indicators([regression]), 399)
+        self.assertEqual(screener.required_candles_for_indicators([trend]), 500)
 
     def test_confirm_if_needed_without_type_or_pattern_fails(self):
         candles = [{"open": 1.0, "close": 1.1, "high": 1.2, "low": 0.9}]
@@ -1876,6 +2059,22 @@ class IndicatorMathTests(unittest.TestCase):
         # The formula minimum is only 26 candles, but WaveTrend's EMA chain
         # needs deeper history to avoid warm-up-only false positives.
         self.assertEqual(screener.required_candles_for_indicators([indicator]), 120)
+
+    def test_required_candles_for_ema_uses_stable_warmup_depth(self):
+        indicator = SimpleNamespace(
+            name="ema",
+            config={
+                "periods": [100],
+                "conditions": {
+                    "piercing_from_below": {
+                        "enabled": True,
+                        "candles_since_max": 5,
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(screener.required_candles_for_indicators([indicator]), 500)
 
     def test_required_candles_for_macd_uses_stable_warmup_floor(self):
         indicator = SimpleNamespace(
@@ -5888,8 +6087,13 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
 
     def test_attach_post_filter_channels_builds_missing_channels(self):
         candles = [
-            {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0}
-            for _ in range(220)
+            {
+                "open": (base := 100.0 + (index * 0.02) + (3.0 if (index // 8) % 2 == 0 else -3.0)) - 0.4,
+                "high": base + 1.0,
+                "low": base - 1.0,
+                "close": base + 0.3,
+            }
+            for index in range(260)
         ]
         data = [{"symbol": "AAPL", "candles": candles, "channels": {}}]
         request = SimpleNamespace(
@@ -5902,6 +6106,46 @@ class ScreenerGateSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("lrc", enriched[0]["channels"])
         self.assertIn("trend", enriched[0]["channels"])
         self.assertIn("regression", enriched[0]["channels"])
+
+    def test_attach_post_filter_channels_builds_selected_indicator_channels(self):
+        candles = [
+            {
+                "open": (base := 100.0 + (index * 0.02) + (3.0 if (index // 8) % 2 == 0 else -3.0)) - 0.4,
+                "high": base + 1.0,
+                "low": base - 1.0,
+                "close": base + 0.3,
+            }
+            for index in range(260)
+        ]
+        data = [{"symbol": "AAPL", "candles": candles, "channels": {}}]
+        request = SimpleNamespace(
+            channel_respect=None,
+            confluence=None,
+            indicators=[
+                SimpleNamespace(
+                    name="lrc",
+                    config={"length": 55, "upper_dev": 2.0, "lower_dev": 2.0},
+                ),
+                SimpleNamespace(
+                    name="regression",
+                    config={"length": 80, "width_coeff": 1.5},
+                ),
+                SimpleNamespace(
+                    name="trend",
+                    config={"length": 8, "wait_for_break": True, "show_last_channel": True},
+                ),
+            ],
+        )
+
+        enriched = screener.attach_post_filter_channels(data, request)
+        channels = enriched[0]["channels"]
+
+        self.assertIn("lrc", channels)
+        self.assertIn("middle", channels["lrc"])
+        self.assertEqual(channels["lrc"]["length"], 55)
+        self.assertIn("regression", channels)
+        self.assertIn("middle", channels["regression"])
+        self.assertIn("trend", channels)
 
     def test_attach_post_filter_channels_builds_confluence_source_instances(self):
         candles = [
@@ -7188,6 +7432,51 @@ class MarketDataAsyncTests(unittest.IsolatedAsyncioTestCase):
             "1day",
             {"AAPL": expected_backoff},
         )
+
+    async def test_fetch_live_data_rejects_stale_cache_with_insufficient_requested_history(self):
+        now = 1_000
+        cached_payload = {
+            "symbol": "AAPL",
+            "price": 103.0,
+            "candles": [
+                {"time": index, "open": 100.0, "high": 104.0, "low": 99.0, "close": 103.0}
+                for index in range(4)
+            ],
+            "candles_provider": "massive",
+            "next_refresh_at": now - 10,
+        }
+
+        with patch.object(
+            market_data.time,
+            "time",
+            return_value=now,
+        ), patch.object(
+            market_data.settings,
+            "ALLOW_STALE_MARKET_DATA",
+            True,
+        ), patch.object(
+            market_data.store,
+            "get_cached",
+            return_value={"AAPL": {"payload": cached_payload, "updated_at": now - 5}},
+        ), patch.object(
+            market_data.store,
+            "register_interest",
+        ), patch.object(
+            market_data,
+            "fetch_batches",
+            AsyncMock(return_value=[]),
+        ), patch.object(
+            market_data.store,
+            "store_snapshots",
+        ) as store_snapshots_mock, patch.object(
+            market_data.store,
+            "update_interest_schedule",
+        ) as update_interest_schedule_mock:
+            results = await market_data.fetch_live_data(["AAPL"], "1day", candles_limit=100)
+
+        self.assertEqual(results, [])
+        store_snapshots_mock.assert_not_called()
+        update_interest_schedule_mock.assert_called_once()
 
     async def test_fetch_live_data_offloads_blocking_store_calls_off_the_event_loop(self):
         # If store.get_cached blocked the event loop directly (the pre-fix

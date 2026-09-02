@@ -14,6 +14,7 @@ and each real interaction reports its own decision.
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -351,6 +352,45 @@ class HandlerEvidenceTests(unittest.TestCase):
         if passed:
             sticker = result["sticker"] if isinstance(result, dict) else result
             self.assertNotIn("Reclaim", sticker)
+
+    def test_lrc_stay_below_rejects_latest_wick_above_upper_line(self):
+        from services.indicators import handle_lrc
+
+        candles = [{
+            "time": 1_700_000_000,
+            "open": 22.66,
+            "high": 23.16,
+            "low": 22.4713,
+            "close": 22.60,
+            "volume": 1,
+            "is_closed": True,
+        }]
+        channel = {
+            "length": 1,
+            "upper": [22.8924],
+            "middle": [19.5079],
+            "lower": [16.1234],
+            "r": 0.5,
+        }
+        config = {
+            "length": 1,
+            "upper_dev": 2,
+            "lower_dev": 2,
+            "lines": ["upper"],
+            "action": "stay_below",
+            "selection_mode": "all",
+            "touch_type": "wick",
+            "window": 1,
+            "tolerance": 0,
+            "r_filter": "ignore",
+            "confirmation": False,
+        }
+
+        with patch("services.indicators.compute_lrc_channel", return_value=channel):
+            passed, result = handle_lrc({"symbol": "NCNO", "channels": {}}, candles, config)
+
+        self.assertFalse(passed)
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":
