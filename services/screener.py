@@ -12,10 +12,11 @@ from core.config import settings
 from services.asset_router import build_asset_universe, resolve_asset_metadata
 from services.indicators import apply_indicators, evaluate_indicator_details
 from services.channel_respect import apply_channel_respect, evaluate_channel_respect_detail
+from services.channel_interactions import is_channel_interaction_action, normalize_channel_interaction_action
 from services.dead_assets import apply_dead_assets, evaluate_dead_assets_detail
 from services.adr import apply_adr, evaluate_adr_detail
 from services.gap_exclusion import apply_gap_exclusion, evaluate_gap_exclusion_detail
-from services.ema import normalize_ema_periods
+from services.ema import normalize_ema_periods, required_ema_history
 from services.confluence import (
     apply_confluence,
     default_confluence_selection,
@@ -516,6 +517,8 @@ def _compute_channel_for_source(candles, source):
 
 
 def _confirmation_window_from_config(config):
+    if not isinstance(config, dict):
+        return 0
     confirmation_types = config.get("confirmation_types") or []
     confirmation_patterns = config.get("confirmation_patterns") or []
     has_confirmation_rule = (
@@ -526,6 +529,34 @@ def _confirmation_window_from_config(config):
     if not config.get("confirmation") or not has_confirmation_rule:
         return 0
     return _safe_int(config.get("confirmation_window"), 1, minimum=0)
+
+
+def _phase2_channel_history_window(config):
+    action = normalize_channel_interaction_action(config.get("action"))
+    if not is_channel_interaction_action(action):
+        return _safe_int(config.get("window"), 1, minimum=1)
+
+    event_max = _safe_int(
+        config.get("candles_since_max", config.get("max_candles_since", config.get("window_max"))),
+        0,
+        minimum=0,
+    )
+    lookback = event_max + 1
+
+    if action == "reclaimed_from_below_bullish":
+        below_max = config.get("below_candles_max", config.get("consecutive_below_max"))
+        min_consecutive = _safe_int(
+            config.get("min_consecutive_below", config.get("consecutive_below_min")),
+            1,
+            minimum=1,
+        )
+        if below_max is None:
+            below_lookback = min_consecutive
+        else:
+            below_lookback = max(min_consecutive, _safe_int(below_max, min_consecutive, minimum=0))
+        lookback += below_lookback
+
+    return max(1, lookback)
 
 
 def _trend_area_window(config):
@@ -540,7 +571,7 @@ def _trend_area_window(config):
             continue
         if is_area_rule_disabled(area):
             continue
-        area_window = _safe_int(area.get("window"), 1, minimum=1)
+        area_window = _phase2_channel_history_window(area)
         window = max(window, area_window)
 
         area_confirmation_types = area.get("confirmation_types") or []
@@ -625,17 +656,18 @@ def required_candles_for_indicators(indicators):
             needed = longest_period + timing_candles + 2
         elif name == "lrc":
             length = _safe_int(config.get("length"), 100, minimum=2)
-            needed = length + window + confirmation_window
+            needed = max(length, _phase2_channel_history_window(config)) + confirmation_window
         elif name == "regression":
             length = _safe_int(config.get("length"), 200, minimum=2)
             window_type = str(config.get("window_type") or "continuous").strip().lower()
+            rule_window = _phase2_channel_history_window(config)
             if window_type == "interval":
-                needed = length + window + confirmation_window
+                needed = max(length, rule_window) + confirmation_window
             else:
                 # DW nests a length-period filter inside another length-period
                 # filter. Full Pine parity for the latest result therefore
                 # needs 2*length-1 completed source bars.
-                needed = (2 * length) + window + confirmation_window - 2
+                needed = max((2 * length) - 1, rule_window) + confirmation_window
         elif name == "trend":
             length = _safe_int(config.get("length"), 8, minimum=2)
             area_window, area_confirmation_window = _trend_area_window(config)
@@ -693,7 +725,7 @@ def required_candles_for_indicators(indicators):
                     max_candles_since,
                     _safe_int(config.get("candles_since_max", config.get("window_max")), 0, minimum=0),
                 )
-                needed = max_period + max_candles_since + 2
+                needed = required_ema_history(max_period) + max_candles_since + 2
         elif name == "macd":
             fast = _safe_int(config.get("fast"), 12, minimum=1)
             slow = _safe_int(config.get("slow"), 26, minimum=1)
@@ -1006,6 +1038,7 @@ def attach_post_filter_channels(data, request):
         return data
 
     needed_channels = set()
+    indicator_channel_sources = {}
 
     channel_respect = getattr(request, "channel_respect", None)
     if channel_respect:
@@ -1015,6 +1048,42 @@ def attach_post_filter_channels(data, request):
     if confluence:
         for source in _confluence_sources_from_config(confluence):
             needed_channels.add(source["channel_type"])
+
+    for indicator in getattr(request, "indicators", []) or []:
+        name = str(getattr(indicator, "name", "") or "").strip().lower()
+        if name not in {"lrc", "regression", "trend"}:
+            continue
+
+        config = getattr(indicator, "config", {}) or {}
+        if name == "lrc":
+            deviation = config.get("deviation", config.get("devlen"))
+            indicator_channel_sources[name] = {
+                "id": name,
+                "channel_type": name,
+                "length": _safe_int(config.get("length"), 100, minimum=2),
+                "upper_dev": config.get("upper_dev") if config.get("upper_dev") is not None else deviation,
+                "lower_dev": config.get("lower_dev") if config.get("lower_dev") is not None else deviation,
+                "source": config.get("source") or "close",
+            }
+        elif name == "regression":
+            indicator_channel_sources[name] = {
+                "id": name,
+                "channel_type": name,
+                "length": _safe_int(config.get("length"), 200, minimum=2),
+                "width_coeff": config.get("width_coeff"),
+                "window_type": config.get("window_type") or "continuous",
+                "interval_step": _safe_int(config.get("interval_step"), 1, minimum=1),
+            }
+        elif name == "trend":
+            indicator_channel_sources[name] = {
+                "id": name,
+                "channel_type": name,
+                "length": _safe_int(config.get("length"), 8, minimum=2),
+                "wait_for_break": config.get("wait_for_break"),
+                "show_last_channel": config.get("show_last_channel"),
+            }
+
+    needed_channels.update(indicator_channel_sources)
 
     if not needed_channels:
         needed_channels = set()
@@ -1032,7 +1101,9 @@ def attach_post_filter_channels(data, request):
             if channel_type in channels:
                 continue
 
-            if channel_type == "lrc":
+            if channel_type in indicator_channel_sources:
+                channel = _compute_channel_for_source(candles, indicator_channel_sources[channel_type])
+            elif channel_type == "lrc":
                 channel = compute_lrc_channel(candles)
             elif channel_type == "regression":
                 channel = compute_dw_regression_channel(candles)

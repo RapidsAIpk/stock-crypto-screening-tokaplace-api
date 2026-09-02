@@ -29,6 +29,9 @@ LINE_KEYS = (
     "bottom_zone_upper",
     "bottom_zone_lower",
     "bottom_zone_mid",
+    "middle_zone_upper",
+    "middle_zone_lower",
+    "middle_zone_mid",
 )
 # Matches the ChartPrime Pine source: atr_10 = ta.atr(10) * 6, and each
 # boundary line sits offset/7 to either side of its anchor (pivot) line.
@@ -399,6 +402,9 @@ def _channel_line_values(channel_state, x):
         "bottom_zone_upper": bottom_zone_upper,
         "bottom_zone_lower": bottom,
         "bottom_zone_mid": (bottom_zone_upper + bottom) / 2.0,
+        "middle_zone_upper": middle + zone,
+        "middle_zone_lower": middle - zone,
+        "middle_zone_mid": middle,
     }
 
 
@@ -660,6 +666,7 @@ _LINE_AREA_DIRECTION = {"top_line": "up", "bottom_line": "down", "middle_line": 
 _ZONE_AREA_KEYS = {
     "top_zone": ("top_zone_lower", "top_zone_upper", "up"),
     "bottom_zone": ("bottom_zone_lower", "bottom_zone_upper", "down"),
+    "middle_zone": ("middle_zone_lower", "middle_zone_upper", None),
 }
 
 

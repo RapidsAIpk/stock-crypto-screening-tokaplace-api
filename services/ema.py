@@ -12,6 +12,8 @@ from services.utils import build_indicator_sticker, format_price_value
 # =========================================================
 
 TRADINGVIEW_STANDARD_EMA_PERIODS = [20, 50, 100, 200]
+EMA_WARMUP_MULTIPLIER = 5
+EMA_MAX_HISTORY_REQUIREMENT = 500
 TRADINGVIEW_STANDARD_EMA_PRESETS = {
     "ema_20_50_100_200",
     "ema20_50_100_200",
@@ -20,6 +22,16 @@ TRADINGVIEW_STANDARD_EMA_PRESETS = {
     "tradingview_ema_20_50_100_200",
     "tv_ema_20_50_100_200",
 }
+
+
+def required_ema_history(period):
+    try:
+        normalized_period = int(period)
+    except (TypeError, ValueError):
+        normalized_period = 1
+    normalized_period = max(1, normalized_period)
+    return min(EMA_MAX_HISTORY_REQUIREMENT, normalized_period * EMA_WARMUP_MULTIPLIER)
+
 
 def compute_ema(series, length):
 
@@ -357,6 +369,20 @@ def _evaluate_period_condition(candles, ema_series, condition_name, condition_co
 
 def evaluate_ema_period(candles, period, config):
     closes = np.array([c["close"] for c in candles], dtype=float)
+    required_candles = required_ema_history(period)
+    if len(closes) < required_candles:
+        latest_close = float(closes[-1]) if len(closes) else None
+        return {
+            "period": period,
+            "passed": False,
+            "conditions": {},
+            "ema": None,
+            "close": latest_close,
+            "failure_reason": "insufficient_history",
+            "required_candles": int(required_candles),
+            "available_candles": int(len(closes)),
+        }
+
     ema_series = compute_ema(closes, period)
     conditions = config["conditions"]
     active_conditions = [
@@ -372,6 +398,7 @@ def evaluate_ema_period(candles, period, config):
             "conditions": {},
             "ema": float(ema_series[-1]),
             "close": float(closes[-1]),
+            "failure_reason": "no_active_conditions",
         }
 
     condition_results = {}
@@ -394,6 +421,7 @@ def evaluate_ema_period(candles, period, config):
         "conditions": condition_results,
         "ema": float(ema_series[-1]),
         "close": float(closes[-1]),
+        "failure_reason": None,
     }
 
 
