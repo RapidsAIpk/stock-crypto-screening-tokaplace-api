@@ -314,6 +314,16 @@ def handle_lrc(asset, candles, config):
 
     interaction_evidence = []
     if not evaluate_regression_lines(candles, channel, config, evidence=interaction_evidence):
+        if interaction_evidence:
+            asset["channels"]["lrc"] = {
+                "upper": channel["upper"],
+                "middle": channel["middle"],
+                "lower": channel["lower"]
+            }
+            return False, {
+                "sticker": None,
+                "evidence": {"channel_interactions": interaction_evidence},
+            }
         return False, None
 
     asset["channels"]["lrc"] = {
@@ -482,6 +492,11 @@ def handle_regression(asset, candles, config):
     _log_dw_regression_evaluation(asset, candles, channel, evaluation_config, passed)
 
     if not passed:
+        if interaction_evidence:
+            return False, {
+                "sticker": None,
+                "evidence": {"channel_interactions": interaction_evidence},
+            }
         return False, None
 
     sticker_data = build_regression_sticker("Regression Channel", channel, evaluation_config)

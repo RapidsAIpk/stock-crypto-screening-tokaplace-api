@@ -51,7 +51,10 @@ def evaluate_regression_lines(candles, channel, config, evidence=None):
                     "line": line_name,
                     "action": normalize_channel_interaction_action(action),
                     "matched": bool(interaction_result["passed"]),
+                    "event_index": interaction_result.get("event_index"),
                     "candles_since": interaction_result.get("candles_since"),
+                    "below_candles": interaction_result.get("below_candles"),
+                    "failure_reason": interaction_result.get("failure_reason"),
                     "stages": channel_interaction_stages(
                         candles,
                         target_values,

@@ -23,7 +23,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 
-from services import channel_interactions, channel_line_rules  # noqa: E402
+from services import channel_interactions, channel_line_rules, trend_channels  # noqa: E402
 
 
 FLAT_LINE = [10.0] * 6
@@ -146,11 +146,121 @@ class ReclaimRequiresAllThreeStagesTests(unittest.TestCase):
         self.assertTrue(self._evaluate(closes, below_candles_min=1)["passed"])
         self.assertFalse(self._evaluate(closes, below_candles_min=2)["passed"])
 
+    def test_latest_reclaim_with_too_many_below_candles_fails_instead_of_using_older_reclaim(self):
+        candles = [
+            candle(9.0),
+            candle(10.5, high=10.8, low=8.9),
+            candle(10.8),
+            candle(9.6),
+            candle(9.5),
+            candle(9.4),
+            candle(9.3),
+            candle(9.2),
+            candle(9.1),
+            candle(10.6, high=10.9, low=9.0),
+        ]
+
+        result = channel_interactions.evaluate_channel_interaction(
+            candles,
+            [10.0] * len(candles),
+            "reclaimed_from_below_bullish",
+            {
+                "candles_since_min": 0,
+                "candles_since_max": 5,
+                "below_candles_min": 1,
+                "below_candles_max": 5,
+                "min_consecutive_below": 1,
+                "require_still_above_now": True,
+            },
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["event_index"], 9)
+        self.assertEqual(result["below_candles"], 6)
+        self.assertEqual(result["failure_reason"], "below_candles_out_of_range")
+
     def test_at_least_one_close_below_is_always_required(self):
         # Even if the caller asks for zero, a reclaim without a prior close
         # below is not a reclaim.
         result = self._evaluate([10.5, 10.6, 10.7], below_candles_min=0)
         self.assertFalse(result["passed"])
+
+
+class PiercingFromBelowIsNotBounceOrReclaimTests(unittest.TestCase):
+    def _evaluate(self, candles):
+        return channel_interactions.evaluate_channel_interaction(
+            candles,
+            FLAT_LINE,
+            "piercing_from_below",
+            {"candles_since_min": 0, "candles_since_max": 5},
+        )
+
+    def test_direct_cross_from_below_passes(self):
+        result = self._evaluate([
+            candle(9.5),
+            {"open": 9.6, "high": 10.8, "low": 9.4, "close": 10.5},
+        ])
+        self.assertTrue(result["passed"])
+
+    def test_bounce_from_above_does_not_count_as_piercing_from_below(self):
+        result = self._evaluate([
+            candle(10.8),
+            {"open": 10.7, "high": 10.9, "low": 9.7, "close": 10.5},
+        ])
+        self.assertFalse(result["passed"])
+
+    def test_gap_above_after_being_below_does_not_count_as_piercing(self):
+        result = self._evaluate([
+            candle(9.5),
+            {"open": 10.4, "high": 10.9, "low": 10.2, "close": 10.7},
+        ])
+        self.assertFalse(result["passed"])
+
+
+class TrendChannelFailureEvidenceTests(unittest.TestCase):
+    def test_reclaim_below_candles_range_failure_reports_count(self):
+        candles = [
+            candle(9.0),
+            candle(10.5, high=10.8, low=8.9),
+            candle(10.8),
+            candle(9.6),
+            candle(9.5),
+            candle(9.4),
+            candle(9.3),
+            candle(9.2),
+            candle(9.1),
+            candle(10.6, high=10.9, low=9.0),
+        ]
+        tc = {
+            "length": len(candles),
+            "bottom": [10.0] * len(candles),
+            "middle": [12.0] * len(candles),
+            "top": [14.0] * len(candles),
+        }
+        evidence = []
+
+        matched = trend_channels.evaluate_trend_channel_rules(
+            candles,
+            tc,
+            {
+                "areas": [{
+                    "area": "bottom_line",
+                    "action": "reclaimed_from_below_bullish",
+                    "candles_since_min": 0,
+                    "candles_since_max": 5,
+                    "below_candles_min": 1,
+                    "below_candles_max": 5,
+                    "min_consecutive_below": 1,
+                    "require_still_above_now": True,
+                }],
+            },
+            evidence=evidence,
+        )
+
+        self.assertFalse(matched)
+        self.assertEqual(evidence[0]["failure_reason"], "below_candles_out_of_range")
+        self.assertEqual(evidence[0]["below_candles"], 6)
+        self.assertEqual(evidence[0]["candles_since"], 0)
 
 
 class RejectionDoesNotRequireACloseBelowTests(unittest.TestCase):
@@ -391,6 +501,47 @@ class HandlerEvidenceTests(unittest.TestCase):
 
         self.assertFalse(passed)
         self.assertIsNone(result)
+
+    def test_lrc_failed_piercing_returns_channel_evidence_for_detail_view(self):
+        from services.indicators import handle_lrc
+
+        candles = [
+            {
+                "time": 1_700_000_000 + index,
+                "open": 9.6 if index == 1 else 9.5,
+                "high": 9.9 if index == 1 else 9.7,
+                "low": 9.2,
+                "close": 9.4,
+                "volume": 1,
+                "is_closed": True,
+            }
+            for index in range(2)
+        ]
+        channel = {
+            "length": 2,
+            "upper": [12.0, 12.0],
+            "middle": [11.0, 11.0],
+            "lower": [10.0, 10.0],
+            "r": 0.5,
+        }
+        config = {
+            "length": 2,
+            "lines": ["lower"],
+            "action": "piercing_from_below",
+            "candles_since_min": 0,
+            "candles_since_max": 5,
+            "r_filter": "ignore",
+        }
+
+        with patch("services.indicators.compute_lrc_channel", return_value=channel):
+            passed, result = handle_lrc({"symbol": "FAIL", "channels": {}}, candles, config)
+
+        self.assertFalse(passed)
+        self.assertIsInstance(result, dict)
+        evidence = result["evidence"]["channel_interactions"][0]
+        self.assertEqual(evidence["action"], "piercing_from_below")
+        self.assertFalse(evidence["matched"])
+        self.assertEqual(evidence["failure_reason"], "event_out_of_range")
 
 
 if __name__ == "__main__":
