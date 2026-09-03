@@ -71,6 +71,7 @@ def _piercing_from_below(candles, target_values, index):
     candle = candles[index]
     return (
         _close(candles, index - 1) < previous_target
+        and float(candle["open"]) < target
         and float(candle["low"]) < target
         and float(candle["high"]) >= target
         and float(candle["close"]) > target
@@ -126,7 +127,7 @@ def _consecutive_below_before(candles, target_values, index):
     return len(_consecutive_below_indexes_before(candles, target_values, index))
 
 
-def _reclaimed_from_below_bullish(candles, target_values, index, config):
+def _reclaimed_from_below_bullish(candles, target_values, index, config, enforce_below_range=True):
     target = _finite_target(target_values, index)
     if target is None or index <= 0:
         return False
@@ -136,9 +137,16 @@ def _reclaimed_from_below_bullish(candles, target_values, index, config):
     below_count = _consecutive_below_before(candles, target_values, index)
     if below_count < int(min_consecutive_below or 1):
         return False
-    if not consecutive_count_in_range(below_count, minimum_below, maximum_below):
+    if enforce_below_range and not consecutive_count_in_range(below_count, minimum_below, maximum_below):
         return False
     return float(candles[index]["close"]) > target
+
+
+def _latest_raw_reclaim_event(candles, target_values, config):
+    for index in range(len(candles) - 1, -1, -1):
+        if _reclaimed_from_below_bullish(candles, target_values, index, config, enforce_below_range=False):
+            return index
+    return None
 
 
 def _still_above_now(candles, target_values):
@@ -177,7 +185,10 @@ def evaluate_channel_interaction(candles, target_values, action, config):
 
     normalized = normalize_channel_interaction_action(action)
     latest_index = len(candles) - 1
-    event_index = latest_channel_interaction_event(candles, target_values, normalized, config)
+    if normalized == "reclaimed_from_below_bullish":
+        event_index = _latest_raw_reclaim_event(candles, target_values, config)
+    else:
+        event_index = latest_channel_interaction_event(candles, target_values, normalized, config)
 
     if (
         normalized == "reclaimed_from_below_bullish"
@@ -190,6 +201,21 @@ def evaluate_channel_interaction(candles, target_values, action, config):
             "candles_since": latest_index - event_index if event_index is not None else None,
         }
 
+    if normalized == "reclaimed_from_below_bullish" and event_index is not None:
+        below_count = _consecutive_below_before(candles, target_values, event_index)
+        if not consecutive_count_in_range(
+            below_count,
+            config.get("below_candles_min", config.get("consecutive_below_min", 1)),
+            config.get("below_candles_max", config.get("consecutive_below_max")),
+        ):
+            return {
+                "passed": False,
+                "event_index": event_index,
+                "candles_since": latest_index - event_index,
+                "below_candles": below_count,
+                "failure_reason": "below_candles_out_of_range",
+            }
+
     passed = candles_since_in_range(
         event_index,
         latest_index,
@@ -200,6 +226,10 @@ def evaluate_channel_interaction(candles, target_values, action, config):
         "passed": bool(passed),
         "event_index": event_index,
         "candles_since": latest_index - event_index if event_index is not None else None,
+        "below_candles": _consecutive_below_before(candles, target_values, event_index)
+        if normalized == "reclaimed_from_below_bullish" and event_index is not None
+        else None,
+        "failure_reason": None if passed else "event_out_of_range",
     }
 
 

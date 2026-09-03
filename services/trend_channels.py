@@ -934,8 +934,11 @@ def _evaluate_single_area_core(candles, tc, rule):
             "matched": bool(interaction_result.get("passed")),
             "matched_index": event_index if interaction_result.get("passed") else None,
             "candidates": candidates,
-            "failure_reason": None if interaction_result.get("passed") else "no_candidate_matched",
+            "failure_reason": None if interaction_result.get("passed") else (
+                interaction_result.get("failure_reason") or "no_candidate_matched"
+            ),
             "candles_since": interaction_result.get("candles_since"),
+            "below_candles": interaction_result.get("below_candles"),
         }
 
     return _evaluate_exact_window_area(candles, tc, rule, area, window, start_index, length)
@@ -972,6 +975,8 @@ def _build_area_evidence(candles, tc, rule, result):
         "matched_candle_index": matched_index,
         "matched_candle_time": matched_candle_time,
         "failure_reason": "" if matched else (result.get("failure_reason") or "no_candidate_matched"),
+        "candles_since": result.get("candles_since"),
+        "below_candles": result.get("below_candles"),
     }
 
     # Legacy single-candle summary fields, sourced from the candle that
