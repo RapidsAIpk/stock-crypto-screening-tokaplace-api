@@ -260,6 +260,60 @@ class BrokenVisibleChannelEvidenceTests(unittest.TestCase):
         self.assertTrue(matched)
         self.assertEqual(evidence[0]["matched_candle_index"], 1)
 
+    def test_phase2_reclaim_does_not_match_display_only_bars_after_break(self):
+        channel = _flat_channel(4, bottom=100.0, broken=True, break_index=1)
+        candles = [
+            _candle(101.0, 102.0, 100.5, 101.5, time=100),
+            _candle(99.5, 100.5, 98.5, 99.0, time=200),
+            _candle(99.0, 101.5, 98.8, 101.2, time=300),
+            _candle(101.0, 102.0, 100.8, 101.5, time=400),
+        ]
+        rule = {
+            "area": "bottom_line",
+            "action": "reclaimed_from_below_bullish",
+            "candles_since_min": 0,
+            "candles_since_max": 5,
+            "below_candles_min": 1,
+            "below_candles_max": 5,
+            "min_consecutive_below": 1,
+            "require_still_above_now": True,
+        }
+        evidence = []
+
+        matched = trend_channels.evaluate_single_area(candles, channel, rule, evidence=evidence)
+
+        self.assertFalse(matched)
+        self.assertIsNone(evidence[0]["matched_candle_index"])
+        self.assertEqual(evidence[0]["failure_reason"], "no_candidate_matched")
+
+    def test_phase2_reclaim_respects_below_candles_max_on_trend_channel(self):
+        channel = _flat_channel(6, bottom=100.0)
+        candles = [
+            _candle(101.0, 102.0, 100.5, 101.5, time=100),
+            _candle(99.5, 100.0, 98.5, 99.0, time=200),
+            _candle(99.2, 99.8, 98.7, 99.3, time=300),
+            _candle(99.4, 99.9, 98.9, 99.5, time=400),
+            _candle(99.6, 101.5, 99.0, 101.2, time=500),
+            _candle(101.1, 102.0, 100.8, 101.4, time=600),
+        ]
+        rule = {
+            "area": "bottom_line",
+            "action": "reclaimed_from_below_bullish",
+            "candles_since_min": 0,
+            "candles_since_max": 5,
+            "below_candles_min": 1,
+            "below_candles_max": 2,
+            "min_consecutive_below": 1,
+            "require_still_above_now": True,
+        }
+        evidence = []
+
+        matched = trend_channels.evaluate_single_area(candles, channel, rule, evidence=evidence)
+
+        self.assertFalse(matched)
+        self.assertEqual(evidence[0]["failure_reason"], "below_candles_out_of_range")
+        self.assertEqual(evidence[0]["below_candles"], 3)
+
 
 class FormingCandleExclusionTests(unittest.TestCase):
     def test_forming_trailing_candle_is_dropped_before_evaluation(self):
