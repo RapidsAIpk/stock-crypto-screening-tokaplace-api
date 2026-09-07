@@ -763,6 +763,29 @@ def _trend_area_target_values(tc, area, action):
     return None
 
 
+def _padded_signal_eligible_target_values(tc, target_values, candle_count, start_index):
+    """Align area target values to absolute candle indexes and mask display-only bars.
+
+    Trend Channel can keep drawing the last channel after a break so users can
+    visually inspect it, but those post-break projected values are not active
+    signal values. Old Trend Channel actions already enforce this through
+    _candle_index_eligible_for_signal; Phase 2 interactions use the shared
+    channel_interactions helper, so they need the same eligibility encoded in
+    the target series. A None target makes the shared helper skip that candle.
+    """
+    padded = [None for _ in range(max(0, start_index))] + list(target_values)
+    if len(padded) < candle_count:
+        padded.extend([None for _ in range(candle_count - len(padded))])
+    elif len(padded) > candle_count:
+        padded = padded[-candle_count:]
+
+    for candle_index in range(candle_count):
+        if candle_index < start_index or not _candle_index_eligible_for_signal(tc, candle_index):
+            padded[candle_index] = None
+
+    return padded
+
+
 def _finalize_area_result(candidates, matched_index, empty_reason="no_candidates_checked"):
     matched = matched_index is not None
     failure_reason = None
@@ -907,7 +930,12 @@ def _evaluate_single_area_core(candles, tc, rule):
         if target_values is None:
             return _finalize_area_result([], None, empty_reason="unsupported_area")
 
-        padded_target_values = [None for _ in range(max(0, start_index))] + list(target_values)
+        padded_target_values = _padded_signal_eligible_target_values(
+            tc,
+            target_values,
+            len(candles),
+            start_index,
+        )
         interaction_result = evaluate_channel_interaction(
             candles,
             padded_target_values,
